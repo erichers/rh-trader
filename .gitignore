@@ -1,0 +1,61 @@
+# Secrets — NEVER commit (real accounts)
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+secrets/
+**/oauth-tokens.json
+
+# Node
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+
+# Rust / Tauri
+target/
+app-native/src-tauri/target/
+app-native/src-tauri/gen/
+**/*.app
+**/*.dmg
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Logs / runtime
+*.log
+/tmp/
+backend/data/
+
+# Agent session snapshots (local memory, not committed)
+.claude/rag/sessions/
+
+# DB dumps (local restore material, never committed)
+db/backups/
+
+# ── Hardening (2026-08-24 ship): deny-by-pattern so a future dump, env variant,
+# or credential file dropped anywhere in the tree can never be committed. ──
+.env.*
+!.env.example
+*.sql
+!db/schema.sql
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.bak
+*.orig
+*.p12
+*.pfx
+*.jks
+*.har
+.npmrc
+**/*token*.json
+**/*credential*.json
+**/*secret*.json
+.claude/settings.local.json
+scratch/

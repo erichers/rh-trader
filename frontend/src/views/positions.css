@@ -1,0 +1,10 @@
+/* Positions view, phone rules.
+   styles.css already asks wide tables to scroll inside their card
+   (`.card { overflow-x: auto }` under 760px). That only works once the shell's
+   grid/flex items are allowed to shrink below their content width: without
+   min-width: 0 a seven-column table drags the whole page sideways instead. */
+@media (max-width: 760px) {
+  .main, .content, .content > .card, .grid > * { min-width: 0; }
+  .pos-table { font-size: 12px; }
+  .pos-table th, .pos-table td { white-space: nowrap; }
+}

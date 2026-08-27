@@ -1,0 +1,78 @@
+/* ════════════════════════ Account strip ════════════════════════
+   Always-on balance bar under the top bar: cash, buying power, equity and the
+   P/L for the selected window, with a compact equity sparkline. Built phone
+   first: everything stacks and wraps at 390px, tap targets stay 44px, and no
+   row is ever wider than the viewport. Tokens come from styles.css. */
+
+.acct-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+/* Which account these balances belong to. Reuses .env-badge so the LIVE red
+   safety treatment is identical to the top bar. */
+.acct-strip .acct-badge { flex: 0 0 auto; padding: 4px 9px; font-size: 10px; letter-spacing: 0.4px; }
+.acct-env-full { display: none; }
+.acct-env-short { display: inline; }
+
+/* Figures: two columns on a phone, one flowing row on a laptop. */
+.acct-figs {
+  flex: 1 1 100%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+  min-width: 0;
+}
+.acct-fig { min-width: 0; }
+.acct-k {
+  display: block;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
+  color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.acct-v {
+  display: block; margin-top: 1px;
+  font-size: 16px; font-weight: 700; letter-spacing: -0.3px; line-height: 1.2;
+  font-variant-numeric: tabular-nums; color: var(--text);
+}
+.acct-v.green { color: var(--green); }
+.acct-v.red { color: var(--red); }
+.acct-v.muted { color: var(--muted); }
+.acct-pct { font-size: 12px; font-weight: 600; margin-left: 6px; }
+
+/* Time selector. 44px tall on touch, tightened on pointer-precise screens. */
+.acct-seg { flex: 1 1 auto; display: flex; justify-content: stretch; }
+.acct-seg button {
+  flex: 1 1 auto; min-height: 44px; min-width: 44px; padding: 0 4px;
+  font-size: 12px; cursor: pointer;
+}
+
+/* Sparkline row. Full width on a phone, a fixed lane on a laptop. */
+.acct-chart { flex: 1 1 100%; min-width: 0; height: 44px; display: flex; align-items: center; }
+.acct-chart > svg { border-radius: 6px; }
+.acct-note { font-size: 11px; color: var(--muted); }
+
+@media (min-width: 1024px) {
+  /* One row on a laptop: account, figures, sparkline, then the time selector on
+     the right. The DOM order stays phone-first (selector next to the badge). */
+  .acct-strip { flex-wrap: nowrap; gap: 20px; padding: 10px 22px; }
+  .acct-strip .acct-badge { order: 0; }
+  .acct-figs { order: 1; }
+  .acct-chart { order: 2; }
+  .acct-seg { order: 3; }
+  .acct-env-full { display: inline; }
+  .acct-env-short { display: none; }
+  .acct-figs {
+    flex: 0 0 auto; display: flex; flex-wrap: nowrap; gap: 22px;
+  }
+  /* Figures size to their own content; the sparkline absorbs the leftover width, so
+     a label like "Available to trade" is never clipped. */
+  .acct-figs > .acct-fig { flex: 0 0 auto; }
+  .acct-chart { flex: 1 1 160px; min-width: 140px; max-width: 420px; height: 48px; }
+  .acct-seg { flex: 0 0 auto; }
+  .acct-seg button { min-height: 30px; flex: 0 0 auto; }
+}

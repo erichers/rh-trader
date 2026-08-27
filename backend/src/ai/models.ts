@@ -1,0 +1,260 @@
+import { config } from '../config.js';
+import { audit } from '../db.js';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Model registry: the ONE place model ids live. Everything else asks for a TASK.
+//
+// LAW (2026-08-24, reaffirmed 2026-08-25): never assume a model id outlives the
+// week. Groq retired every llama-3.x chat model in Aug 2026. Ids below carry the
+// date they were last verified against the provider's own /models endpoint;
+// probeProviders() re-verifies at boot and every 6h and walks the ladder when a
+// configured id has gone dark. The cascade in llm.ts still catches everything else.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ProviderName = 'anthropic' | 'kimi' | 'groq' | 'nvidia' | 'local';
+export type Task = 'chat' | 'triage' | 'research' | 'agent' | 'review' | 'ideas';
+export type ChainEntry = { provider: ProviderName; model: string };
+export type ResolvedEntry = ChainEntry & { live: boolean | null };
+
+export const TASKS: Task[] = ['chat', 'triage', 'research', 'agent', 'review', 'ideas'];
+export const PROVIDERS: ProviderName[] = ['anthropic', 'kimi', 'groq', 'nvidia', 'local'];
+
+/** Per-provider fallback ladder, best first. Used when a chain's id is not live. */
+export const LADDER: Record<ProviderName, string[]> = {
+  // Anthropic: id comes from ANTHROPIC_MODEL (no key here yet, so unverified).
+  anthropic: [config.anthropic.model],
+  // Moonshot /v1/models, verified live 2026-08-25.
+  kimi: ['kimi-k2.5', 'kimi-k2.6', 'kimi-k3', 'moonshot-v1-128k'],
+  // Groq /openai/v1/models, verified live 2026-08-25. Free tier: 30 RPM / 1K RPD /
+  // 8K TPM / 200K TPD per model; groq/compound 250 RPD, 70K TPM. Heavy prompts must
+  // not lead with Groq.
+  // groq/compound deliberately excluded: no custom tools, no response_format (Groq docs 2026-08-25).
+  groq: ['openai/gpt-oss-120b', 'qwen/qwen3.6-27b', 'openai/gpt-oss-20b'],
+  // NVIDIA NIM (OpenAI-compatible, ~40 RPM per key). Ids from NIM docs 2026-08-25,
+  // NOT verified live here (no key yet) — the boot probe will confirm or fall through.
+  nvidia: [
+    // Verified live against integrate.api.nvidia.com/v1/models on 2026-08-25 (95 ids).
+    // meta/llama-3.3-70b-instruct is listed but hung for 90s+ on every probe: excluded.
+    'nvidia/nemotron-3-super-120b-a12b',
+    'nvidia/nemotron-3.5-lightning-30b-a3b',
+    'nvidia/llama-3.3-nemotron-super-49b-v1.5',
+    'nvidia/nemotron-3-ultra-550b-a55b',
+    'openai/gpt-oss-120b',
+    'qwen/qwen3-235b-a22b',
+    'moonshotai/kimi-k2-instruct',
+  ],
+  // Self-hosted OpenAI-compatible server: whatever model LOCAL_MODEL names (no ladder to walk).
+  local: [config.local.model || 'local-model'],
+};
+
+/** Embedding ladder (NVIDIA NIM /v1/embeddings), docs 2026-08-25, unverified live. */
+export const EMBED_LADDER = ['nvidia/nemotron-3-embed-1b', 'snowflake/arctic-embed-l', 'nvidia/embed-qa-4'];
+
+/** The id an env override replaces (each provider's default pick). */
+const DEFAULT_MODEL: Record<ProviderName, string> = {
+  anthropic: LADDER.anthropic[0],
+  kimi: LADDER.kimi[0],
+  groq: LADDER.groq[0],
+  nvidia: LADDER.nvidia[0],
+  local: LADDER.local[0],
+};
+
+const N_LLAMA = 'nvidia/nemotron-3-super-120b-a12b'; // sub-second with thinking off, tool calling; llama-3.3-70b hangs on NIM (2026-08-25)
+const N_NEMOTRON = 'nvidia/llama-3.3-nemotron-super-49b-v1.5';
+const N_DEEPSEEK = 'nvidia/nemotron-3-super-120b-a12b'; // deepseek-v3.1 is not on NIM (checked 2026-08-25); Nemotron-3 Super is the reasoning workhorse
+
+/** Ordered chain per task: best quality-per-task that fits the real rate limits.
+ *  Cheap+fast tasks lead with Groq; long/expensive reasoning leads with Anthropic
+ *  then Kimi and only reaches Groq as a last resort (8K TPM there). */
+export const TASK_CHAINS: Record<Task, ChainEntry[]> = {
+  // Vanna-style text-to-SQL + assistant chat: short prompts, latency matters.
+  chat: [
+    { provider: 'groq', model: 'openai/gpt-oss-120b' },
+    { provider: 'groq', model: 'qwen/qwen3.6-27b' },
+    { provider: 'groq', model: 'openai/gpt-oss-20b' },
+    { provider: 'nvidia', model: N_LLAMA },
+    { provider: 'kimi', model: 'kimi-k2.5' },
+    { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
+    { provider: 'local', model: DEFAULT_MODEL.local }, // self-hosted fallback, only when LOCAL_BASE_URL is set
+  ],
+  // News classification / quick ticker reads: tiny prompts, many calls per day.
+  triage: [
+    { provider: 'groq', model: 'openai/gpt-oss-20b' },
+    { provider: 'groq', model: 'qwen/qwen3.6-27b' },
+    { provider: 'groq', model: 'openai/gpt-oss-120b' },
+    { provider: 'nvidia', model: N_LLAMA },
+    { provider: 'kimi', model: 'kimi-k2.5' },
+    { provider: 'anthropic', model: DEFAULT_MODEL.anthropic }, // an Anthropic-only deploy must still triage
+    { provider: 'local', model: DEFAULT_MODEL.local }, // self-hosted fallback, only when LOCAL_BASE_URL is set
+  ],
+  // Long analytical prompts where quality beats cost.
+  research: [
+    { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
+    { provider: 'kimi', model: 'kimi-k2.5' },
+    { provider: 'nvidia', model: N_DEEPSEEK },
+    { provider: 'nvidia', model: N_NEMOTRON },
+    { provider: 'groq', model: 'openai/gpt-oss-120b' },
+    { provider: 'local', model: DEFAULT_MODEL.local }, // self-hosted fallback, only when LOCAL_BASE_URL is set
+  ],
+  // Tool loops: needs reliable function calling.
+  agent: [
+    { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
+    { provider: 'kimi', model: 'kimi-k2.5' },
+    { provider: 'groq', model: 'openai/gpt-oss-120b' },
+    { provider: 'nvidia', model: N_LLAMA },
+    { provider: 'local', model: DEFAULT_MODEL.local }, // self-hosted fallback, only when LOCAL_BASE_URL is set
+  ],
+  // Daily learning pass over many trades: biggest prompt of the day.
+  review: [
+    { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
+    { provider: 'kimi', model: 'kimi-k2.5' },
+    { provider: 'nvidia', model: N_DEEPSEEK },
+    { provider: 'groq', model: 'openai/gpt-oss-120b' },
+    { provider: 'local', model: DEFAULT_MODEL.local }, // self-hosted fallback, only when LOCAL_BASE_URL is set
+  ],
+  // Strategy idea generation.
+  ideas: [
+    { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
+    { provider: 'kimi', model: 'kimi-k2.5' },
+    { provider: 'nvidia', model: N_DEEPSEEK },
+    { provider: 'groq', model: 'openai/gpt-oss-120b' },
+    { provider: 'local', model: DEFAULT_MODEL.local }, // self-hosted fallback, only when LOCAL_BASE_URL is set
+  ],
+};
+
+export function providerConfig(name: ProviderName): { apiKey: string; baseUrl: string; model: string } {
+  if (name === 'anthropic') return { apiKey: config.anthropic.apiKey, baseUrl: 'https://api.anthropic.com/v1', model: config.anthropic.model };
+  if (name === 'kimi') return config.kimi;
+  if (name === 'groq') return config.groq;
+  if (name === 'local') return config.local;
+  return config.nvidia;
+}
+
+export function isConfigured(name: ProviderName): boolean {
+  if (name === 'local') return !!(config.local.baseUrl && config.local.model); // self-hosted: a key is optional
+  return !!providerConfig(name).apiKey;
+}
+
+/** Disaster drill: LLM_POISON_PROVIDERS=groq,kimi makes those providers throw on
+ *  every call so the fallback path can be proven without touching code. */
+export function isPoisoned(name: ProviderName): boolean {
+  return (process.env.LLM_POISON_PROVIDERS || '')
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+    .includes(name);
+}
+
+/** GROQ_MODEL / KIMI_MODEL / NVIDIA_MODEL / ANTHROPIC_MODEL stay honored: they
+ *  replace that provider's DEFAULT pick wherever a chain uses it (slots picked
+ *  deliberately for cost, like the 20b triage lead, keep their own id). */
+function preferred(name: ProviderName): string {
+  const m = providerConfig(name).model;
+  return m || DEFAULT_MODEL[name];
+}
+
+function ladderFor(name: ProviderName): string[] {
+  const p = preferred(name);
+  return [p, ...LADDER[name].filter((m) => m !== p)];
+}
+
+// ── Liveness probe ───────────────────────────────────────────────────────────
+type ProbeState = { live: Set<string>; probed_at: number | null; error: string | null };
+const probes: Record<ProviderName, ProbeState> = {
+  anthropic: { live: new Set(), probed_at: null, error: null },
+  kimi: { live: new Set(), probed_at: null, error: null },
+  groq: { live: new Set(), probed_at: null, error: null },
+  nvidia: { live: new Set(), probed_at: null, error: null },
+  local: { live: new Set(), probed_at: null, error: null },
+};
+
+async function probeOne(name: ProviderName): Promise<void> {
+  const st = probes[name];
+  if (isPoisoned(name)) { st.live = new Set(); st.probed_at = null; st.error = 'poisoned via LLM_POISON_PROVIDERS'; return; }
+  const { apiKey, baseUrl } = providerConfig(name);
+  try {
+    const headers: Record<string, string> = name === 'anthropic'
+      ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
+      : apiKey ? { authorization: `Bearer ${apiKey}` } : {}; // self-hosted servers may run without a key
+    const r = await fetch(`${baseUrl}/models`, { headers, signal: AbortSignal.timeout(5_000) });
+    const text = await r.text();
+    if (!r.ok) throw new Error(`${r.status}: ${text.slice(0, 120)}`);
+    const ids: string[] = (JSON.parse(text).data || []).map((m: any) => String(m.id)).filter(Boolean);
+    if (!ids.length) throw new Error('empty model list');
+    st.live = new Set(ids);
+    st.probed_at = Date.now();
+    st.error = null;
+  } catch (e: any) {
+    st.live = new Set();
+    st.probed_at = null; // a failed probe means "unknown", not "nothing is live"
+    st.error = String(e?.message || e).slice(0, 160);
+  }
+}
+
+/** Refresh the live-id cache for every configured provider. Never throws. */
+export async function probeProviders(): Promise<void> {
+  const names = PROVIDERS.filter(isConfigured);
+  await Promise.all(names.map(probeOne));
+  const summary = names.map((n) => `${n}:${probes[n].error ? 'err' : probes[n].live.size}`).join(' ');
+  console.log(`[models] probe ${summary || 'no provider configured'}`);
+}
+
+export function probedOnce(): boolean {
+  return PROVIDERS.some((n) => probes[n].probed_at != null || probes[n].error != null);
+}
+
+export function providerStatus(): Record<string, { configured: boolean; live_ids: number; probed_at: string | null; error: string | null }> {
+  const out: Record<string, { configured: boolean; live_ids: number; probed_at: string | null; error: string | null }> = {};
+  for (const n of PROVIDERS) {
+    out[n] = {
+      configured: isConfigured(n),
+      live_ids: probes[n].live.size,
+      probed_at: probes[n].probed_at ? new Date(probes[n].probed_at as number).toISOString() : null,
+      error: probes[n].error,
+    };
+  }
+  return out;
+}
+
+const announced = new Set<string>();
+
+/** Swap a dead id for the first live id on that provider's ladder. Only acts on a
+ *  SUCCESSFUL probe: if the probe failed we know nothing, so keep the configured id
+ *  and let the cascade handle a real error. */
+function resolveEntry(e: ChainEntry): ResolvedEntry {
+  const model = e.model === DEFAULT_MODEL[e.provider] ? preferred(e.provider) : e.model;
+  const st = probes[e.provider];
+  if (st.probed_at == null) return { provider: e.provider, model, live: null };
+  if (st.live.has(model)) return { provider: e.provider, model, live: true };
+  const alt = ladderFor(e.provider).find((m) => st.live.has(m));
+  if (!alt) return { provider: e.provider, model, live: false };
+  const key = `${e.provider}:${model}->${alt}`;
+  if (!announced.has(key)) {
+    announced.add(key);
+    console.warn(`[models] ${e.provider} ${model} is not live, using ${alt}`);
+    void audit('ai.model.fallback', `${e.provider} ${model} not live, using ${alt}`, { provider: e.provider, from: model, to: alt }).catch(() => {});
+  }
+  return { provider: e.provider, model: alt, live: true };
+}
+
+/** The resolved chain for a task: configured providers only, env preference applied,
+ *  dead ids walked down the ladder, duplicates collapsed. */
+export function resolveChain(task: Task): ResolvedEntry[] {
+  const out: ResolvedEntry[] = [];
+  const seen = new Set<string>();
+  for (const e of TASK_CHAINS[task]) {
+    if (!isConfigured(e.provider)) continue;
+    const r = resolveEntry(e);
+    const key = `${r.provider}:${r.model}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(r);
+  }
+  // Probe-confirmed dead ids are skipped so a task never leads with a known-404 model;
+  // if EVERY entry is dead, keep them so the cascade error names what failed.
+  const alive = out.filter((r) => r.live !== false);
+  return alive.length ? alive : out;
+}
+
+/** First resolved entry for a task (what a caller will actually hit first). */
+export function firstFor(task: Task): ResolvedEntry | null {
+  return resolveChain(task)[0] || null;
+}
