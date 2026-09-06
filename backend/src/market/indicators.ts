@@ -124,6 +124,9 @@ export type IndicatorSnapshot = {
   consecUp: number;      // trailing consecutive up days
   consecDown: number;    // trailing consecutive down days
   dailyVol: number | null; // realized 1-day % move stddev (20d) — for vol-expansion
+  // Optional residual vs a benchmark (log-spread z). Only set by evaluateBot when
+  // a bot asks for residual_z_below; snapshot() itself leaves this null (fail-closed).
+  residualZ?: number | null;
   // Previous-bar values so crossovers can be detected as EVENTS, not states.
   prev: { ema9: number | null; ema21: number | null; sma50: number | null; sma200: number | null; macdHist: number | null; rsi14: number | null };
 };

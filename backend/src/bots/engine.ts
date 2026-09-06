@@ -1,6 +1,7 @@
 import { q, exec, audit, getTradingEnv } from '../db.js';
 import type { Mode, TradingEnv } from '../config.js';
 import { snapshot } from '../market/indicators.js';
+import { residualZ } from '../market/residual.js';
 import { dteToExpiration } from '../market/expirations.js';
 import { analyzeSymbol, aiReady } from '../ai/claude.js';
 import { executeDraft } from '../execute.js';
@@ -308,6 +309,20 @@ export function evalRules(
     const ok = ratio != null && ratio >= r.vol_expand;
     checks.push({ kind: 'filter', ok, label: `move ≥ ${r.vol_expand}× normal vol`, detail: ratio == null ? 'insufficient data' : `today's move is ${n(ratio)}× the 20-day daily vol (need ≥ ${r.vol_expand}×)` });
   }
+  // Residual vs a benchmark (stat-arb lite). Fail-closed: missing residualZ means
+  // the trigger does not fire. evaluateBot attaches residualZ only when this key is set.
+  if (r.residual_z_below != null) {
+    const v = snap.residualZ;
+    const ok = v != null && Number.isFinite(v) && v < r.residual_z_below;
+    checks.push({
+      kind: 'trigger', ok,
+      label: `residual z < ${r.residual_z_below}`,
+      detail: v == null || !Number.isFinite(v)
+        ? 'no residual (benchmark missing or too short) — fail-closed'
+        : `z ${n(v)} ${ok ? '<' : '≥'} ${r.residual_z_below}`,
+    });
+    if (ok) side = 'buy';
+  }
 
   // FIRE LOGIC: every specified filter must hold AND >= the required number of triggers fire.
   const triggers = checks.filter((c) => c.kind === 'trigger');
@@ -349,6 +364,15 @@ export async function evaluateBot(botRow: any): Promise<any> {
     }
     const closes = await closesFor(symbol);
     const snap = snapshot(closes);
+    // Residual vs benchmark (default SPY). Same-symbol or crypto benchmark → leave
+    // residualZ null so residual_z_below fail-closes. Never used as a short signal.
+    if (bot.rules?.residual_z_below != null) {
+      const bench = String(bot.rules.benchmark || 'SPY').toUpperCase();
+      if (bench && bench !== symbol && !isCryptoSymbol(bench)) {
+        const benchCloses = await closesFor(bench);
+        snap.residualZ = residualZ(closes, benchCloses);
+      }
+    }
     const ev = evalRules(bot.rules, snap);
 
     let aiOk = true;
