@@ -175,6 +175,19 @@ export const STRATEGY_LIBRARY: StrategyTemplate[] = [
     education: 'Momentum trigger + high Claude conviction (≥ 0.7) → buy ATM weekly calls.',
     action: { side: 'buy', qty: 1, order_type: 'market', option_type: 'call', strike_target: 'atm', expiration: 'weekly' },
   },
+
+  // ── Proposal stub (Ulric desk): NOT momentum. Seeded DISABLED + observe. ──
+  // Long-only residual vs SPY: buy when the name is cheap vs the index (log-spread
+  // z < −2) AND RSI is washed out, while still above SMA20 (avoid catching a
+  // breakdown). See docs/ULRIC-DESK.md §6. Not in the learning-iterator vocabulary.
+  SWING({
+    key: 'residual-reversion-spy',
+    name: 'Residual Reversion vs SPY (proposal stub)',
+    description: 'Long-only stat-arb lite: buy a name that is cheap vs SPY (residual z), not a momentum chase.',
+    education: 'Proposal stub. Disabled + observe by default. Buys when the 60-day log-spread z vs SPY is below −2 and RSI < 35, with a price>SMA20 filter so we are fading a dip in an intact uptrend — not shorting the index. No LLM in the entry path. Full design: docs/ULRIC-DESK.md.',
+    rules: { residual_z_below: -2, rsi_below: 35, price_above_sma20: true, benchmark: 'SPY', require_all: true },
+    default_symbols: ['AAPL', 'MSFT', 'NVDA', 'QQQ', 'IWM'],
+  }),
 ];
 
 /** Insert every template as a DISABLED bot for one account (env) if not already present.
@@ -185,6 +198,9 @@ export async function seedStrategies(env: TradingEnv, opts: { mode?: Mode } = {}
   let created = 0;
   let skipped = 0;
   for (const s of STRATEGY_LIBRARY) {
+    // Proposal stubs stay observe even when a fleet seed asks for cautious.
+    // They are also always inserted disabled (enabled=0 below).
+    const rowMode: Mode = s.key === 'residual-reversion-spy' ? 'observe' : mode;
     const existing = await q<{ id: number }>('SELECT id FROM bots WHERE env=:env AND name=:n LIMIT 1', { env, n: s.name });
     if (existing.length) {
       skipped++;
@@ -196,12 +212,18 @@ export async function seedStrategies(env: TradingEnv, opts: { mode?: Mode } = {}
       {
         name: s.name,
         env,
-        mode,
+        mode: rowMode,
         symbols: JSON.stringify(s.default_symbols),
         ac: s.asset_class,
         rules: JSON.stringify(s.rules),
         ai: JSON.stringify(s.ai_gate),
-        action: JSON.stringify({ ...s.action, _strategy: s.key, _category: s.category, _timeframe: s.timeframe }),
+        action: JSON.stringify({
+          ...s.action,
+          _strategy: s.key,
+          _category: s.category,
+          _timeframe: s.timeframe,
+          ...(s.key === 'residual-reversion-spy' ? { _proposal_stub: true } : {}),
+        }),
       },
     );
     created++;

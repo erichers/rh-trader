@@ -342,6 +342,10 @@ questions. The manual, step-by-step route (prerequisites, database, `.env`, Robi
 providers, build, run, verify) is in [`docs/SETUP.md`](docs/SETUP.md). Both end with the backend
 on `127.0.0.1:8011` serving the built interface; no web server or proxy is required.
 
+A desk briefing for Ulric — architecture map, every existing bot type, risk/AI boundaries, and
+non-momentum proposals — is in [`docs/ULRIC-DESK.md`](docs/ULRIC-DESK.md). The Residual Reversion
+vs SPY stub in the strategy library is seeded disabled and in observe mode.
+
 ## Providers and models
 
 The app runs with any subset of providers. With no key at all, the deterministic parts (bots,
