@@ -24,7 +24,7 @@ export function aiReady(): boolean {
   return PROVIDERS.some(isConfigured);
 }
 
-const LABEL: Record<ProviderName, string> = { anthropic: 'Claude', kimi: 'Kimi', groq: 'Groq', nvidia: 'NVIDIA', local: 'Local' };
+const LABEL: Record<ProviderName, string> = { muse: 'Muse', anthropic: 'Claude', kimi: 'Kimi', groq: 'Groq', nvidia: 'NVIDIA', local: 'Local' };
 
 export function aiLabel(): string {
   const one = (t: Task) => {
@@ -62,8 +62,13 @@ const FAST_TASKS: Task[] = ['chat', 'triage'];
  *  (prefix + chat_template_kwargs) and room to answer; Kimi wants temperature 1. */
 function shapeBody(oc: OpenAICompat, task: Task, body: any): any {
   const m = oc.model.toLowerCase();
-  const out: any = { model: oc.model, temperature: oc.name === 'kimi' ? 1 : 0.2, ...body };
+  const out: any = { model: oc.model, temperature: oc.name === 'kimi' || oc.name === 'muse' ? 1 : 0.2, ...body };
   if (m.includes('gpt-oss')) out.reasoning_effort = FAST_TASKS.includes(task) ? 'low' : 'medium';
+  // Muse Spark always reasons; reasoning_effort:"none" is HTTP 400. Meta tunes it for temperature 1.0.
+  if (oc.name === 'muse' || m.includes('muse-spark')) {
+    out.reasoning_effort = FAST_TASKS.includes(task) ? 'low' : 'high';
+    out.temperature = 1;
+  }
   if (/nemotron|deepseek/.test(m)) {
     // Nemotron-3 reads enable_thinking, older nemotron/deepseek templates read thinking; send both.
     out.chat_template_kwargs = { ...(out.chat_template_kwargs || {}), thinking: false, enable_thinking: false };
@@ -112,7 +117,7 @@ function withMeta(obj: any, e: ResolvedEntry): any {
   return obj;
 }
 
-const NO_PROVIDER = 'No AI provider configured (set GROQ_API_KEY / KIMI_API_KEY / NVIDIA_API_KEY / ANTHROPIC_API_KEY)';
+const NO_PROVIDER = 'No AI provider configured (set META_MUSE_API_KEY / GROQ_API_KEY / KIMI_API_KEY / NVIDIA_API_KEY / ANTHROPIC_API_KEY)';
 
 /** Single completion expected to return JSON.
  *  LAW (2026-08-24): cascade on ANY per-model error (404 decommission, 400, 429,
@@ -214,7 +219,7 @@ async function agentWith(
     return { text: 'Reached max tool iterations.', calls };
   }
 
-  // OpenAI-compatible (Kimi / Groq / NVIDIA NIM).
+  // OpenAI-compatible (Muse / Kimi / Groq / NVIDIA NIM).
   const oc = ocFor(e);
   const oTools = tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }));
   const messages: any[] = [{ role: 'system', content: system }, { role: 'user', content: userPrompt }];

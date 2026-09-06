@@ -49,7 +49,7 @@ export default function ChatView() {
         setLog((l) => [...l, { role: 'assistant', text: r.answer }]);
       }
     } catch (e: any) {
-      const m = /api key|provider/i.test(String(e)) ? 'No AI provider configured — set KIMI_API_KEY / GROQ_API_KEY in .env.' : String(e);
+      const m = /api key|provider/i.test(String(e)) ? 'No AI provider configured — set META_MUSE_API_KEY / GROQ_API_KEY / KIMI_API_KEY in .env.' : String(e);
       setLog((l) => [...l, { role: 'assistant', text: m }]);
     } finally {
       setBusy(false);

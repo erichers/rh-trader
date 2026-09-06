@@ -30,7 +30,7 @@ export default function ResearchView() {
   const runClaude = async () => {
     setAiBusy(true); setErr('');
     try { setThesis(await RunResearch(symbol)); hist.reload(); }
-    catch (e: any) { setErr(String(e).includes('ANTHROPIC') ? 'No AI provider set — add KIMI_API_KEY in .env (real analysis, never fabricated).' : String(e)); }
+    catch (e: any) { setErr(String(e).includes('ANTHROPIC') || /api key|provider/i.test(String(e)) ? 'No AI provider set — add META_MUSE_API_KEY or KIMI_API_KEY in .env (real analysis, never fabricated).' : String(e)); }
     finally { setAiBusy(false); }
   };
 
