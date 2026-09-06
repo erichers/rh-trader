@@ -101,14 +101,19 @@ Say this to me, then wait:
       extra fallback capacity, and the only source of embeddings for the search layer.
    c) Kimi / Moonshot, paid, https://platform.moonshot.ai/ . Strong second rung for research
       and the daily review.
-   d) Anthropic, paid, https://console.anthropic.com/ . Leads research, the trade agent, the
-      daily review and idea generation. Tell me which model id your account can use.
-   e) A local OpenAI-compatible server, free. Ollama (http://localhost:11434/v1) or LM Studio
+   d) Anthropic, paid, https://console.anthropic.com/ . Second rung for research, the trade
+      agent, the daily review and idea generation when Muse is not configured. Tell me which
+      model id your account can use.
+   e) Meta Muse Spark, paid / preview, https://ai.developer.meta.com/ . Leads research, the
+      trade agent, the daily review and idea generation. Key goes in META_MUSE_API_KEY (aliases
+      MUSE_API_KEY and Meta's MODEL_API_KEY). Default model muse-spark-1.3.
+   f) A local OpenAI-compatible server, free. Ollama (http://localhost:11434/v1) or LM Studio
       (http://localhost:1234/v1). I will need the base URL and the exact model id the server
       returns from GET /v1/models.
    Paste the keys you want to use, and say which of these you are skipping."
 Write the answers into .env only: GROQ_API_KEY, NVIDIA_API_KEY, KIMI_API_KEY,
-ANTHROPIC_API_KEY plus ANTHROPIC_MODEL, and for a local server LOCAL_BASE_URL, LOCAL_MODEL and
+ANTHROPIC_API_KEY plus ANTHROPIC_MODEL, META_MUSE_API_KEY (or MUSE_API_KEY / MODEL_API_KEY),
+and for a local server LOCAL_BASE_URL, LOCAL_MODEL and
 LOCAL_API_KEY (Ollama ignores the key value but the variable must be non-empty).
 If I chose a local server, verify it is reachable and that the model id exists:
   curl -s $LOCAL_BASE_URL/models

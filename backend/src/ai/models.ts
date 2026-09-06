@@ -11,13 +11,13 @@ import { audit } from '../db.js';
 // configured id has gone dark. The cascade in llm.ts still catches everything else.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ProviderName = 'anthropic' | 'kimi' | 'groq' | 'nvidia' | 'local';
+export type ProviderName = 'anthropic' | 'kimi' | 'groq' | 'nvidia' | 'muse' | 'local';
 export type Task = 'chat' | 'triage' | 'research' | 'agent' | 'review' | 'ideas';
 export type ChainEntry = { provider: ProviderName; model: string };
 export type ResolvedEntry = ChainEntry & { live: boolean | null };
 
 export const TASKS: Task[] = ['chat', 'triage', 'research', 'agent', 'review', 'ideas'];
-export const PROVIDERS: ProviderName[] = ['anthropic', 'kimi', 'groq', 'nvidia', 'local'];
+export const PROVIDERS: ProviderName[] = ['anthropic', 'kimi', 'groq', 'nvidia', 'muse', 'local'];
 
 /** Per-provider fallback ladder, best first. Used when a chain's id is not live. */
 export const LADDER: Record<ProviderName, string[]> = {
@@ -43,6 +43,10 @@ export const LADDER: Record<ProviderName, string[]> = {
     'qwen/qwen3-235b-a22b',
     'moonshotai/kimi-k2-instruct',
   ],
+  // Meta Model API https://api.meta.ai/v1 — OpenAI-compatible Chat Completions + GET /v1/models
+  // (docs 2026-09). Prefer muse-spark-1.3; walk to muse-spark-1.1 if 1.3 is dark.
+  // muse-spark-1.3-contributor is selectable via META_MUSE_MODEL / MUSE_MODEL.
+  muse: ['muse-spark-1.3', 'muse-spark-1.1', 'muse-spark-1.3-contributor'],
   // Self-hosted OpenAI-compatible server: whatever model LOCAL_MODEL names (no ladder to walk).
   local: [config.local.model || 'local-model'],
 };
@@ -56,6 +60,7 @@ const DEFAULT_MODEL: Record<ProviderName, string> = {
   kimi: LADDER.kimi[0],
   groq: LADDER.groq[0],
   nvidia: LADDER.nvidia[0],
+  muse: LADDER.muse[0],
   local: LADDER.local[0],
 };
 
@@ -64,14 +69,17 @@ const N_NEMOTRON = 'nvidia/llama-3.3-nemotron-super-49b-v1.5';
 const N_DEEPSEEK = 'nvidia/nemotron-3-super-120b-a12b'; // deepseek-v3.1 is not on NIM (checked 2026-08-25); Nemotron-3 Super is the reasoning workhorse
 
 /** Ordered chain per task: best quality-per-task that fits the real rate limits.
- *  Cheap+fast tasks lead with Groq; long/expensive reasoning leads with Anthropic
- *  then Kimi and only reaches Groq as a last resort (8K TPM there). */
+ *  Cheap+fast tasks stay Groq-first. Long/expensive reasoning leads with Muse Spark
+ *  when a Meta key is present, then the existing Anthropic → Kimi → NVIDIA → Groq → local
+ *  cascade. Unconfigured providers are skipped, so a Groq-only or Anthropic-only deploy
+ *  keeps the same order it had before. */
 export const TASK_CHAINS: Record<Task, ChainEntry[]> = {
   // Vanna-style text-to-SQL + assistant chat: short prompts, latency matters.
   chat: [
     { provider: 'groq', model: 'openai/gpt-oss-120b' },
     { provider: 'groq', model: 'qwen/qwen3.6-27b' },
     { provider: 'groq', model: 'openai/gpt-oss-20b' },
+    { provider: 'muse', model: DEFAULT_MODEL.muse },
     { provider: 'nvidia', model: N_LLAMA },
     { provider: 'kimi', model: 'kimi-k2.5' },
     { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
@@ -82,6 +90,7 @@ export const TASK_CHAINS: Record<Task, ChainEntry[]> = {
     { provider: 'groq', model: 'openai/gpt-oss-20b' },
     { provider: 'groq', model: 'qwen/qwen3.6-27b' },
     { provider: 'groq', model: 'openai/gpt-oss-120b' },
+    { provider: 'muse', model: DEFAULT_MODEL.muse },
     { provider: 'nvidia', model: N_LLAMA },
     { provider: 'kimi', model: 'kimi-k2.5' },
     { provider: 'anthropic', model: DEFAULT_MODEL.anthropic }, // an Anthropic-only deploy must still triage
@@ -89,6 +98,7 @@ export const TASK_CHAINS: Record<Task, ChainEntry[]> = {
   ],
   // Long analytical prompts where quality beats cost.
   research: [
+    { provider: 'muse', model: DEFAULT_MODEL.muse },
     { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
     { provider: 'kimi', model: 'kimi-k2.5' },
     { provider: 'nvidia', model: N_DEEPSEEK },
@@ -98,6 +108,7 @@ export const TASK_CHAINS: Record<Task, ChainEntry[]> = {
   ],
   // Tool loops: needs reliable function calling.
   agent: [
+    { provider: 'muse', model: DEFAULT_MODEL.muse },
     { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
     { provider: 'kimi', model: 'kimi-k2.5' },
     { provider: 'groq', model: 'openai/gpt-oss-120b' },
@@ -106,6 +117,7 @@ export const TASK_CHAINS: Record<Task, ChainEntry[]> = {
   ],
   // Daily learning pass over many trades: biggest prompt of the day.
   review: [
+    { provider: 'muse', model: DEFAULT_MODEL.muse },
     { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
     { provider: 'kimi', model: 'kimi-k2.5' },
     { provider: 'nvidia', model: N_DEEPSEEK },
@@ -114,6 +126,7 @@ export const TASK_CHAINS: Record<Task, ChainEntry[]> = {
   ],
   // Strategy idea generation.
   ideas: [
+    { provider: 'muse', model: DEFAULT_MODEL.muse },
     { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
     { provider: 'kimi', model: 'kimi-k2.5' },
     { provider: 'nvidia', model: N_DEEPSEEK },
@@ -126,6 +139,7 @@ export function providerConfig(name: ProviderName): { apiKey: string; baseUrl: s
   if (name === 'anthropic') return { apiKey: config.anthropic.apiKey, baseUrl: 'https://api.anthropic.com/v1', model: config.anthropic.model };
   if (name === 'kimi') return config.kimi;
   if (name === 'groq') return config.groq;
+  if (name === 'muse') return config.muse;
   if (name === 'local') return config.local;
   return config.nvidia;
 }
@@ -143,9 +157,10 @@ export function isPoisoned(name: ProviderName): boolean {
     .includes(name);
 }
 
-/** GROQ_MODEL / KIMI_MODEL / NVIDIA_MODEL / ANTHROPIC_MODEL stay honored: they
- *  replace that provider's DEFAULT pick wherever a chain uses it (slots picked
- *  deliberately for cost, like the 20b triage lead, keep their own id). */
+/** GROQ_MODEL / KIMI_MODEL / NVIDIA_MODEL / ANTHROPIC_MODEL / META_MUSE_MODEL
+ *  (or MUSE_MODEL) stay honored: they replace that provider's DEFAULT pick
+ *  wherever a chain uses it (slots picked deliberately for cost, like the 20b
+ *  triage lead, keep their own id). */
 function preferred(name: ProviderName): string {
   const m = providerConfig(name).model;
   return m || DEFAULT_MODEL[name];
@@ -163,6 +178,7 @@ const probes: Record<ProviderName, ProbeState> = {
   kimi: { live: new Set(), probed_at: null, error: null },
   groq: { live: new Set(), probed_at: null, error: null },
   nvidia: { live: new Set(), probed_at: null, error: null },
+  muse: { live: new Set(), probed_at: null, error: null },
   local: { live: new Set(), probed_at: null, error: null },
 };
 
