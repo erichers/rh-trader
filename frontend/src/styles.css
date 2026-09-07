@@ -242,6 +242,36 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
 .dot.amber { background: var(--amber); }
 .dot.gray  { background: var(--muted); }
 
+/* ════════════════════════ Connection lamps (model / broker / DB) ════════════════════════ */
+.conn-strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border);
+}
+.conn-legend {
+  font-size: 10px; font-weight: 800; letter-spacing: 0.7px; text-transform: uppercase;
+  color: var(--faint); margin-right: 4px;
+}
+.conn-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px 3px 7px; border-radius: var(--radius-pill);
+  border: 1px solid var(--border); background: var(--panel2);
+  font-size: 11px; font-weight: 700; letter-spacing: 0.15px; color: var(--muted);
+  max-width: 100%;
+}
+.conn-chip .conn-lamp {
+  width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex-shrink: 0;
+}
+.conn-chip.green { color: var(--green); border-color: var(--green-line); background: var(--green-tint); }
+.conn-chip.green .conn-lamp { box-shadow: 0 0 7px var(--green); }
+.conn-chip.amber { color: var(--amber); border-color: var(--amber-line); background: var(--amber-tint); }
+.conn-chip.gray { color: var(--muted); }
+.conn-chip .conn-model {
+  font-weight: 500; color: inherit; opacity: 0.65;
+  max-width: 132px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.conn-corpus { font-size: 11px; margin-left: 4px; }
+
 /* ════════════════════════ Chat ════════════════════════ */
 .chat-log { display: flex; flex-direction: column; gap: 10px; }
 .bubble { padding: 11px 14px; border-radius: var(--radius); max-width: 80%; white-space: pre-wrap; line-height: 1.5; }

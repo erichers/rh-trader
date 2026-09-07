@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Account, Positions, Orders, Approvals, Bots, Monitors, Campaign, Alerts, AlertDismiss, Clock, Pnl, Quickbots, Leaderboard, RunPlay, BotPerformance, TradeDefaults } from '../api/client';
 import { sizingLine } from '../components/risksizing';
 import { Card, money, num, signClass, statusBadge, useAsync, Badge, FleetBadge, Progress, Sym, Info, Live, posLast } from '../components/ui';
+import ConnectionStrip from '../components/Connections';
 import { BlockBoard, type BlockItem } from '../components/blocks';
 import { DataTable, type Column } from '../components/datatable';
 import { BotModeControl, MODE_LEGEND } from '../components/botcontrols';
@@ -352,6 +353,7 @@ export default function Dashboard({ health }: { health: any }) {
 
   return (
     <div className="grid" style={{ gap: 14 }}>
+      <ConnectionStrip status={health?.connections} />
       <div className="card" style={{ borderColor: health?.killSwitch ? 'var(--red)' : 'var(--border)' }}>
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <div><span className="muted">Mode: </span><b style={{ textTransform: 'capitalize' }}>{health?.mode}</b><Info topic="mode" /> — {MODE_NOTE[health?.mode] || ''}</div>

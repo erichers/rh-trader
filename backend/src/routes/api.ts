@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { config, MODES, TRADING_ENVS, isLiveEnv, type Mode, type TradingEnv } from '../config.js';
-import { q, exec, ping, getGlobalMode, getKillSwitch, getTradingEnv, setTradingEnv, setSetting, audit, getRiskLimits, setRiskLimits, riskLimitDefaults, getExitPolicy, setExitPolicy, getTradeDefaults, setTradeDefaults, tradeDefaultsFactory } from '../db.js';
+import { q, exec, getGlobalMode, getKillSwitch, getTradingEnv, setTradingEnv, setSetting, audit, getRiskLimits, setRiskLimits, riskLimitDefaults, getExitPolicy, setExitPolicy, getTradeDefaults, setTradeDefaults, tradeDefaultsFactory } from '../db.js';
 import { rh } from '../rh/mcpClient.js';
 import { syncAll, brokerStatus } from '../brokers/index.js';
 import { executeDraft, approveOrder, rejectOrder } from '../execute.js';
@@ -34,7 +34,8 @@ import { getFocus, setFocus, learnTicker, tickerBrain, FOCUS_TICKERS } from '../
 import { searchKnowledge } from '../knowledge.js';
 import { knowledgeStats } from '../rag.js';
 import { getFutures, leadingFuture } from '../market/futures.js';
-import { runLearning, listRuns, listIdeas, learningStatus } from '../learning.js';
+import { runLearning, listRuns, listIdeas, listLearnings, learningStatus } from '../learning.js';
+import { connectionStatus } from '../connections.js';
 
 /** Attach each bot's EFFECTIVE risk (bot value, else the global trade default, with the
  *  source of every field) to a bot list. Additive — no existing field changes. */
@@ -72,9 +73,10 @@ export async function registerRoutes(app: FastifyInstance) {
   // ── Health & status ───────────────────────────────────────────────────────
   app.get('/api/health', async () => {
     const env = await getTradingEnv();
+    const connections = await connectionStatus();
     return {
       ok: true,
-      db: await ping(),
+      db: connections.db.live === true,
       ai: aiReady(),
       aiLabel: aiLabel(),
       aiShort: aiShort(),
@@ -85,7 +87,16 @@ export async function registerRoutes(app: FastifyInstance) {
       live: isLiveEnv(env),
       broker: await brokerStatus(),
       model: aiShort(),
+      connections,
     };
+  });
+
+  // Per-provider connection status for the UI lamps. Never includes API keys or secrets.
+  app.get('/api/models/status', async () => {
+    const connections = await connectionStatus({ probe: true });
+    const tasks: Record<string, { provider: string; model: string; live: boolean | null }[]> = {};
+    for (const t of TASKS) tasks[t] = resolveChain(t);
+    return { ...connections, tasks };
   });
 
   // Which model answers which task, and what the last liveness probe saw.
@@ -718,10 +729,12 @@ export async function registerRoutes(app: FastifyInstance) {
       : q('SELECT * FROM research_analyses ORDER BY created_at DESC LIMIT 50');
   });
   app.get('/api/news', async (req) => {
-    const s = (req.query as any)?.symbol;
+    const s = (req.query as any)?.symbol ? String((req.query as any).symbol).toUpperCase() : '';
+    const lim = Math.min(200, Math.max(1, Number((req.query as any)?.limit) || 80));
+    // COALESCE so imported rows with a null published_at still sort by when they were stored.
     return s
-      ? q('SELECT * FROM news WHERE symbol=:s ORDER BY published_at DESC LIMIT 60', { s: String(s).toUpperCase() })
-      : q('SELECT * FROM news ORDER BY published_at DESC LIMIT 60');
+      ? q('SELECT id, ext_id, symbol, headline, summary, source, url, sentiment, published_at, created_at FROM news WHERE symbol=:s ORDER BY COALESCE(published_at, created_at) DESC LIMIT :lim', { s, lim })
+      : q('SELECT id, ext_id, symbol, headline, summary, source, url, sentiment, published_at, created_at FROM news ORDER BY COALESCE(published_at, created_at) DESC LIMIT :lim', { lim });
   });
   app.post('/api/news/refresh', async (req) => {
     const s = (req.body as any)?.symbols as string[] | undefined;
@@ -773,6 +786,11 @@ export async function registerRoutes(app: FastifyInstance) {
     const Q = req.query as any;
     const env = (TRADING_ENVS.includes(Q?.env) ? Q.env : await getTradingEnv()) as TradingEnv;
     return learningStatus(env);
+  });
+  app.get('/api/learnings', async (req) => {
+    const Q = req.query as any;
+    const env = (TRADING_ENVS.includes(Q?.env) ? Q.env : await getTradingEnv()) as TradingEnv;
+    return { env, learnings: await listLearnings(env, Number(Q?.limit) || 80) };
   });
 
   // ── Chat / agent ──────────────────────────────────────────────────────────

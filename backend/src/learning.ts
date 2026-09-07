@@ -984,19 +984,42 @@ async function runIfDue(env: TradingEnv, kind: 'daily' | 'weekly'): Promise<any 
 
 // ── 10. reads for the API ────────────────────────────────────────────────────
 
-export async function listRuns(env: TradingEnv, limit = 30): Promise<any[]> {
-  const rows = await q<any>(
-    `SELECT id, env, kind, run_date, status, ideas_tested, ideas_kept, model, error, created_at,
-            JSON_EXTRACT(review,'$.lessons') lessons, JSON_EXTRACT(evidence,'$.counts') counts
-       FROM learning_runs WHERE env=:env ORDER BY id DESC LIMIT :lim`,
-    { env, lim: Math.min(100, Math.max(1, limit)) },
-  );
+function mapRunRows(rows: any[]): any[] {
   return rows.map((r) => ({
     ...r,
     run_date: dateKey(r.run_date),
     lessons: parse(r.lessons, []) || [],
     counts: parse(r.counts, {}) || {},
   }));
+}
+
+export async function listRuns(env: TradingEnv, limit = 30): Promise<any[]> {
+  const lim = Math.min(100, Math.max(1, limit));
+  const sql = `SELECT id, env, kind, run_date, status, ideas_tested, ideas_kept, model, error, created_at,
+            JSON_EXTRACT(review,'$.lessons') lessons, JSON_EXTRACT(evidence,'$.counts') counts
+       FROM learning_runs`;
+  let rows = await q<any>(`${sql} WHERE env=:env OR env IS NULL ORDER BY id DESC LIMIT :lim`, { env, lim });
+  // Imported history may predate env tags — still surface the corpus so the page is not empty.
+  if (!rows.length) rows = await q<any>(`${sql} ORDER BY id DESC LIMIT :lim`, { lim });
+  return mapRunRows(rows);
+}
+
+/** Stored lessons / post-trade notes from the `learnings` table (no embeddings). */
+export async function listLearnings(env: TradingEnv, limit = 80): Promise<any[]> {
+  const lim = Math.min(200, Math.max(1, limit));
+  const cols = 'id, kind, title, body, data, tags, env, created_at';
+  let rows = await q<any>(
+    `SELECT ${cols} FROM learnings WHERE env IS NULL OR env=:env ORDER BY created_at DESC LIMIT :lim`,
+    { env, lim },
+  );
+  if (!rows.length) rows = await q<any>(`SELECT ${cols} FROM learnings ORDER BY created_at DESC LIMIT :lim`, { lim });
+  return rows.map((r) => {
+    const data = parse(r.data, {}) || {};
+    return {
+      id: r.id, kind: r.kind, title: r.title, body: r.body, data, tags: parse(r.tags, []) || [],
+      env: r.env, created_at: r.created_at, symbol: data.symbol || null,
+    };
+  });
 }
 
 export async function listIdeas(env: TradingEnv, opts: { status?: string; limit?: number } = {}): Promise<any[]> {
@@ -1027,13 +1050,15 @@ export async function listIdeas(env: TradingEnv, opts: { status?: string; limit?
 }
 
 export async function learningStatus(env: TradingEnv): Promise<any> {
-  const [last] = await q<any>('SELECT id, kind, run_date, status, ideas_kept, model, created_at FROM learning_runs WHERE env=:env ORDER BY id DESC LIMIT 1', { env });
+  let [last] = await q<any>('SELECT id, kind, run_date, status, ideas_kept, model, created_at FROM learning_runs WHERE env=:env OR env IS NULL ORDER BY id DESC LIMIT 1', { env });
+  if (!last) [last] = await q<any>('SELECT id, kind, run_date, status, ideas_kept, model, created_at FROM learning_runs ORDER BY id DESC LIMIT 1');
   const [counts] = await q<any>(
-    `SELECT (SELECT COUNT(*) FROM learning_runs WHERE env=:env) runs,
+    `SELECT (SELECT COUNT(*) FROM learning_runs WHERE env=:env OR env IS NULL) runs,
             (SELECT COUNT(*) FROM strategy_ideas WHERE env=:env) ideas,
             (SELECT COUNT(*) FROM strategy_ideas WHERE env=:env AND status='kept') kept,
             (SELECT COUNT(*) FROM strategy_ideas WHERE env=:env AND status='retired') retired,
-            (SELECT COALESCE(MAX(generation),0) FROM strategy_ideas WHERE env=:env) generation`,
+            (SELECT COALESCE(MAX(generation),0) FROM strategy_ideas WHERE env=:env) generation,
+            (SELECT COUNT(*) FROM learnings) learnings`,
     { env },
   );
   return {

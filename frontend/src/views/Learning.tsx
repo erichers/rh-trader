@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { LearningStatus, LearningRuns, LearningIdeas, RunLearning } from '../api/client';
+import { LearningStatus, LearningRuns, LearningIdeas, Learnings, RunLearning } from '../api/client';
 import { Card, Badge, Info, Sym, fmtDateTime, useAsync } from '../components/ui';
 import { DataTable, type Column } from '../components/datatable';
 import { Icon } from '../components/icons';
+import ConnectionStrip from '../components/Connections';
 
 // Learning iterator. Once a day after the close (and once more on Sunday), this account's own
 // record is gathered, reviewed by the model, turned into new strategy ideas, and every idea is
@@ -31,6 +32,7 @@ export default function LearningView() {
   const { data: status, reload: reloadStatus } = useAsync<any>(() => LearningStatus(), [], 60000);
   const { data: runsData, loading: runsLoading, reload: reloadRuns } = useAsync<any>(() => LearningRuns(30), [], 60000);
   const { data: ideasData, loading: ideasLoading, reload: reloadIdeas } = useAsync<any>(() => LearningIdeas(), [], 60000);
+  const { data: learningsData, loading: learningsLoading, reload: reloadLearnings } = useAsync<any>(() => Learnings(), [], 60000);
   const [filter, setFilter] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -39,13 +41,14 @@ export default function LearningView() {
 
   const runs: any[] = runsData?.runs || [];
   const ideas: any[] = (ideasData?.ideas || []).filter((i: any) => !filter || i.status === filter);
+  const stored: any[] = learningsData?.learnings || [];
 
   const dryRun = async () => {
     setBusy(true); setErr(''); setResult(null);
     try {
       const r = await RunLearning({ kind: 'daily', dry_run: true });
       setResult(r);
-      reloadStatus(); reloadRuns(); reloadIdeas();
+      reloadStatus(); reloadRuns(); reloadIdeas(); reloadLearnings();
     } catch (e: any) {
       setErr(String(e?.message || e));
     } finally { setBusy(false); }
@@ -94,6 +97,7 @@ export default function LearningView() {
 
   return (
     <div className="stack" style={{ gap: 14 }}>
+      <ConnectionStrip />
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
         <h2 style={{ margin: 0 }} className="icon-btn">
           <Icon name="learn" size={20} /> Learning
@@ -116,6 +120,7 @@ export default function LearningView() {
             <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Last run</span><span>{status?.last_run ? `${status.last_run.run_date} ${status.last_run.kind} (${status.last_run.status})` : 'none yet'}</span></div>
             <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Generation</span><span>G{status?.counts?.generation ?? 0}</span></div>
             <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Ideas</span><span>{status?.counts?.ideas ?? 0} total · {status?.counts?.kept ?? 0} kept · {status?.counts?.retired ?? 0} retired</span></div>
+            <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Stored learnings</span><span>{status?.counts?.learnings ?? stored.length}</span></div>
             <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Eligible</span><span>{status?.eligible ? 'yes' : 'not enough history yet'}</span></div>
             <div className="muted" style={{ fontSize: 11 }}>{status?.schedule}</div>
             <div className="muted" style={{ fontSize: 11 }}>Gate: {status?.gate}</div>
@@ -144,6 +149,29 @@ export default function LearningView() {
           </Card>
         )}
       </div>
+
+      <Card title={`Stored learnings (${stored.length})`} right={<button onClick={reloadLearnings}>Refresh</button>}>
+        <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>Rows from the MySQL <code>learnings</code> table (lessons, post-trade notes). Embeddings are not sent to the browser.</div>
+        {learningsLoading && !stored.length ? <div className="muted">Loading...</div> : !stored.length ? (
+          <div className="muted">No rows in <code>learnings</code> yet. A real (non-dry) iterator run writes lessons here.</div>
+        ) : (
+          <div className="stack" style={{ gap: 8 }}>
+            {stored.slice(0, 40).map((l) => (
+              <div key={l.id} style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 8 }}>
+                <div className="row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                  <span>
+                    <Badge kind="gray">{l.kind || 'note'}</Badge>
+                    {l.symbol ? <Sym>{l.symbol}</Sym> : null}
+                    <b>{l.title}</b>
+                  </span>
+                  <span className="muted" style={{ fontSize: 11 }}>{fmtDateTime(l.created_at)}</span>
+                </div>
+                {l.body && <div style={{ fontSize: 13, marginTop: 4 }}>{String(l.body).slice(0, 420)}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
       <Card title={`Runs (${runs.length})`} right={<button onClick={reloadRuns}>Refresh</button>}>
         {runsLoading && !runs.length ? <div className="muted">Loading...</div> : (

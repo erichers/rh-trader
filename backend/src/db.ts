@@ -469,8 +469,13 @@ async function ensureFulltext(table: string, indexName: string, cols: string): P
 }
 
 export async function audit(type: string, message: string, data?: any): Promise<void> {
-  await exec(
-    'INSERT INTO audit_log (type, message, data) VALUES (:type, :message, CAST(:data AS JSON))',
-    { type, message, data: JSON.stringify(data ?? {}) },
-  );
+  try {
+    await exec(
+      'INSERT INTO audit_log (type, message, data) VALUES (:type, :message, CAST(:data AS JSON))',
+      { type, message, data: JSON.stringify(data ?? {}) },
+    );
+  } catch (e: any) {
+    // Never let a log write take down the API (MariaDB rejects CAST(? AS JSON) that MySQL 8 accepts).
+    console.warn('audit skipped:', type, e?.message || e);
+  }
 }
