@@ -37,8 +37,8 @@ export default function Onboarding({ force }: { force?: boolean }) {
         <div>
           <div className="muted muse-k">Who does what</div>
           <p>
-            Muse handles short watch, ops, and performance notes. NVIDIA then Groq do
-            longer research and reviews. Groq also answers chat and sorts news. Kimi is
+            Muse handles chat, short watch, ops, and performance notes. NVIDIA then Groq do
+            longer research and reviews. Groq still sorts news. Kimi is
             backup. Anthropic is optional and the key may be invalid.
           </p>
         </div>

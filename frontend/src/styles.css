@@ -283,6 +283,7 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
 .bubble { padding: 11px 14px; border-radius: var(--radius); max-width: 80%; white-space: pre-wrap; line-height: 1.5; }
 .bubble.user { align-self: flex-end; background: var(--green-tint); border: 1px solid var(--green-line); }
 .bubble.assistant { align-self: flex-start; background: var(--panel2); border: 1px solid var(--border); }
+.bubble-via { margin-top: 8px; font-size: 11px; letter-spacing: 0.02em; }
 .pill {
   display: inline-block; font-size: 11px; padding: 2px 9px; border-radius: var(--radius-pill);
   background: var(--panel2); color: var(--muted); border: 1px solid var(--border); font-weight: 600;

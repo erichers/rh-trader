@@ -85,10 +85,10 @@ const SEARCH_TOOL: Tool = {
   },
 };
 
-export async function assistantChat(message: string): Promise<{ answer: string }> {
+export async function assistantChat(message: string): Promise<{ answer: string; provider: string; model: string }> {
   await exec('INSERT INTO chat_messages (role, content) VALUES ("user", :c)', { c: message });
   const { searchKnowledge } = await import('../knowledge.js');
-  const { text } = await llmAgent(
+  const { text, provider, model } = await llmAgent(
     SYSTEM_RULES + "\n\nYou answer questions about the user's trading data and knowledge base. Use run_sql for structured data and search_knowledge for news/research/learnings/insights (RAG). Cite what you find. Be concise.",
     message,
     [SQL_TOOL, SEARCH_TOOL],
@@ -101,8 +101,11 @@ export async function assistantChat(message: string): Promise<{ answer: string }
     6,
     { readOnlyTools: true }, // run_sql + search_knowledge are read-only: safe to re-run on cascade
   );
-  await exec('INSERT INTO chat_messages (role, content) VALUES ("assistant", :c)', { c: text });
-  return { answer: text };
+  await exec(
+    'INSERT INTO chat_messages (role, content, meta) VALUES ("assistant", :c, CAST(:meta AS JSON))',
+    { c: text, meta: JSON.stringify({ provider, model }) },
+  );
+  return { answer: text, provider, model };
 }
 
 // ── Agentic trade turn ──────────────────────────────────────────────────────
@@ -134,12 +137,12 @@ function rhReadTools(): Tool[] {
     }));
 }
 
-export async function agentTradeTurn(userPrompt: string, opts: { allowOpenNew?: boolean } = {}): Promise<{ answer: string; actions: any[] }> {
+export async function agentTradeTurn(userPrompt: string, opts: { allowOpenNew?: boolean } = {}): Promise<{ answer: string; actions: any[]; provider: string; model: string }> {
   const envAtStart = await getTradingEnv(); // drafts are pinned to the account the turn started on
   const mode = await getGlobalMode();
   const actions: any[] = [];
   const tools = [...rhReadTools(), PROPOSE_ORDER_TOOL];
-  const { text } = await llmAgent(
+  const { text, provider, model } = await llmAgent(
     SYSTEM_RULES + `\n\nCurrent execution mode: ${mode}. ${opts.allowOpenNew ? 'You may open new positions.' : 'Only manage/close existing positions unless explicitly asked.'}`,
     userPrompt,
     tools,
@@ -161,7 +164,7 @@ export async function agentTradeTurn(userPrompt: string, opts: { allowOpenNew?: 
     'agent',
     8,
   );
-  return { answer: text, actions };
+  return { answer: text, actions, provider, model };
 }
 
 function clamp(n: any, lo: number, hi: number): number {

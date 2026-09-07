@@ -40,7 +40,7 @@ export function aiProvider(): ProviderName | null { return providerFor('research
 
 export function aiShort(): string {
   const cap = (p: ProviderName | null) => (p ? LABEL[p] : null);
-  // Watch lead (Muse when configured) + chat lead (Groq) is the desk lamp.
+  // Watch lead + chat lead (Muse when configured) is the desk lamp.
   const names = [...new Set([cap(providerFor('watch')), cap(providerFor('chat'))].filter(Boolean))];
   return names.length ? names.join(' + ') : 'no AI key';
 }
@@ -169,7 +169,7 @@ export async function llmAgent(
   task: Task = 'agent',
   maxIters = 8,
   opts?: { readOnlyTools?: boolean }, // read-only tool sets (SQL/knowledge lookups) may safely re-run on cascade
-): Promise<{ text: string; calls: { name: string; args: any; result: any }[] }> {
+): Promise<{ text: string; calls: { name: string; args: any; result: any }[]; provider: ProviderName; model: string }> {
   const chain = resolveChain(task);
   if (!chain.length) throw new Error(NO_PROVIDER);
   const errs: string[] = [];
@@ -180,7 +180,7 @@ export async function llmAgent(
       const out = await agentWith(e, task, system, userPrompt, tools, runTool, maxIters);
       console.log(`[llm] ${task} answered by ${e.provider} ${e.model}`);
       recordLlmCall({ provider: e.provider, task, model: e.model, phase: 'ok' });
-      return out;
+      return { ...out, provider: e.provider, model: e.model };
     } catch (err: any) {
       const msg = String(err?.message || err).slice(0, 160);
       recordLlmCall({ provider: e.provider, task, model: e.model, phase: 'error', detail: msg });
