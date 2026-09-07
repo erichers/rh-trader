@@ -1,5 +1,5 @@
 import { ping, q } from './db.js';
-import { PROVIDERS, providerStatus, probeProviders, probedOnce, sanitizeError, type ProviderName } from './ai/models.js';
+import { PROVIDERS, isOptionalDeskProvider, providerStatus, probeProviders, probedOnce, sanitizeError, type ProviderName } from './ai/models.js';
 import { museActivity } from './ai/activity.js';
 import { hydrateWatchStatus, watchStatus } from './watch.js';
 import { alpacaConfigured, alpacaPaper } from './brokers/alpaca.js';
@@ -132,7 +132,15 @@ export async function connectionStatus(opts: { probe?: boolean } = {}): Promise<
     error: dbCache.error,
   });
 
-  const chips = [...PROVIDER_ORDER.map((id) => providers[id]), alpaca, db];
+  // Muse / Groq / NVIDIA / Kimi always show. Anthropic and Local only when live
+  // (401 Anthropic and unset Local stay off the strip). Alpaca + DB stay.
+  const chips = [
+    ...PROVIDER_ORDER
+      .map((id) => providers[id])
+      .filter((c) => !isOptionalDeskProvider(c.id as ProviderName) || (c.configured && c.live === true)),
+    alpaca,
+    db,
+  ];
   await hydrateWatchStatus().catch(() => {});
   return {
     providers,

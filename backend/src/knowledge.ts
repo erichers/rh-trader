@@ -23,12 +23,66 @@ export type KnowledgeHit = {
   source: 'news' | 'research' | 'learning' | 'insight' | 'rag';
   id: number; symbol: string | null; title: string; snippet: string;
   score: number; created_at: any; url?: string | null;
-  env?: string | null; via?: 'fulltext' | 'hybrid';
+  env?: string | null; via?: 'fulltext' | 'hybrid' | 'recent';
 };
 
 type ScoredHit = KnowledgeHit & { _raw: number; _vec?: number[] | null; _model?: string | null };
 
 const clip = (s: any, n = 280) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+
+/** First real http(s) URL in a string or JSON blob. Never invents a link. */
+function firstHttps(v: any): string | null {
+  if (v == null) return null;
+  const s = typeof v === 'string' ? v : (() => { try { return JSON.stringify(v); } catch { return ''; } })();
+  const m = s.match(/https?:\/\/[^\s"'<>\\]+/i);
+  if (!m) return null;
+  return m[0].replace(/[),.;]+$/g, '').slice(0, 500);
+}
+
+function recencyBoost(createdAt: any): number {
+  if (!createdAt) return 0;
+  const t = new Date(createdAt).getTime();
+  if (!Number.isFinite(t)) return 0;
+  const days = (Date.now() - t) / 86_400_000;
+  if (days < 1) return 0.14;
+  if (days < 7) return 0.09;
+  if (days < 30) return 0.04;
+  return 0;
+}
+
+let extraChunkTable: string | null | undefined;
+async function optionalChunkTable(): Promise<string | null> {
+  if (extraChunkTable !== undefined) return extraChunkTable;
+  try {
+    const rows = await q<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema=DATABASE() AND table_name IN ('ulric_rag_chunks','rag_chunks')
+       ORDER BY table_name='ulric_rag_chunks' DESC LIMIT 1`,
+    );
+    extraChunkTable = rows[0]?.table_name || null;
+  } catch {
+    extraChunkTable = null;
+  }
+  return extraChunkTable;
+}
+
+async function chunkColumns(table: string): Promise<Record<string, string>> {
+  const rows = await q<{ column_name: string }>(
+    `SELECT column_name FROM information_schema.columns
+     WHERE table_schema=DATABASE() AND table_name=:t`,
+    { t: table },
+  );
+  const have = new Set(rows.map((r) => String(r.column_name).toLowerCase()));
+  const pick = (...cands: string[]) => cands.find((c) => have.has(c)) || '';
+  return {
+    id: pick('id'),
+    text: pick('chunk_text', 'content', 'body', 'text', 'doc_text', 'chunk'),
+    title: pick('title', 'headline'),
+    url: pick('url', 'source_url', 'link'),
+    symbol: pick('symbol', 'ticker'),
+    created: pick('created_at', 'updated_at', 'published_at'),
+  };
+}
 
 // Weight on the keyword term when a comparable vector exists. The remainder is the
 // cosine term; with no vector the cosine term falls back to the keyword score, which
@@ -39,16 +93,17 @@ const FT_WEIGHT = 0.6;
  *  defaults to the active trading account (pass null for shared knowledge only). */
 export async function searchKnowledge(
   query: string,
-  opts: { symbol?: string; limit?: number; env?: string | null } = {},
+  opts: { symbol?: string; limit?: number; env?: string | null; preferRecent?: boolean } = {},
 ): Promise<KnowledgeHit[]> {
   const term = String(query || '').trim();
   if (!term) return [];
-  const limit = Math.min(opts.limit ?? 20, 50);
+  const limit = Math.min(opts.limit ?? 24, 60);
+  const fetchLim = Math.min(30, Math.max(limit, 16));
   const sym = opts.symbol ? opts.symbol.toUpperCase() : null;
   const env = opts.env !== undefined ? opts.env : await getTradingEnv();
   const symFilter = (col: string) => (sym ? ` AND ${col}=:sym` : '');
   const envFilter = ' AND (env IS NULL OR env=:env)';
-  const params: any = { q: term, sym, lim: limit, env };
+  const params: any = { q: term, sym, lim: fetchLim, env };
 
   const hits: ScoredHit[] = [];
   // Each block is best-effort: a malformed FULLTEXT term shouldn't kill the search.
@@ -66,14 +121,14 @@ export async function searchKnowledge(
             MATCH(headline,summary) AGAINST (:q IN NATURAL LANGUAGE MODE) score
      FROM news WHERE MATCH(headline,summary) AGAINST (:q IN NATURAL LANGUAGE MODE)${symFilter('symbol')}
      ORDER BY score DESC LIMIT :lim`,
-    (r) => ({ source: 'news', id: r.id, symbol: r.symbol, title: clip(r.headline, 140), snippet: clip(r.summary || r.headline), score: Number(r.score), _raw: Number(r.score), created_at: r.published_at, url: r.url, env: null }),
+    (r) => ({ source: 'news', id: r.id, symbol: r.symbol, title: clip(r.headline, 140), snippet: clip(r.summary || r.headline), score: Number(r.score), _raw: Number(r.score), created_at: r.published_at, url: firstHttps(r.url), env: null }),
   );
   await run(
-    `SELECT id, symbol, title, analysis, updated_at,
+    `SELECT id, symbol, title, analysis, sources, updated_at,
             MATCH(analysis) AGAINST (:q IN NATURAL LANGUAGE MODE) score
      FROM research_notes WHERE MATCH(analysis) AGAINST (:q IN NATURAL LANGUAGE MODE)${symFilter('symbol')}
      ORDER BY score DESC LIMIT :lim`,
-    (r) => ({ source: 'research', id: r.id, symbol: r.symbol, title: clip(r.title, 140), snippet: clip(r.analysis), score: Number(r.score), _raw: Number(r.score), created_at: r.updated_at, env: null }),
+    (r) => ({ source: 'research', id: r.id, symbol: r.symbol, title: clip(r.title, 140), snippet: clip(r.analysis), score: Number(r.score), _raw: Number(r.score), created_at: r.updated_at, url: firstHttps(r.sources), env: null }),
   );
   await run(
     `SELECT id, title, body, env, embedding, embed_model, created_at,
@@ -91,24 +146,52 @@ export async function searchKnowledge(
   );
   await run(
     `SELECT id, doc_text, env, embedding, embed_model, created_at,
-            metadata->>'$.title' title, metadata->>'$.symbol' symbol,
+            metadata->>'$.title' title, metadata->>'$.symbol' symbol, metadata->>'$.url' url,
             MATCH(doc_text) AGAINST (:q IN NATURAL LANGUAGE MODE) score
      FROM rag_documents WHERE MATCH(doc_text) AGAINST (:q IN NATURAL LANGUAGE MODE)${envFilter}${sym ? " AND metadata->>'$.symbol'=:sym" : ''}
      ORDER BY score DESC LIMIT :lim`,
-    (r) => ({ source: 'rag', id: r.id, symbol: r.symbol ?? null, title: clip(r.title || r.doc_text, 140), snippet: clip(r.doc_text), score: Number(r.score), _raw: Number(r.score), created_at: r.created_at, env: r.env ?? null, _vec: parseVector(r.embedding), _model: r.embed_model ?? null }),
+    (r) => ({ source: 'rag', id: r.id, symbol: r.symbol ?? null, title: clip(r.title || r.doc_text, 140), snippet: clip(r.doc_text), score: Number(r.score), _raw: Number(r.score), created_at: r.created_at, url: firstHttps(r.url), env: r.env ?? null, _vec: parseVector(r.embedding), _model: r.embed_model ?? null }),
   );
+
+  const extra = await optionalChunkTable();
+  if (extra) {
+    try {
+      const cols = await chunkColumns(extra);
+      if (cols.text && cols.id) {
+        const like = `%${term.replace(/[%_]/g, '')}%`;
+        const titleExpr = cols.title ? cols.title : `LEFT(${cols.text}, 140)`;
+        const urlExpr = cols.url ? cols.url : 'NULL';
+        const symExpr = cols.symbol ? cols.symbol : 'NULL';
+        const createdExpr = cols.created ? cols.created : 'NULL';
+        const symClause = sym && cols.symbol ? ` AND ${cols.symbol}=:sym` : '';
+        const rows = await q<any>(
+          `SELECT ${cols.id} id, ${titleExpr} title, ${cols.text} body, ${urlExpr} url, ${symExpr} symbol, ${createdExpr} created_at
+           FROM ${extra}
+           WHERE (${cols.text} LIKE :like${cols.title ? ` OR ${cols.title} LIKE :like` : ''})${symClause}
+           ORDER BY ${cols.created || cols.id} DESC LIMIT :lim`,
+          { like, sym, lim: fetchLim },
+        );
+        rows.forEach((r) => hits.push({
+          source: 'rag', id: Number(r.id), symbol: r.symbol ?? null, title: clip(r.title || r.body, 140),
+          snippet: clip(r.body), score: 0.12, _raw: 0.12, created_at: r.created_at, url: firstHttps(r.url), env: null,
+        }));
+      }
+    } catch (e: any) {
+      console.error(`[knowledge] optional ${extra} failed: ${String(e?.message || e).slice(0, 160)}`);
+    }
+  }
 
   // Fallback to LIKE if FULLTEXT found nothing (e.g. very short/stopword query).
   if (!hits.length) {
     const like = `%${term.replace(/[%_]/g, '')}%`;
     try {
       const rows = await q<any>(
-        `SELECT id, symbol, headline, summary, published_at FROM news
+        `SELECT id, symbol, headline, summary, url, published_at FROM news
          WHERE (headline LIKE :like OR summary LIKE :like)${sym ? ' AND symbol=:sym' : ''}
          ORDER BY published_at DESC LIMIT :lim`,
-        { like, sym, lim: limit },
+        { like, sym, lim: fetchLim },
       );
-      rows.forEach((r) => hits.push({ source: 'news', id: r.id, symbol: r.symbol, title: clip(r.headline, 140), snippet: clip(r.summary || r.headline), score: 0.1, _raw: 0.1, created_at: r.published_at, env: null }));
+      rows.forEach((r) => hits.push({ source: 'news', id: r.id, symbol: r.symbol, title: clip(r.headline, 140), snippet: clip(r.summary || r.headline), score: 0.1, _raw: 0.1, created_at: r.published_at, url: firstHttps(r.url), env: null }));
     } catch { /* skip */ }
   }
   // Query embedding (only when NIM is configured), bounded to ~2.5s so a slow provider can
@@ -148,12 +231,12 @@ export async function searchKnowledge(
       (r) => ({ source: 'learning', id: r.id, symbol: null, title: clip(r.title, 140), snippet: clip(r.body), score: 0, _raw: 0, created_at: r.created_at, env: r.env ?? null, _vec: parseVector(r.embedding), _model: r.embed_model ?? null }),
     );
     await vrun(
-      `SELECT id, doc_text, env, embedding, embed_model, created_at, metadata->>'$.title' title, metadata->>'$.symbol' symbol
+      `SELECT id, doc_text, env, embedding, embed_model, created_at, metadata->>'$.title' title, metadata->>'$.symbol' symbol, metadata->>'$.url' url
        FROM rag_documents WHERE embed_model=:m${envFilter}${sym ? " AND metadata->>'$.symbol'=:sym" : ''} ORDER BY created_at DESC LIMIT 300`,
-      (r) => ({ source: 'rag', id: r.id, symbol: r.symbol ?? null, title: clip(r.title || r.doc_text, 140), snippet: clip(r.doc_text), score: 0, _raw: 0, created_at: r.created_at, env: r.env ?? null, _vec: parseVector(r.embedding), _model: r.embed_model ?? null }),
+      (r) => ({ source: 'rag', id: r.id, symbol: r.symbol ?? null, title: clip(r.title || r.doc_text, 140), snippet: clip(r.doc_text), score: 0, _raw: 0, created_at: r.created_at, url: firstHttps(r.url), env: r.env ?? null, _vec: parseVector(r.embedding), _model: r.embed_model ?? null }),
     );
   }
-  if (!hits.length) return [];
+  // Empty keyword/vector set is OK when preferRecent can still fill from the desk.
 
   // Blend. Keyword relevance is normalized to the best hit; cosine is floor-normalized
   // (NIM similarity rarely drops below ~0.5 even for unrelated text) so an embedded row
@@ -178,6 +261,50 @@ export async function searchKnowledge(
     h.score = Number((((kr != null ? 1 / (K + kr) : 0) + (vr != null ? 1 / (K + vr) : 0)) * 100).toFixed(4));
   }
 
+  if (opts.preferRecent) {
+    const seen = new Set(hits.map((h) => `${h.source}:${h.id}`));
+    const addRecent = async (sql: string, map: (r: any) => ScoredHit) => {
+      try {
+        for (const r of await q<any>(sql, { sym, env, lim: 8 })) {
+          const h = map(r);
+          const key = `${h.source}:${h.id}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          h.via = 'recent';
+          hits.push(h);
+        }
+      } catch (e: any) {
+        console.error(`[knowledge] recent block failed: ${String(e?.message || e).slice(0, 160)}`);
+      }
+    };
+    await addRecent(
+      `SELECT id, symbol, headline, summary, url, published_at FROM news
+       WHERE 1=1${symFilter('symbol')} ORDER BY published_at DESC LIMIT :lim`,
+      (r) => ({ source: 'news', id: r.id, symbol: r.symbol, title: clip(r.headline, 140), snippet: clip(r.summary || r.headline), score: 0.06, _raw: 0.06, created_at: r.published_at, url: firstHttps(r.url), env: null }),
+    );
+    await addRecent(
+      `SELECT id, title, body, env, created_at FROM learnings
+       WHERE 1=1${envFilter} ORDER BY created_at DESC LIMIT :lim`,
+      (r) => ({ source: 'learning', id: r.id, symbol: null, title: clip(r.title, 140), snippet: clip(r.body), score: 0.06, _raw: 0.06, created_at: r.created_at, env: r.env ?? null }),
+    );
+    await addRecent(
+      `SELECT id, symbol, title, analysis, sources, updated_at FROM research_notes
+       WHERE 1=1${symFilter('symbol')} ORDER BY updated_at DESC LIMIT :lim`,
+      (r) => ({ source: 'research', id: r.id, symbol: r.symbol, title: clip(r.title, 140), snippet: clip(r.analysis), score: 0.06, _raw: 0.06, created_at: r.updated_at, url: firstHttps(r.sources), env: null }),
+    );
+    await addRecent(
+      `SELECT id, doc_text, env, created_at, metadata->>'$.title' title, metadata->>'$.symbol' symbol, metadata->>'$.url' url
+       FROM rag_documents WHERE 1=1${envFilter}${sym ? " AND metadata->>'$.symbol'=:sym" : ''}
+       ORDER BY created_at DESC LIMIT :lim`,
+      (r) => ({ source: 'rag', id: r.id, symbol: r.symbol ?? null, title: clip(r.title || r.doc_text, 140), snippet: clip(r.doc_text), score: 0.05, _raw: 0.05, created_at: r.created_at, url: firstHttps(r.url), env: r.env ?? null }),
+    );
+  }
+
+  for (const h of hits) {
+    const boost = recencyBoost(h.created_at);
+    if (boost) h.score = Number((h.score * (1 + boost) + boost).toFixed(4));
+  }
+
   return hits
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
@@ -186,5 +313,8 @@ export async function searchKnowledge(
 
 /** Compact context string for feeding retrieved knowledge into an LLM prompt. */
 export function knowledgeToContext(hits: KnowledgeHit[]): string {
-  return hits.slice(0, 12).map((h, i) => `[${i + 1}] (${h.source}${h.symbol ? ' · ' + h.symbol : ''}) ${h.title}: ${h.snippet}`).join('\n');
+  return hits.slice(0, 16).map((h, i) => {
+    const url = h.url ? ` · ${h.url}` : '';
+    return `[${i + 1}] (${h.source}${h.symbol ? ' · ' + h.symbol : ''}${url}) ${h.title}: ${h.snippet}`;
+  }).join('\n');
 }

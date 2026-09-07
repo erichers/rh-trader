@@ -138,17 +138,18 @@ Say this to me, then wait:
   "Which language model providers do you have? Any subset works, including none. Without any
    key the bots, rules, backtests, monitors and risk engine still run; research, news triage,
    Ask AI, the trade agent and the learning iterator go quiet.
-   a) Groq, free tier, https://console.groq.com/keys . Fast, leads the chat and news-triage
-      tasks. Free limits are 30 requests/min, 8K tokens/min and 1K requests/day per model.
+   a) Groq, free tier, https://console.groq.com/keys . Fast, leads news-triage and is the
+      chat fallback when Muse is dark. Free limits are 30 requests/min, 8K tokens/min and
+      1K requests/day per model.
    b) NVIDIA NIM, free developer tier, https://build.nvidia.com/ . Roughly 40 requests/min,
       extra fallback capacity, and the only source of embeddings for the search layer.
    c) Kimi / Moonshot, paid, https://platform.moonshot.ai/ . Strong second rung for research
       and the daily review.
    d) Anthropic, paid, https://console.anthropic.com/ . Optional. The key may be invalid; the
       router will skip it. Tell me which model id your account can use if you have one.
-   e) Meta Muse Spark, https://ai.developer.meta.com/ . Leads watch, performance, and agent
-      (short ops). Key goes in META_MUSE_API_KEY (aliases MUSE_API_KEY and Meta's MODEL_API_KEY).
-      Default model muse-spark-1.3 (PAYG Standard, chat completions HTTP 200).
+   e) Meta Muse Spark, https://ai.developer.meta.com/ . Leads Ask AI chat, watch, performance,
+      and agent (short ops). Key goes in META_MUSE_API_KEY (aliases MUSE_API_KEY and Meta's
+      MODEL_API_KEY). Default model muse-spark-1.3 (PAYG Standard, chat completions HTTP 200).
    f) A local OpenAI-compatible server, free. Ollama (http://localhost:11434/v1) or LM Studio
       (http://localhost:1234/v1). I will need the base URL and the exact model id the server
       returns from GET /v1/models.
@@ -359,7 +360,7 @@ shows the resolved chain per task plus the last probe result.
 
 | Task | What uses it | Leads with | Falls back to | Why in that order |
 | --- | --- | --- | --- | --- |
-| `chat` | Ask AI text-to-SQL, assistant | Groq `openai/gpt-oss-120b` | Groq 27b and 20b, NVIDIA, Kimi, Muse, Anthropic | Short prompts, one user waiting, latency is the whole experience |
+| `chat` | Ask AI text-to-SQL, assistant | Muse Spark `muse-spark-1.3` | Groq 120b, NVIDIA Nemotron, Groq 27b / 20b, Kimi | Muse → Groq → NVIDIA. Anthropic/local stay on the chain but stay off chips unless live |
 | `triage` | News classification, quick ticker reads | Groq `openai/gpt-oss-20b` | Groq 27b and 120b, NVIDIA, Kimi, Muse, Anthropic | Tiny prompts, hundreds of calls a day, the cheapest rung is enough |
 | `research` | Long analytical passes on a symbol | NVIDIA Nemotron-3 Super | NVIDIA 49b, Groq 120b, Muse, Kimi, Anthropic | Heavy research stays on NVIDIA then Groq; Muse is the backup |
 | `review` | The daily learning pass over every trade | NVIDIA Nemotron-3 Super | Groq 120b, Muse, Kimi, Anthropic | Same shape as research |
@@ -374,10 +375,10 @@ Practical limits, verified against the providers in August 2026:
 
 | Provider | Cost | Limits worth knowing | Notes |
 | --- | --- | --- | --- |
-| **Groq** | Free tier available | 30 RPM, 8K TPM, 1K RPD per model (200K TPD) | Excellent for `chat` and `triage`. The 8K TPM ceiling is why no long-prompt task leads with it. `groq/compound` is deliberately excluded: no custom tools, no `response_format`. Groq retired every llama-3.x chat model in Aug 2026, which is why the router probes ids instead of trusting them. |
+| **Groq** | Free tier available | 30 RPM, 8K TPM, 1K RPD per model (200K TPD) | Excellent for `triage` and as the `chat` fallback. The 8K TPM ceiling is why no long-prompt task leads with it. `groq/compound` is deliberately excluded: no custom tools, no `response_format`. Groq retired every llama-3.x chat model in Aug 2026, which is why the router probes ids instead of trusting them. |
 | **NVIDIA NIM** | Free developer tier | roughly 40 RPM per key | Extra fallback capacity, and the only source of embeddings for the RAG layer. Without a key, the NIM chain entries and embeddings are skipped. `meta/llama-3.3-70b-instruct` is listed on NIM but hung on every probe, so it is not in the ladder. |
 | **Kimi (Moonshot)** | Paid | Per-account rate and spend limits | Backup for research, agent, watch, and review. Temperature is pinned at 1 for the k2 family. |
-| **Muse Spark (Meta Model API)** | PAYG Standard | Per-account rate and spend limits | OpenAI-compatible Chat Completions at `https://api.meta.ai/v1`. Leads `watch`, `performance`, and `agent`. Backup on research / review / ideas. Set `META_MUSE_API_KEY` (aliases `MUSE_API_KEY` and Meta's official `MODEL_API_KEY`). Default and recommended id is `muse-spark-1.3` (PAYG Standard; chat 200). Leave `META_MUSE_MODEL` empty. |
+| **Muse Spark (Meta Model API)** | PAYG Standard | Per-account rate and spend limits | OpenAI-compatible Chat Completions at `https://api.meta.ai/v1`. Leads `chat`, `watch`, `performance`, and `agent`. Backup on research / review / ideas. Set `META_MUSE_API_KEY` (aliases `MUSE_API_KEY` and Meta's official `MODEL_API_KEY`). Default and recommended id is `muse-spark-1.3` (PAYG Standard; chat 200). Leave `META_MUSE_MODEL` empty. |
 | **Anthropic** | Paid | Per-account rate and spend limits | Optional last hosted rung. The key may be invalid; the lamp goes amber and the chain skips it. Set `ANTHROPIC_MODEL` to the model you actually have access to. |
 | **Local** | Free, your hardware | Whatever your machine sustains | Any OpenAI-compatible server: `LOCAL_BASE_URL` (Ollama: `http://localhost:11434/v1`, LM Studio: `http://localhost:1234/v1`), `LOCAL_MODEL`, `LOCAL_API_KEY` (Ollama ignores the key, send anything). Caveats below. |
 

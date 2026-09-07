@@ -36,7 +36,8 @@ function Chip({ c }: { c: ConnChip }) {
   );
 }
 
-/** Trading-desk connection lamps. Green = key + live probe, amber = key but not live, gray = no key. */
+/** Trading-desk connection lamps. Green = key + live probe, amber = key but not live, gray = no key.
+ *  Anthropic / Local are omitted by the API unless that probe is live. */
 export default function ConnectionStrip({ status }: { status?: any }) {
   const remote = useAsync<any>(() => ModelsStatus(), [], 30000);
   const d = remote.data || status;
