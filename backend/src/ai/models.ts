@@ -44,8 +44,8 @@ export const LADDER: Record<ProviderName, string[]> = {
     'moonshotai/kimi-k2-instruct',
   ],
   // Meta Model API https://api.meta.ai/v1 — OpenAI-compatible Chat Completions + GET /v1/models
-  // (docs 2026-09). Prefer muse-spark-1.3; walk to muse-spark-1.1 if 1.3 is dark.
-  // muse-spark-1.3-contributor is selectable via META_MUSE_MODEL / MUSE_MODEL.
+  // (docs 2026-09). Default and recommended id is PAYG Standard muse-spark-1.3 (chat 200).
+  // Walk to muse-spark-1.1 if 1.3 is dark. Contributor stays last on the ladder only.
   muse: ['muse-spark-1.3', 'muse-spark-1.1', 'muse-spark-1.3-contributor'],
   // Self-hosted OpenAI-compatible server: whatever model LOCAL_MODEL names (no ladder to walk).
   local: [config.local.model || 'local-model'],

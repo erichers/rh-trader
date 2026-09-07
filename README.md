@@ -148,7 +148,7 @@ Say this to me, then wait:
       router will skip it. Tell me which model id your account can use if you have one.
    e) Meta Muse Spark, https://ai.developer.meta.com/ . Leads watch, performance, and agent
       (short ops). Key goes in META_MUSE_API_KEY (aliases MUSE_API_KEY and Meta's MODEL_API_KEY).
-      Default model muse-spark-1.3.
+      Default model muse-spark-1.3 (PAYG Standard, chat completions HTTP 200).
    f) A local OpenAI-compatible server, free. Ollama (http://localhost:11434/v1) or LM Studio
       (http://localhost:1234/v1). I will need the base URL and the exact model id the server
       returns from GET /v1/models.
@@ -368,7 +368,7 @@ shows the resolved chain per task plus the last probe result.
 | `watch` | SPY / META / TSLA / QQQ news + indicator loop | Muse Spark `muse-spark-1.3` | Groq 20b, NVIDIA, Kimi, Anthropic | Fast desk watch. Writes alerts and notes. Never places an order. |
 | `performance` | Paper equity / ops note on each watch cycle | Muse Spark `muse-spark-1.3` | Groq 20b, NVIDIA, Kimi, Anthropic | Same as watch |
 
-Unconfigured providers are skipped. Muse's own ladder is `muse-spark-1.3` then `muse-spark-1.1` (or `muse-spark-1.3-contributor` if you set `META_MUSE_MODEL`). Meta documents `GET https://api.meta.ai/v1/models`, so the boot probe treats Muse like Groq and NVIDIA. Anthropic stays on the chain; if the key is invalid the probe goes amber and the cascade walks past it.
+Unconfigured providers are skipped. Muse's own ladder leads with PAYG Standard `muse-spark-1.3` (live chat completions, HTTP 200), then `muse-spark-1.1`. Contributor is last on the ladder only, never the default. Meta documents `GET https://api.meta.ai/v1/models`, so the boot probe treats Muse like Groq and NVIDIA. Anthropic stays on the chain; if the key is invalid the probe goes amber and the cascade walks past it.
 
 Practical limits, verified against the providers in August 2026:
 
@@ -377,7 +377,7 @@ Practical limits, verified against the providers in August 2026:
 | **Groq** | Free tier available | 30 RPM, 8K TPM, 1K RPD per model (200K TPD) | Excellent for `chat` and `triage`. The 8K TPM ceiling is why no long-prompt task leads with it. `groq/compound` is deliberately excluded: no custom tools, no `response_format`. Groq retired every llama-3.x chat model in Aug 2026, which is why the router probes ids instead of trusting them. |
 | **NVIDIA NIM** | Free developer tier | roughly 40 RPM per key | Extra fallback capacity, and the only source of embeddings for the RAG layer. Without a key, the NIM chain entries and embeddings are skipped. `meta/llama-3.3-70b-instruct` is listed on NIM but hung on every probe, so it is not in the ladder. |
 | **Kimi (Moonshot)** | Paid | Per-account rate and spend limits | Backup for research, agent, watch, and review. Temperature is pinned at 1 for the k2 family. |
-| **Muse Spark (Meta Model API)** | Paid / public preview | Per-account rate and spend limits | OpenAI-compatible Chat Completions at `https://api.meta.ai/v1`. Leads `watch`, `performance`, and `agent`. Backup on research / review / ideas. Set `META_MUSE_API_KEY` (aliases `MUSE_API_KEY` and Meta's official `MODEL_API_KEY`). Default id `muse-spark-1.3`. |
+| **Muse Spark (Meta Model API)** | PAYG Standard | Per-account rate and spend limits | OpenAI-compatible Chat Completions at `https://api.meta.ai/v1`. Leads `watch`, `performance`, and `agent`. Backup on research / review / ideas. Set `META_MUSE_API_KEY` (aliases `MUSE_API_KEY` and Meta's official `MODEL_API_KEY`). Default and recommended id is `muse-spark-1.3` (PAYG Standard; chat 200). Leave `META_MUSE_MODEL` empty. |
 | **Anthropic** | Paid | Per-account rate and spend limits | Optional last hosted rung. The key may be invalid; the lamp goes amber and the chain skips it. Set `ANTHROPIC_MODEL` to the model you actually have access to. |
 | **Local** | Free, your hardware | Whatever your machine sustains | Any OpenAI-compatible server: `LOCAL_BASE_URL` (Ollama: `http://localhost:11434/v1`, LM Studio: `http://localhost:1234/v1`), `LOCAL_MODEL`, `LOCAL_API_KEY` (Ollama ignores the key, send anything). Caveats below. |
 

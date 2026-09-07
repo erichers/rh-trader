@@ -164,7 +164,8 @@ local model caveats in the main README before pointing a small model at the `age
 
 `GROQ_MODEL`, `KIMI_MODEL`, `NVIDIA_MODEL`, `ANTHROPIC_MODEL` and `META_MUSE_MODEL` (or
 `MUSE_MODEL`) are optional overrides. Leave them empty and the router picks the top live id
-on each provider's ladder. Muse defaults to `muse-spark-1.3` and walks to `muse-spark-1.1`.
+on each provider's ladder. Muse defaults to PAYG Standard `muse-spark-1.3` (live chat 200)
+and walks to `muse-spark-1.1`. Leave `META_MUSE_MODEL` empty. Do not set contributor.
 
 **Safety loop.** Stay on `TRADING_ENV=alpaca_paper` and `DEFAULT_MODE=observe`. Keys live only
 in `.env` (gitignored). The watcher (`WATCH_UNIVERSE=SPY,META,TSLA,QQQ`) writes notes, not

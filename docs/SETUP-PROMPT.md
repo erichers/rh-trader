@@ -105,7 +105,7 @@ Say this to me, then wait:
       router will skip it. Tell me which model id your account can use if you have one.
    e) Meta Muse Spark, https://ai.developer.meta.com/ . Leads watch, performance, and agent
       (short ops). Key goes in META_MUSE_API_KEY (aliases MUSE_API_KEY and Meta's MODEL_API_KEY).
-      Default model muse-spark-1.3.
+      Default model muse-spark-1.3 (PAYG Standard). Leave META_MUSE_MODEL empty.
    f) A local OpenAI-compatible server, free. Ollama (http://localhost:11434/v1) or LM Studio
       (http://localhost:1234/v1). I will need the base URL and the exact model id the server
       returns from GET /v1/models.

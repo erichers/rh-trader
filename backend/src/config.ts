@@ -54,6 +54,7 @@ export const config = {
   },
   // Meta Model API (OpenAI-compatible Chat Completions at https://api.meta.ai/v1).
   // Bearer token: META_MUSE_API_KEY, MUSE_API_KEY, or Meta's official MODEL_API_KEY (same key).
+  // Empty META_MUSE_MODEL / MUSE_MODEL means the router default: muse-spark-1.3 (PAYG Standard).
   // Never commit a real key.
   muse: {
     apiKey: process.env.META_MUSE_API_KEY || process.env.MUSE_API_KEY || process.env.MODEL_API_KEY || '',
