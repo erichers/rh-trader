@@ -56,6 +56,11 @@
 .acct-chart > svg { border-radius: 6px; }
 .acct-note { font-size: 11px; color: var(--muted); }
 
+@media (max-width: 760px) {
+  /* Top bar already shows Paper / LIVE. Don't repeat the lamp here. */
+  .acct-strip .acct-badge { display: none; }
+}
+
 @media (min-width: 1024px) {
   /* One row on a laptop: account, figures, sparkline, then the time selector on
      the right. The DOM order stays phone-first (selector next to the badge). */
