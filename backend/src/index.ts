@@ -83,7 +83,9 @@ async function main() {
   await app.listen({ port: config.server.port, host: '127.0.0.1' });
   app.log.info(`rh.tradingbot backend on http://127.0.0.1:${config.server.port}`);
   app.log.info(`via MAMP: http://localhost:8888${config.server.basePath}/`);
-  await audit('boot', 'backend started', { port: config.server.port, ai: aiReady() });
+  await audit('boot', 'backend started', { port: config.server.port, ai: aiReady() }).catch((e: any) =>
+    console.warn('boot audit skipped (db unreachable):', e?.message || e),
+  );
 
   startWorker();
 }
