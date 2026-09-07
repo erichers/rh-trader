@@ -69,18 +69,18 @@ const N_NEMOTRON = 'nvidia/llama-3.3-nemotron-super-49b-v1.5';
 const N_DEEPSEEK = 'nvidia/nemotron-3-super-120b-a12b'; // deepseek-v3.1 is not on NIM (checked 2026-08-25); Nemotron-3 Super is the reasoning workhorse
 
 /** Ordered chain per task. Desk policy (paper / Observe):
- *  chat leads Muse then Groq 120b then NVIDIA; triage stays Groq-first
- *  (cheap, many calls); research / review / ideas lead NVIDIA then Groq (Muse is
- *  the backup); agent / watch / performance lead with Muse Spark.
+ *  Option A: chat leads Muse Spark (Standard muse-spark-1.3), then Groq 120b
+ *  and the previous fallbacks. Triage stays Groq-first. Research / review /
+ *  ideas stay NVIDIA-led. Agent / watch / performance stay Muse-first.
  *  Unconfigured providers are skipped. Anthropic stays on the chain but may be invalid. */
 export const TASK_CHAINS: Record<Task, ChainEntry[]> = {
-  // Ask AI / text-to-SQL: Muse first, then Groq 120b, then NVIDIA Nemotron, then the rest.
+  // POST /api/chat → assistantChat → task `chat`. Muse first when configured+live.
   chat: [
     { provider: 'muse', model: DEFAULT_MODEL.muse },
     { provider: 'groq', model: 'openai/gpt-oss-120b' },
-    { provider: 'nvidia', model: N_LLAMA },
     { provider: 'groq', model: 'qwen/qwen3.6-27b' },
     { provider: 'groq', model: 'openai/gpt-oss-20b' },
+    { provider: 'nvidia', model: N_LLAMA },
     { provider: 'kimi', model: 'kimi-k2.5' },
     { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
     { provider: 'local', model: DEFAULT_MODEL.local },
