@@ -93,7 +93,7 @@ export default function ChatView() {
   const askAgent = (q: string) => { setAgentMode(true); send(q, true); };
 
   return (
-    <Card title={agentMode ? 'Trade agent (Muse first, risk engine still decides)' : 'Ask AI (Muse first, Groq fallback)'}>
+    <Card title={agentMode ? 'Trade agent (Muse first, risk engine still decides)' : 'Ask AI (Muse → Groq → NVIDIA)'}>
       <div className="row" style={{ marginBottom: 10 }}>
         <label className="row"><input type="checkbox" checked={agentMode} onChange={(e) => setAgentMode(e.target.checked)} /> Agent mode</label>
         {agentMode && (

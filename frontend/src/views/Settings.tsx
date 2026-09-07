@@ -32,7 +32,7 @@ export default function Settings({ health, onChange }: { health: any; onChange: 
             <div className="muted muse-k">Providers</div>
             <p className="muted" style={{ fontSize: 13, margin: '4px 0 0' }}>
               Muse: chat, watch, ops, performance. NVIDIA then Groq: research and reviews. Groq:
-              news triage. Kimi: backup. Anthropic: optional, may be invalid.
+              news triage. Kimi: backup. Anthropic and Local stay off the lamps unless live.
             </p>
           </div>
           <div>

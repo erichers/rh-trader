@@ -39,7 +39,7 @@ export default function Onboarding({ force }: { force?: boolean }) {
           <p>
             Muse handles chat, short watch, ops, and performance notes. NVIDIA then Groq do
             longer research and reviews. Groq still sorts news. Kimi is
-            backup. Anthropic is optional and the key may be invalid.
+            backup. Anthropic and a local server stay off the lamps unless they are live.
           </p>
         </div>
         <div>

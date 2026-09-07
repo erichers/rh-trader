@@ -69,18 +69,18 @@ const N_NEMOTRON = 'nvidia/llama-3.3-nemotron-super-49b-v1.5';
 const N_DEEPSEEK = 'nvidia/nemotron-3-super-120b-a12b'; // deepseek-v3.1 is not on NIM (checked 2026-08-25); Nemotron-3 Super is the reasoning workhorse
 
 /** Ordered chain per task. Desk policy (paper / Observe):
- *  Option A: chat leads Muse Spark (Standard muse-spark-1.3), then Groq 120b
- *  and the previous fallbacks. Triage stays Groq-first. Research / review /
- *  ideas stay NVIDIA-led. Agent / watch / performance stay Muse-first.
- *  Unconfigured providers are skipped. Anthropic stays on the chain but may be invalid. */
+ *  Chat leads Muse Spark (Standard muse-spark-1.3), then Groq 120b, then NVIDIA.
+ *  Triage stays Groq-first. Research / review / ideas stay NVIDIA-led.
+ *  Agent / watch / performance stay Muse-first. Unconfigured providers are skipped.
+ *  Anthropic / local stay on the chain but are parked from chips and probes when idle. */
 export const TASK_CHAINS: Record<Task, ChainEntry[]> = {
-  // POST /api/chat → assistantChat → task `chat`. Muse first when configured+live.
+  // POST /api/chat → assistantChat → task `chat`. Muse → Groq 120b → NVIDIA, then the rest.
   chat: [
     { provider: 'muse', model: DEFAULT_MODEL.muse },
     { provider: 'groq', model: 'openai/gpt-oss-120b' },
+    { provider: 'nvidia', model: N_LLAMA },
     { provider: 'groq', model: 'qwen/qwen3.6-27b' },
     { provider: 'groq', model: 'openai/gpt-oss-20b' },
-    { provider: 'nvidia', model: N_LLAMA },
     { provider: 'kimi', model: 'kimi-k2.5' },
     { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
     { provider: 'local', model: DEFAULT_MODEL.local },
@@ -167,6 +167,45 @@ export function isConfigured(name: ProviderName): boolean {
   return !!providerConfig(name).apiKey;
 }
 
+function envOn(key: string): boolean {
+  const v = (process.env[key] || '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+}
+
+function envOff(key: string): boolean {
+  const v = (process.env[key] || '').trim().toLowerCase();
+  return v === '0' || v === 'false' || v === 'no' || v === 'off';
+}
+
+/** Last-rung providers we hide from the desk when they do nothing. Code paths stay. */
+export function isOptionalDeskProvider(name: ProviderName): boolean {
+  return name === 'anthropic' || name === 'local';
+}
+
+function isAuthFailure(err: string | null | undefined): boolean {
+  return /\b401\b|\b403\b|unauthorized|authentication|invalid.?api.?key|invalid.?x-api-key/i.test(String(err || ''));
+}
+
+/** Parked after a 401/403 so we stop probing and skip the cascade. Cleared on a live probe
+ *  or ANTHROPIC_ENABLE=1 / LOCAL_ENABLE=1. */
+const parked = new Set<ProviderName>();
+
+function forceOptional(name: ProviderName): boolean {
+  if (name === 'anthropic') return envOn('ANTHROPIC_ENABLE');
+  if (name === 'local') return envOn('LOCAL_ENABLE');
+  return false;
+}
+
+/** True when this provider should be probed and used on the desk. Optional rungs
+ *  (Anthropic 401, local unset) stay dark unless env re-enables them. */
+export function isDeskActive(name: ProviderName): boolean {
+  if (name === 'anthropic' && envOff('ANTHROPIC_ENABLE')) return false;
+  if (name === 'local' && envOff('LOCAL_ENABLE')) return false;
+  if (!isConfigured(name)) return false;
+  if (isOptionalDeskProvider(name) && parked.has(name) && !forceOptional(name)) return false;
+  return true;
+}
+
 /** Disaster drill: LLM_POISON_PROVIDERS=groq,kimi makes those providers throw on
  *  every call so the fallback path can be proven without touching code. */
 export function isPoisoned(name: ProviderName): boolean {
@@ -230,20 +269,27 @@ async function probeOne(name: ProviderName): Promise<void> {
     st.probed_at = now;
     st.last_attempt_at = now;
     st.error = null;
+    parked.delete(name);
   } catch (e: any) {
     st.live = new Set();
     st.probed_at = null; // a failed probe means "unknown" for chain resolution, not "nothing is live"
     st.last_attempt_at = now;
     st.error = String(e?.message || e).slice(0, 160);
+    if (isOptionalDeskProvider(name) && isAuthFailure(st.error) && !forceOptional(name)) {
+      parked.add(name);
+      console.warn(`[models] ${name} parked after auth failure — hidden from chips/probes. Set ${name === 'anthropic' ? 'ANTHROPIC_ENABLE' : 'LOCAL_ENABLE'}=1 to retry.`);
+    }
   }
 }
 
-/** Refresh the live-id cache for every configured provider. Never throws. */
+/** Refresh the live-id cache for desk-active providers. Never throws. */
 export async function probeProviders(): Promise<void> {
-  const names = PROVIDERS.filter(isConfigured);
+  const names = PROVIDERS.filter(isDeskActive);
   await Promise.all(names.map(probeOne));
+  const skipped = PROVIDERS.filter((n) => isConfigured(n) && !names.includes(n));
   const summary = names.map((n) => `${n}:${probes[n].error ? 'err' : probes[n].live.size}`).join(' ');
-  console.log(`[models] probe ${summary || 'no provider configured'}`);
+  const extra = skipped.length ? ` · parked ${skipped.join(',')}` : '';
+  console.log(`[models] probe ${summary || 'no provider configured'}${extra}`);
 }
 
 export function probedOnce(): boolean {
@@ -313,7 +359,7 @@ export function resolveChain(task: Task): ResolvedEntry[] {
   const out: ResolvedEntry[] = [];
   const seen = new Set<string>();
   for (const e of TASK_CHAINS[task]) {
-    if (!isConfigured(e.provider)) continue;
+    if (!isDeskActive(e.provider)) continue;
     const r = resolveEntry(e);
     const key = `${r.provider}:${r.model}`;
     if (seen.has(key)) continue;
