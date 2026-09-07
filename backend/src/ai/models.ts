@@ -177,7 +177,7 @@ export function isPoisoned(name: ProviderName): boolean {
 /** GROQ_MODEL / KIMI_MODEL / NVIDIA_MODEL / ANTHROPIC_MODEL / META_MUSE_MODEL
  *  (or MUSE_MODEL) stay honored: they replace that provider's DEFAULT pick
  *  wherever a chain uses it (slots picked deliberately for cost, like the 20b
- *  triage lead, keep their own id). */
+ *  triage lead, keep their own id). Empty Muse override keeps muse-spark-1.3. */
 function preferred(name: ProviderName): string {
   const m = providerConfig(name).model;
   return m || DEFAULT_MODEL[name];
