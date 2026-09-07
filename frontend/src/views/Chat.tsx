@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Chat, Agent } from '../api/client';
 import { Card } from '../components/ui';
 import { Icon } from '../components/icons';
+import { ChatMarkdown } from '../components/ChatMarkdown';
 
 type Msg = { role: 'user' | 'assistant'; text: string; meta?: string; via?: string };
 
@@ -34,8 +35,32 @@ const AGENT_PILLS: { label: string; q: string }[] = [
   { label: '3 bots this week', q: 'Propose 3 bots for this week and their risk settings' },
 ];
 
+const MD_PREVIEW = `**Account:** $103,439 paper, 100% cash. Observe — no orders.
+
+**Macro — top 3 catalysts:**
+1. CPI / PPI inflation prints ([news #14](#/news))
+2. Big-tech supply: AMZN/META/GOOG/ORCL
+3. Earnings rotation into NVDA, MSFT, AAPL
+
+**Technicals (9/1 close):**
+* SPY 761.24, RSI 54, above SMA20
+* QQQ 707.49, RSI 51
+* TSLA extended vs 20-day
+
+**Watch, long-only:** META, TSLA, QQQ. See [desk news](#/news).`;
+
+function seedLog(): Msg[] {
+  try {
+    const q = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    if (q.get('mdpreview') === '1') {
+      return [{ role: 'assistant', text: MD_PREVIEW, via: 'Muse muse-spark-1.3' }];
+    }
+  } catch { /* ignore */ }
+  return [];
+}
+
 export default function ChatView() {
-  const [log, setLog] = useState<Msg[]>([]);
+  const [log, setLog] = useState<Msg[]>(seedLog);
   const [input, setInput] = useState('');
   const [agentMode, setAgentMode] = useState(false);
   const [allowOpenNew, setAllowOpenNew] = useState(false);
@@ -96,7 +121,7 @@ export default function ChatView() {
         {log.length === 0 && <div className="muted">Tap a pill above, or type your own question.</div>}
         {log.map((m, i) => (
           <div key={i} className={`bubble ${m.role}`}>
-            {m.text}
+            {m.role === 'assistant' ? <ChatMarkdown text={m.text} /> : m.text}
             {m.via && <div className="muted bubble-via">{m.via}</div>}
             {m.meta && <div className="muted" style={{ marginTop: 6, fontSize: 11, whiteSpace: 'pre-wrap' }}>{m.meta}</div>}
           </div>

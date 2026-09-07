@@ -74,7 +74,7 @@ const SQL_TOOL: Tool = {
 const SEARCH_TOOL: Tool = {
   name: 'search_knowledge',
   description:
-    'Full-text RAG search across the local knowledge base — real news, research notes, learnings, and per-ticker AI insights. Use this for "what do we know / what has the news said / what have we learned about X" questions. Optionally scope to a ticker symbol.',
+    'Full-text RAG search across the local knowledge base — news (headline + url), research notes, learnings, RAG docs, and per-ticker insights. Each hit may include title, snippet, symbol, and url. Use url only when present. Use this for "what do we know / what has the news said / what have we learned about X" questions. Optionally scope to a ticker symbol.',
   parameters: {
     type: 'object', additionalProperties: false,
     properties: {
@@ -89,12 +89,27 @@ export async function assistantChat(message: string): Promise<{ answer: string; 
   await exec('INSERT INTO chat_messages (role, content) VALUES ("user", :c)', { c: message });
   const { searchKnowledge } = await import('../knowledge.js');
   const { text, provider, model } = await llmAgent(
-    SYSTEM_RULES + "\n\nYou answer questions about the user's trading data and knowledge base. Use run_sql for structured data and search_knowledge for news/research/learnings/insights (RAG). Cite what you find. Be concise.",
+    SYSTEM_RULES + `
+
+You answer questions about the user's trading data and knowledge base. Use run_sql for structured data and search_knowledge for news, research notes, learnings, and RAG docs. Cite what you find.
+
+FORMAT (the UI renders Markdown):
+- Reply in clean Markdown: **bold** labels, short headings, and bullet or numbered lists.
+- When a search_knowledge hit includes a url, cite it as [headline](https://...). Only use http(s) URLs that appeared in tool results. Never invent, guess, or complete a URL.
+- If a hit has no url, cite the headline and source in plain text, or [news #id](#/news). Do not write raw "[news id:N]" when a real url exists.
+- Tickers may stay as SPY / META / TSLA; the UI will link them.
+- Be concise. Paper + Observe: you do not place orders.`,
     message,
     [SQL_TOOL, SEARCH_TOOL],
     async (name, args) => {
       if (name === 'run_sql') { const [rows] = await pool.query(safeSelect(String(args.sql))); return rows; }
-      if (name === 'search_knowledge') return searchKnowledge(String(args.query || ''), { symbol: args.symbol ? String(args.symbol) : undefined, limit: 12 });
+      if (name === 'search_knowledge') {
+        return searchKnowledge(String(args.query || ''), {
+          symbol: args.symbol ? String(args.symbol) : undefined,
+          limit: 20,
+          preferRecent: true,
+        });
+      }
       return { error: 'unknown tool' };
     },
     'chat',

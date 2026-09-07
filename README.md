@@ -360,7 +360,7 @@ shows the resolved chain per task plus the last probe result.
 
 | Task | What uses it | Leads with | Falls back to | Why in that order |
 | --- | --- | --- | --- | --- |
-| `chat` | Ask AI text-to-SQL, assistant | Muse Spark `muse-spark-1.3` | Groq 120b / 27b / 20b, NVIDIA, Kimi, Anthropic | Conversational quality on the paper desk; Groq stays the fast fallback |
+| `chat` | Ask AI text-to-SQL, assistant | Muse Spark `muse-spark-1.3` | Groq 120b, NVIDIA Nemotron, Groq 27b / 20b, Kimi, Anthropic | Conversational quality on the paper desk; Groq then NVIDIA if Muse is dark |
 | `triage` | News classification, quick ticker reads | Groq `openai/gpt-oss-20b` | Groq 27b and 120b, NVIDIA, Kimi, Muse, Anthropic | Tiny prompts, hundreds of calls a day, the cheapest rung is enough |
 | `research` | Long analytical passes on a symbol | NVIDIA Nemotron-3 Super | NVIDIA 49b, Groq 120b, Muse, Kimi, Anthropic | Heavy research stays on NVIDIA then Groq; Muse is the backup |
 | `review` | The daily learning pass over every trade | NVIDIA Nemotron-3 Super | Groq 120b, Muse, Kimi, Anthropic | Same shape as research |
