@@ -37,6 +37,9 @@ export function wsUrl(): string {
 // Typed-ish endpoint helpers --------------------------------------------------
 export const Health = () => api.get('/health');
 export const ModelsStatus = () => api.get('/models/status');
+export const MuseStatus = () => api.get('/muse/status');
+export const WatchStatus = () => api.get('/watch/status');
+export const RunWatch = () => api.post('/watch/run');
 export const RhStatus = () => api.get('/rh/status');
 export const RhConnect = () => api.post('/rh/connect');
 export const RhAuthStart = () => api.post('/rh/auth/start');

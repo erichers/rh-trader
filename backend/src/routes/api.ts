@@ -36,6 +36,8 @@ import { knowledgeStats } from '../rag.js';
 import { getFutures, leadingFuture } from '../market/futures.js';
 import { runLearning, listRuns, listIdeas, listLearnings, learningStatus } from '../learning.js';
 import { connectionStatus } from '../connections.js';
+import { museActivity } from '../ai/activity.js';
+import { ensureWatchUniverse, hydrateWatchStatus, runWatchCycle, watchStatus } from '../watch.js';
 
 /** Attach each bot's EFFECTIVE risk (bot value, else the global trade default, with the
  *  source of every field) to a bot list. Additive — no existing field changes. */
@@ -105,6 +107,22 @@ export async function registerRoutes(app: FastifyInstance) {
     const tasks: Record<string, { provider: string; model: string; live: boolean | null }[]> = {};
     for (const t of TASKS) tasks[t] = resolveChain(t);
     return { tasks, providers: providerStatus() };
+  });
+
+  // Muse Spark lamp + recent activity. Never includes API keys or secrets.
+  app.get('/api/muse/status', async () => {
+    await hydrateWatchStatus().catch(() => {});
+    return { muse: museActivity(), watch: watchStatus() };
+  });
+
+  // Observe-only watcher (SPY / META / TSLA / QQQ by default).
+  app.get('/api/watch/status', async () => {
+    await hydrateWatchStatus().catch(() => {});
+    return watchStatus();
+  });
+  app.post('/api/watch/run', async () => {
+    await ensureWatchUniverse();
+    return runWatchCycle(true);
   });
 
   // ── Trading environment (paper ↔ live) ───────────────────────────────────
@@ -327,7 +345,10 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get('/api/futures/for/:symbol', async (req) => ({ future: await leadingFuture(String((req.params as any).symbol)) }));
 
   // ── Watchlist ─────────────────────────────────────────────────────────────
-  app.get('/api/watchlist', async () => q('SELECT * FROM watchlist ORDER BY added_at ASC LIMIT 200'));
+  app.get('/api/watchlist', async () => {
+    await ensureWatchUniverse().catch(() => {});
+    return q('SELECT * FROM watchlist ORDER BY added_at ASC LIMIT 200');
+  });
   app.post('/api/watchlist', async (req) => {
     const b = req.body as any;
     await exec('INSERT INTO watchlist (symbol, note) VALUES (:s,:n) ON DUPLICATE KEY UPDATE note=:n', {

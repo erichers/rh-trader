@@ -1,4 +1,4 @@
-import { HashRouter, NavLink, Route, Routes } from 'react-router-dom';
+import { HashRouter, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { Icon, type IconName } from './components/icons';
 import { Health, SetMode, SetKill, RhConnect, RhSync, SetEnv, RhAuthStart, Focus as FocusApi, SetFocus } from './api/client';
@@ -68,11 +68,25 @@ const NAV: { label?: string; items: NavItem[] }[] = [
   ] },
 ];
 
+const TABS: { to: string; label: string; icon: IconName; end?: boolean }[] = [
+  { to: '/', label: 'Home', icon: 'dashboard', end: true },
+  { to: '/watchlist', label: 'Watch', icon: 'watchlist' },
+  { to: '/news', label: 'News', icon: 'news' },
+  { to: '/bots', label: 'Bots', icon: 'bot' },
+];
+
 const MODE_LABELS: Record<string, string> = {
   observe: 'Observe',
   cautious: 'Cautious',
   auto: 'Auto',
   full_auto: 'Full-Auto',
+};
+
+const MODE_NOTE_SHORT: Record<string, string> = {
+  observe: 'Observe: notes only. No orders.',
+  cautious: 'Cautious: you approve each order.',
+  auto: 'Auto: bots can place paper or live orders.',
+  full_auto: 'Full-Auto: bots and a model can open positions.',
 };
 
 function ModeSwitcher({ mode, onChange }: { mode: string; onChange: (m: string) => void }) {
@@ -93,10 +107,21 @@ const ENV_LABELS: Record<string, string> = {
 };
 
 export default function App() {
+  return (
+    <HashRouter>
+      <Shell />
+    </HashRouter>
+  );
+}
+
+function Shell() {
+  const loc = useLocation();
   const [health, setHealth] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const [pendingEnv, setPendingEnv] = useState<string | null>(null); // live-switch confirmation
   const [focus, setFocusState] = useState<any>({ enabled: false, symbol: 'SPY', tickers: ['SPY', 'QQQ'] });
+  const [moreOpen, setMoreOpen] = useState(false);
+  const onTab = TABS.some((t) => t.to === '/' ? loc.pathname === '/' : loc.pathname.startsWith(t.to));
 
   const refresh = () => Health().then(setHealth).catch(() => setHealth({ ok: false }));
   const refreshFocus = () => FocusApi().then(setFocusState).catch(() => {});
@@ -105,6 +130,7 @@ export default function App() {
     const iv = setInterval(() => { if (!document.hidden) { refresh(); refreshFocus(); } }, 6000);
     return () => clearInterval(iv);
   }, []);
+  useEffect(() => { setMoreOpen(false); }, [loc.pathname]);
   const toggleFocus = async () => { await SetFocus(!focus.enabled, focus.symbol); refreshFocus(); };
   const pickFocus = async (s: string) => { await SetFocus(focus.enabled, s); refreshFocus(); };
 
@@ -153,8 +179,7 @@ export default function App() {
   const isLive = !!health?.live;
 
   return (
-    <HashRouter>
-      <div className={`app${isLive ? ' live' : ''}`}>
+      <div className={`app${isLive ? ' live' : ''}${moreOpen ? ' more-open' : ''}`}>
         <aside className="sidebar">
           <div className="brand">rh.tradingbot</div>
           <nav className="nav">
@@ -184,35 +209,41 @@ export default function App() {
 
         <div className="main">
           <header className="topbar">
-            <ModeSwitcher mode={health?.mode || 'observe'} onChange={changeMode} />
-            <MarketClock />
-            {rhStatus !== 'connected' && (
-              <button onClick={connect} disabled={busy}>{busy ? 'Opening…' : 'Connect Robinhood'}</button>
-            )}
-            {rhStatus === 'connected' && <button onClick={() => RhSync().then(refresh)}>Sync</button>}
-            <span className="focus-ctl" title="Focus mode — concentrate the whole app + bots on one ticker">
-              <button className={`icon-btn ${focus.enabled ? 'primary' : ''}`} onClick={toggleFocus}><Icon name="focus" size={15} />{focus.enabled ? 'Focus ON' : 'Focus'}</button>
-              <select aria-label="Focus ticker" value={focus.symbol} onChange={(e) => pickFocus(e.target.value)} title="Focus ticker">
-                {(focus.tickers || ['SPY', 'QQQ']).map((t: string) => <option key={t} value={t}>{t}</option>)}
+            <div className="topbar-core">
+              <ModeSwitcher mode={health?.mode || 'observe'} onChange={changeMode} />
+              <span className={`env-badge ${isLive ? 'live' : 'paper'}`} title={MODE_NOTE_SHORT[health?.mode || 'observe'] + ' Paper is the Alpaca account.'}>
+                <span className="dot" />
+                <span className="env-full">{ENV_LABELS[env] || env}</span>
+                <span className="env-short">{isLive ? 'LIVE' : 'Paper'}</span>
+              </span>
+            </div>
+            <div className="topbar-tools">
+              <MarketClock />
+              {rhStatus !== 'connected' && (
+                <button onClick={connect} disabled={busy}>{busy ? 'Opening…' : 'Connect Robinhood'}</button>
+              )}
+              {rhStatus === 'connected' && <button onClick={() => RhSync().then(refresh)}>Sync</button>}
+              <span className="focus-ctl" title="Focus mode: concentrate the whole app and bots on one ticker">
+                <button className={`icon-btn ${focus.enabled ? 'primary' : ''}`} onClick={toggleFocus}><Icon name="focus" size={15} />{focus.enabled ? 'Focus ON' : 'Focus'}</button>
+                <select aria-label="Focus ticker" value={focus.symbol} onChange={(e) => pickFocus(e.target.value)} title="Focus ticker">
+                  {(focus.tickers || ['SPY', 'QQQ']).map((t: string) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </span>
+              <div className="spacer" />
+              <select
+                aria-label="Trading environment"
+                value={env}
+                onChange={(e) => changeEnv(e.target.value, e.target.value !== 'alpaca_paper')}
+                title="Switch environment"
+              >
+                <option value="alpaca_paper">Paper (Alpaca)</option>
+                <option value="robinhood_live">Live, Robinhood</option>
               </select>
-            </span>
-            <div className="spacer" />
-            <span className={`env-badge ${isLive ? 'live' : 'paper'}`} title="Trading environment">
-              <span className="dot" />{ENV_LABELS[env] || env}
-            </span>
-            <select
-              aria-label="Trading environment"
-              value={env}
-              onChange={(e) => changeEnv(e.target.value, e.target.value !== 'alpaca_paper')}
-              title="Switch environment"
-            >
-              <option value="alpaca_paper">Paper (Alpaca)</option>
-              <option value="robinhood_live">Live — Robinhood</option>
-            </select>
-            <span className="pill" title={health?.aiLabel}>{health?.aiShort || 'AI'}</span>
-            <button className={health?.killSwitch ? 'primary' : 'danger'} onClick={toggleKill}>
-              {health?.killSwitch ? '● KILL ENGAGED — release' : 'KILL SWITCH'}
-            </button>
+              <span className="pill" title={health?.aiLabel}>{health?.aiShort || 'AI'}</span>
+              <button className={health?.killSwitch ? 'primary' : 'danger'} onClick={toggleKill}>
+                {health?.killSwitch ? 'Kill on. Release' : 'Kill switch'}
+              </button>
+            </div>
           </header>
           {isLive && (
             <div className="live-banner">
@@ -257,26 +288,94 @@ export default function App() {
           </div>
         </div>
 
+        {moreOpen && (
+          <div className="more-scrim" onClick={() => setMoreOpen(false)} aria-hidden />
+        )}
+        <div className={`more-sheet${moreOpen ? ' open' : ''}`} role="dialog" aria-label="More pages" aria-hidden={!moreOpen}>
+          <div className="more-handle" />
+          <div className="more-sheet-head">
+            <div>
+              <div className="more-kicker">Paper desk</div>
+              <h2>Everything else</h2>
+            </div>
+            <button type="button" onClick={() => setMoreOpen(false)}>Close</button>
+          </div>
+          <p className="muted more-blurb">
+            Paper is fake money on Alpaca. Observe logs ideas and never sends an order.
+            Muse watches SPY, META, TSLA, QQQ. NVIDIA and Groq handle long research.
+          </p>
+          <div className="more-desk">
+            {rhStatus !== 'connected' && (
+              <button onClick={connect} disabled={busy}>{busy ? 'Opening…' : 'Connect Robinhood'}</button>
+            )}
+            {rhStatus === 'connected' && <button onClick={() => RhSync().then(refresh)}>Sync</button>}
+            <button className={`icon-btn ${focus.enabled ? 'primary' : ''}`} onClick={toggleFocus}>
+              <Icon name="focus" size={15} />{focus.enabled ? `Focus ${focus.symbol}` : 'Focus'}
+            </button>
+            <select aria-label="Focus ticker" value={focus.symbol} onChange={(e) => pickFocus(e.target.value)}>
+              {(focus.tickers || ['SPY', 'QQQ']).map((t: string) => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <select
+              aria-label="Trading environment"
+              value={env}
+              onChange={(e) => changeEnv(e.target.value, e.target.value !== 'alpaca_paper')}
+            >
+              <option value="alpaca_paper">Paper (Alpaca)</option>
+              <option value="robinhood_live">Live, Robinhood</option>
+            </select>
+            <button className={health?.killSwitch ? 'primary' : 'danger'} onClick={toggleKill}>
+              {health?.killSwitch ? 'Kill on. Release' : 'Kill switch'}
+            </button>
+          </div>
+          <nav className="more-nav">
+            {NAV.map((group, gi) => (
+              <div className="more-group" key={gi}>
+                {group.label && <div className="nav-group-label">{group.label}</div>}
+                <div className="more-links">
+                  {group.items.map((it) => (
+                    <NavLink key={it.to} to={it.to} end={it.end} onClick={() => setMoreOpen(false)}>
+                      <Icon name={it.icon} size={18} className="nav-icon" />
+                      <span>{it.to === '/focus' && focus.enabled ? `Focus · ${focus.symbol}` : it.label}</span>
+                    </NavLink>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </nav>
+        </div>
+
+        <nav className="tab-bar" aria-label="Primary">
+          {TABS.map((t) => (
+            <NavLink key={t.to} to={t.to} end={t.end} onClick={() => setMoreOpen(false)}>
+              <Icon name={t.icon} size={20} />
+              <span>{t.label}</span>
+            </NavLink>
+          ))}
+          <button type="button" className={`tab-more${!onTab || moreOpen ? ' active' : ''}`} onClick={() => setMoreOpen((o) => !o)} aria-expanded={moreOpen}>
+            <Icon name="more" size={20} />
+            <span>More</span>
+          </button>
+        </nav>
+
         {pendingEnv && (
           <div className="modal-overlay" onClick={() => setPendingEnv(null)}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>
               <h2 className="red icon-btn"><Icon name="warning" size={20} /> Switch to REAL MONEY?</h2>
               <p>
                 You're switching to <b>{ENV_LABELS[pendingEnv]}</b>. From now on, orders that pass the
-                risk engine and execution mode will be placed against your <b>real account</b> — not paper.
+                risk engine and execution mode will be placed against your <b>real account</b>, not paper.
               </p>
               <p className="muted">
                 The kill switch, no-crypto, long-only, and size/concentration limits still apply.
                 Consider setting mode to <b>cautious</b> first so you approve each order.
               </p>
               <div className="actions">
-                <button onClick={() => setPendingEnv(null)}>Cancel — stay on paper</button>
+                <button onClick={() => setPendingEnv(null)}>Cancel, stay on paper</button>
                 <button className="danger" onClick={confirmLive}>Yes, go LIVE</button>
               </div>
             </div>
           </div>
         )}
       </div>
-    </HashRouter>
   );
 }

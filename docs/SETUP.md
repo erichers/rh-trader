@@ -139,7 +139,8 @@ triage, Ask AI, the trade agent and the learning iterator go quiet.
 | Groq (free tier) | [console.groq.com/keys](https://console.groq.com/keys) | `GROQ_API_KEY` |
 | NVIDIA NIM (free developer tier, plus embeddings) | [build.nvidia.com](https://build.nvidia.com/) | `NVIDIA_API_KEY` |
 | Kimi / Moonshot (paid) | [platform.moonshot.ai](https://platform.moonshot.ai/) | `KIMI_API_KEY` |
-| Anthropic (paid) | [console.anthropic.com](https://console.anthropic.com/) | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` |
+| Anthropic (paid, optional; key may be invalid) | [console.anthropic.com](https://console.anthropic.com/) | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` |
+| Muse Spark / Meta Model API | [ai.developer.meta.com](https://ai.developer.meta.com/) | `META_MUSE_API_KEY` (or `MUSE_API_KEY` / `MODEL_API_KEY`), optional `META_MUSE_MODEL` |
 | Local, OpenAI-compatible | Ollama or LM Studio, running on your machine | `LOCAL_BASE_URL`, `LOCAL_MODEL`, `LOCAL_API_KEY` |
 
 For a local server:
@@ -161,8 +162,21 @@ Whatever you set as `LOCAL_MODEL` must be the exact id the server returns from
 local model caveats in the main README before pointing a small model at the `agent`, `review` or
 `ideas` tasks.
 
-`GROQ_MODEL`, `KIMI_MODEL`, `NVIDIA_MODEL` and `ANTHROPIC_MODEL` are optional overrides. Leave
-them empty and the router picks the top live id on each provider's ladder.
+`GROQ_MODEL`, `KIMI_MODEL`, `NVIDIA_MODEL`, `ANTHROPIC_MODEL` and `META_MUSE_MODEL` (or
+`MUSE_MODEL`) are optional overrides. Leave them empty and the router picks the top live id
+on each provider's ladder. Muse defaults to `muse-spark-1.3` and walks to `muse-spark-1.1`.
+
+**Safety loop.** Stay on `TRADING_ENV=alpaca_paper` and `DEFAULT_MODE=observe`. Keys live only
+in `.env` (gitignored). The watcher (`WATCH_UNIVERSE=SPY,META,TSLA,QQQ`) writes notes, not
+orders. Adding a provider never places an order.
+
+**Status surfaces (no secrets).** After the backend is up:
+
+```bash
+curl -s http://127.0.0.1:8011/api/muse/status
+curl -s http://127.0.0.1:8011/api/watch/status
+curl -s -X POST http://127.0.0.1:8011/api/watch/run
+```
 
 ---
 

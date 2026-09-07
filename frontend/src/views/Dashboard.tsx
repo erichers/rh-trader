@@ -3,6 +3,8 @@ import { Account, Positions, Orders, Approvals, Bots, Monitors, Campaign, Alerts
 import { sizingLine } from '../components/risksizing';
 import { Card, money, num, signClass, statusBadge, useAsync, Badge, FleetBadge, Progress, Sym, Info, Live, posLast } from '../components/ui';
 import ConnectionStrip from '../components/Connections';
+import MuseDesk from '../components/MuseStatus';
+import Onboarding from '../components/Onboarding';
 import { BlockBoard, type BlockItem } from '../components/blocks';
 import { DataTable, type Column } from '../components/datatable';
 import { BotModeControl, MODE_LEGEND } from '../components/botcontrols';
@@ -52,10 +54,10 @@ function QbRow({ bot, reload }: { bot: any; reload: () => void }) {
 }
 
 const MODE_NOTE: Record<string, string> = {
-  observe: 'Observe — logging only. No real orders are placed.',
-  cautious: 'Cautious — every order is staged for your one-click approval.',
-  auto: 'Auto — bots auto-execute when rules + the risk engine pass.',
-  full_auto: 'Full-Auto — bots execute AND Claude may open new positions within guardrails.',
+  observe: 'Observe: logging only. No real orders are placed.',
+  cautious: 'Cautious: every order is staged for your one-click approval.',
+  auto: 'Auto: bots auto-execute when rules + the risk engine pass.',
+  full_auto: 'Full-Auto: bots execute and a model may open new positions within guardrails.',
 };
 
 /** Per-row ▶ Run button — turns a backtested play into a live, monitored bot in one click. */
@@ -203,7 +205,7 @@ export default function Dashboard({ health }: { health: any }) {
   }
 
   if (activeAlerts.length > 0) {
-    items.push({ id: 'alerts', title: <><span className="icon-btn"><Icon name="bolt" size={15} /> Signals & alerts</span><Info topic="alerts" /></>, right: <span className="muted" style={{ fontSize: 11 }}>Groq watches news · Kimi escalates</span>, node: (
+    items.push({ id: 'alerts', title: <><span className="icon-btn"><Icon name="bolt" size={15} /> Signals & alerts</span><Info topic="alerts" /></>, right: <span className="muted nowrap-clip" style={{ fontSize: 11 }}>Muse watches SPY META TSLA QQQ</span>, node: (
       <>{activeAlerts.slice(0, 6).map((al) => (
         <div key={al.id} className="alert-row row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div style={{ flex: 1 }}>
@@ -326,7 +328,7 @@ export default function Dashboard({ health }: { health: any }) {
   }
 
   items.push({ id: 'positions', title: <>Positions ({positions.length}){positions.some((p) => p.live) ? <> <Live /></> : null}</>, node: (
-    positions.length === 0 ? <div className="muted">No positions yet. Connect Robinhood and Sync.</div> : (
+    positions.length === 0 ? <div className="muted">No positions on this paper account. That is expected in Observe. The watcher writes notes, not trades.</div> : (
       <DataTable rows={positions} storageKey="dash-positions" filter={positions.length > 6} filterPlaceholder="filter positions…" cols={[
         { key: 'symbol', label: 'Symbol', sortValue: (p) => p.symbol, render: (p) => <Sym bold>{p.symbol}</Sym> },
         { key: 'qty', label: 'Qty', align: 'right', sortValue: (p) => Number(p.qty), render: (p) => num(p.qty, 2) },
@@ -339,7 +341,7 @@ export default function Dashboard({ health }: { health: any }) {
   ) });
 
   items.push({ id: 'orders', title: 'Recent Orders', right: <a href="#/orders">all →</a>, node: (
-    (orders.data || []).length === 0 ? <div className="muted">No orders yet.</div> : (
+    (orders.data || []).length === 0 ? <div className="muted">No orders yet. Observe mode logs ideas and does not send them to the broker.</div> : (
       <DataTable rows={orders.data || []} storageKey="dash-orders" filterPlaceholder="filter orders…" pageSize={10} cols={[
         { key: 'symbol', label: 'Symbol', sortValue: (o) => o.symbol, filterValue: (o) => `${o.symbol} ${o.side} ${o.status} ${o.source}`, render: (o) => <Sym bold>{o.symbol}</Sym> },
         { key: 'side', label: 'Side', sortValue: (o) => o.side, render: (o) => <span className={o.side === 'buy' ? 'green' : 'red'}>{o.side}</span>, align: 'center' },
@@ -353,10 +355,12 @@ export default function Dashboard({ health }: { health: any }) {
 
   return (
     <div className="grid" style={{ gap: 14 }}>
+      <Onboarding />
       <ConnectionStrip status={health?.connections} />
+      <MuseDesk status={health?.connections} />
       <div className="card" style={{ borderColor: health?.killSwitch ? 'var(--red)' : 'var(--border)' }}>
         <div className="row" style={{ justifyContent: 'space-between' }}>
-          <div><span className="muted">Mode: </span><b style={{ textTransform: 'capitalize' }}>{health?.mode}</b><Info topic="mode" /> — {MODE_NOTE[health?.mode] || ''}</div>
+          <div><span className="muted">Mode: </span><b style={{ textTransform: 'capitalize' }}>{health?.mode}</b><Info topic="mode" />. {MODE_NOTE[health?.mode] || ''}</div>
           {health?.killSwitch && <Badge kind="red">KILL SWITCH ENGAGED</Badge>}
         </div>
       </div>

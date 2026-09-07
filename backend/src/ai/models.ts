@@ -11,13 +11,13 @@ import { audit } from '../db.js';
 // configured id has gone dark. The cascade in llm.ts still catches everything else.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ProviderName = 'anthropic' | 'kimi' | 'groq' | 'nvidia' | 'local';
-export type Task = 'chat' | 'triage' | 'research' | 'agent' | 'review' | 'ideas';
+export type ProviderName = 'anthropic' | 'kimi' | 'groq' | 'nvidia' | 'muse' | 'local';
+export type Task = 'chat' | 'triage' | 'research' | 'agent' | 'review' | 'ideas' | 'watch' | 'performance';
 export type ChainEntry = { provider: ProviderName; model: string };
 export type ResolvedEntry = ChainEntry & { live: boolean | null };
 
-export const TASKS: Task[] = ['chat', 'triage', 'research', 'agent', 'review', 'ideas'];
-export const PROVIDERS: ProviderName[] = ['anthropic', 'kimi', 'groq', 'nvidia', 'local'];
+export const TASKS: Task[] = ['chat', 'triage', 'research', 'agent', 'review', 'ideas', 'watch', 'performance'];
+export const PROVIDERS: ProviderName[] = ['anthropic', 'kimi', 'groq', 'nvidia', 'muse', 'local'];
 
 /** Per-provider fallback ladder, best first. Used when a chain's id is not live. */
 export const LADDER: Record<ProviderName, string[]> = {
@@ -43,6 +43,10 @@ export const LADDER: Record<ProviderName, string[]> = {
     'qwen/qwen3-235b-a22b',
     'moonshotai/kimi-k2-instruct',
   ],
+  // Meta Model API https://api.meta.ai/v1 — OpenAI-compatible Chat Completions + GET /v1/models
+  // (docs 2026-09). Prefer muse-spark-1.3; walk to muse-spark-1.1 if 1.3 is dark.
+  // muse-spark-1.3-contributor is selectable via META_MUSE_MODEL / MUSE_MODEL.
+  muse: ['muse-spark-1.3', 'muse-spark-1.1', 'muse-spark-1.3-contributor'],
   // Self-hosted OpenAI-compatible server: whatever model LOCAL_MODEL names (no ladder to walk).
   local: [config.local.model || 'local-model'],
 };
@@ -56,6 +60,7 @@ const DEFAULT_MODEL: Record<ProviderName, string> = {
   kimi: LADDER.kimi[0],
   groq: LADDER.groq[0],
   nvidia: LADDER.nvidia[0],
+  muse: LADDER.muse[0],
   local: LADDER.local[0],
 };
 
@@ -63,9 +68,10 @@ const N_LLAMA = 'nvidia/nemotron-3-super-120b-a12b'; // sub-second with thinking
 const N_NEMOTRON = 'nvidia/llama-3.3-nemotron-super-49b-v1.5';
 const N_DEEPSEEK = 'nvidia/nemotron-3-super-120b-a12b'; // deepseek-v3.1 is not on NIM (checked 2026-08-25); Nemotron-3 Super is the reasoning workhorse
 
-/** Ordered chain per task: best quality-per-task that fits the real rate limits.
- *  Cheap+fast tasks lead with Groq; long/expensive reasoning leads with Anthropic
- *  then Kimi and only reaches Groq as a last resort (8K TPM there). */
+/** Ordered chain per task. Desk policy (paper / Observe):
+ *  chat + triage lead with Groq; research / review / ideas lead NVIDIA then Groq
+ *  (Muse is the backup); agent / watch / performance lead with Muse Spark.
+ *  Unconfigured providers are skipped. Anthropic stays on the chain but may be invalid. */
 export const TASK_CHAINS: Record<Task, ChainEntry[]> = {
   // Vanna-style text-to-SQL + assistant chat: short prompts, latency matters.
   chat: [
@@ -74,8 +80,9 @@ export const TASK_CHAINS: Record<Task, ChainEntry[]> = {
     { provider: 'groq', model: 'openai/gpt-oss-20b' },
     { provider: 'nvidia', model: N_LLAMA },
     { provider: 'kimi', model: 'kimi-k2.5' },
+    { provider: 'muse', model: DEFAULT_MODEL.muse },
     { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
-    { provider: 'local', model: DEFAULT_MODEL.local }, // self-hosted fallback, only when LOCAL_BASE_URL is set
+    { provider: 'local', model: DEFAULT_MODEL.local },
   ],
   // News classification / quick ticker reads: tiny prompts, many calls per day.
   triage: [
@@ -84,41 +91,64 @@ export const TASK_CHAINS: Record<Task, ChainEntry[]> = {
     { provider: 'groq', model: 'openai/gpt-oss-120b' },
     { provider: 'nvidia', model: N_LLAMA },
     { provider: 'kimi', model: 'kimi-k2.5' },
-    { provider: 'anthropic', model: DEFAULT_MODEL.anthropic }, // an Anthropic-only deploy must still triage
-    { provider: 'local', model: DEFAULT_MODEL.local }, // self-hosted fallback, only when LOCAL_BASE_URL is set
-  ],
-  // Long analytical prompts where quality beats cost.
-  research: [
+    { provider: 'muse', model: DEFAULT_MODEL.muse },
     { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
-    { provider: 'kimi', model: 'kimi-k2.5' },
+    { provider: 'local', model: DEFAULT_MODEL.local },
+  ],
+  // Long analytical prompts. NVIDIA first, Groq second, Muse as backup.
+  research: [
     { provider: 'nvidia', model: N_DEEPSEEK },
     { provider: 'nvidia', model: N_NEMOTRON },
     { provider: 'groq', model: 'openai/gpt-oss-120b' },
-    { provider: 'local', model: DEFAULT_MODEL.local }, // self-hosted fallback, only when LOCAL_BASE_URL is set
+    { provider: 'muse', model: DEFAULT_MODEL.muse },
+    { provider: 'kimi', model: 'kimi-k2.5' },
+    { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
+    { provider: 'local', model: DEFAULT_MODEL.local },
   ],
-  // Tool loops: needs reliable function calling.
+  // Tool loops: Muse for short ops judgments; NVIDIA/Groq if Muse is dark.
   agent: [
-    { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
-    { provider: 'kimi', model: 'kimi-k2.5' },
-    { provider: 'groq', model: 'openai/gpt-oss-120b' },
+    { provider: 'muse', model: DEFAULT_MODEL.muse },
     { provider: 'nvidia', model: N_LLAMA },
-    { provider: 'local', model: DEFAULT_MODEL.local }, // self-hosted fallback, only when LOCAL_BASE_URL is set
+    { provider: 'groq', model: 'openai/gpt-oss-120b' },
+    { provider: 'kimi', model: 'kimi-k2.5' },
+    { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
+    { provider: 'local', model: DEFAULT_MODEL.local },
   ],
-  // Daily learning pass over many trades: biggest prompt of the day.
+  // Daily learning pass over many trades. Long prompt: NVIDIA then Groq, Muse backup.
   review: [
-    { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
-    { provider: 'kimi', model: 'kimi-k2.5' },
     { provider: 'nvidia', model: N_DEEPSEEK },
     { provider: 'groq', model: 'openai/gpt-oss-120b' },
-    { provider: 'local', model: DEFAULT_MODEL.local }, // self-hosted fallback, only when LOCAL_BASE_URL is set
+    { provider: 'muse', model: DEFAULT_MODEL.muse },
+    { provider: 'kimi', model: 'kimi-k2.5' },
+    { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
+    { provider: 'local', model: DEFAULT_MODEL.local },
   ],
-  // Strategy idea generation.
+  // Strategy idea generation. Same shape as review.
   ideas: [
-    { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
-    { provider: 'kimi', model: 'kimi-k2.5' },
     { provider: 'nvidia', model: N_DEEPSEEK },
     { provider: 'groq', model: 'openai/gpt-oss-120b' },
-    { provider: 'local', model: DEFAULT_MODEL.local }, // self-hosted fallback, only when LOCAL_BASE_URL is set
+    { provider: 'muse', model: DEFAULT_MODEL.muse },
+    { provider: 'kimi', model: 'kimi-k2.5' },
+    { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
+    { provider: 'local', model: DEFAULT_MODEL.local },
+  ],
+  // Observe-only ticker watch: short news + indicator take. Muse first.
+  watch: [
+    { provider: 'muse', model: DEFAULT_MODEL.muse },
+    { provider: 'groq', model: 'openai/gpt-oss-20b' },
+    { provider: 'nvidia', model: N_LLAMA },
+    { provider: 'kimi', model: 'kimi-k2.5' },
+    { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
+    { provider: 'local', model: DEFAULT_MODEL.local },
+  ],
+  // Paper-account performance / ops note. Muse first. Never places an order.
+  performance: [
+    { provider: 'muse', model: DEFAULT_MODEL.muse },
+    { provider: 'groq', model: 'openai/gpt-oss-20b' },
+    { provider: 'nvidia', model: N_LLAMA },
+    { provider: 'kimi', model: 'kimi-k2.5' },
+    { provider: 'anthropic', model: DEFAULT_MODEL.anthropic },
+    { provider: 'local', model: DEFAULT_MODEL.local },
   ],
 };
 
@@ -126,6 +156,7 @@ export function providerConfig(name: ProviderName): { apiKey: string; baseUrl: s
   if (name === 'anthropic') return { apiKey: config.anthropic.apiKey, baseUrl: 'https://api.anthropic.com/v1', model: config.anthropic.model };
   if (name === 'kimi') return config.kimi;
   if (name === 'groq') return config.groq;
+  if (name === 'muse') return config.muse;
   if (name === 'local') return config.local;
   return config.nvidia;
 }
@@ -143,9 +174,10 @@ export function isPoisoned(name: ProviderName): boolean {
     .includes(name);
 }
 
-/** GROQ_MODEL / KIMI_MODEL / NVIDIA_MODEL / ANTHROPIC_MODEL stay honored: they
- *  replace that provider's DEFAULT pick wherever a chain uses it (slots picked
- *  deliberately for cost, like the 20b triage lead, keep their own id). */
+/** GROQ_MODEL / KIMI_MODEL / NVIDIA_MODEL / ANTHROPIC_MODEL / META_MUSE_MODEL
+ *  (or MUSE_MODEL) stay honored: they replace that provider's DEFAULT pick
+ *  wherever a chain uses it (slots picked deliberately for cost, like the 20b
+ *  triage lead, keep their own id). */
 function preferred(name: ProviderName): string {
   const m = providerConfig(name).model;
   return m || DEFAULT_MODEL[name];
@@ -163,6 +195,7 @@ const probes: Record<ProviderName, ProbeState> = {
   kimi: { live: new Set(), probed_at: null, last_attempt_at: null, error: null },
   groq: { live: new Set(), probed_at: null, last_attempt_at: null, error: null },
   nvidia: { live: new Set(), probed_at: null, last_attempt_at: null, error: null },
+  muse: { live: new Set(), probed_at: null, last_attempt_at: null, error: null },
   local: { live: new Set(), probed_at: null, last_attempt_at: null, error: null },
 };
 

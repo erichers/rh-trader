@@ -5,10 +5,10 @@ import { Card, Badge, useAsync, Info, money } from '../components/ui';
 import { Icon } from '../components/icons';
 
 const MODE_DESC: [string, string, string][] = [
-  ['observe', 'Observe', 'Logs what every bot/Claude would do. Places NO real orders.'],
+  ['observe', 'Observe', 'Logs what every bot or model would do. Places no real orders.'],
   ['cautious', 'Cautious', 'Stages every order for your one-click approval (Orders page).'],
-  ['auto', 'Auto', 'Bots auto-execute when rules + the risk engine pass.'],
-  ['full_auto', 'Full-Auto', 'Auto + Claude may open NEW positions within the guardrails.'],
+  ['auto', 'Auto', 'Bots auto-execute when rules and the risk engine pass.'],
+  ['full_auto', 'Full-Auto', 'Auto, and a model may open new positions within the guardrails.'],
 ];
 
 export default function Settings({ health, onChange }: { health: any; onChange: () => void }) {
@@ -19,6 +19,31 @@ export default function Settings({ health, onChange }: { health: any; onChange: 
   const broker = health?.broker || {};
   return (
     <div className="grid" style={{ gap: 14 }}>
+      <Card title="How this desk works">
+        <div className="onboard-grid">
+          <div>
+            <div className="muted muse-k">Observe vs Paper</div>
+            <p className="muted" style={{ fontSize: 13, margin: '4px 0 0' }}>
+              Paper is the Alpaca account with fake money. Observe is the mode that logs and never
+              sends an order. You can stay here indefinitely.
+            </p>
+          </div>
+          <div>
+            <div className="muted muse-k">Providers</div>
+            <p className="muted" style={{ fontSize: 13, margin: '4px 0 0' }}>
+              Muse: watch, ops, performance. NVIDIA then Groq: research and reviews. Groq: chat and
+              news triage. Kimi: backup. Anthropic: optional, may be invalid.
+            </p>
+          </div>
+          <div>
+            <div className="muted muse-k">Watcher</div>
+            <p className="muted" style={{ fontSize: 13, margin: '4px 0 0' }}>
+              SPY, META, TSLA, QQQ. News plus indicators, Muse writes notes. No orders from that loop.
+            </p>
+          </div>
+        </div>
+      </Card>
+
       <Card title="Trading environment">
         <div className="row">
           <span className={`env-badge ${health?.live ? 'live' : 'paper'}`}><span className="dot" />{env}</span>
