@@ -52,6 +52,23 @@ export const config = {
     baseUrl: process.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1',
     model: process.env.NVIDIA_MODEL || '',
   },
+  // Meta Model API (OpenAI-compatible Chat Completions at https://api.meta.ai/v1).
+  // Bearer token: META_MUSE_API_KEY, MUSE_API_KEY, or Meta's official MODEL_API_KEY (same key).
+  // Empty META_MUSE_MODEL / MUSE_MODEL means the router default: muse-spark-1.3 (PAYG Standard).
+  // Never commit a real key.
+  muse: {
+    apiKey: process.env.META_MUSE_API_KEY || process.env.MUSE_API_KEY || process.env.MODEL_API_KEY || '',
+    baseUrl: process.env.META_MUSE_BASE_URL || process.env.MUSE_BASE_URL || 'https://api.meta.ai/v1',
+    model: process.env.META_MUSE_MODEL || process.env.MUSE_MODEL || '',
+  },
+  // Observe-only watch universe. Comma list. Watcher never places orders.
+  watch: {
+    universe: (process.env.WATCH_UNIVERSE || 'SPY,META,TSLA,QQQ')
+      .split(',')
+      .map((s) => s.trim().toUpperCase())
+      .filter((s) => /^[A-Z.]{1,12}$/.test(s)),
+    intervalMs: num(process.env.WATCH_INTERVAL_MS, 15 * 60_000),
+  },
   // Any OpenAI-compatible server you run yourself (Ollama: http://localhost:11434/v1,
   // LM Studio: http://localhost:1234/v1, vLLM, llama.cpp). Key optional. Last rung of every chain.
   local: {

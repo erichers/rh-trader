@@ -5,24 +5,23 @@ import { Icon } from '../components/icons';
 
 type Msg = { role: 'user' | 'assistant'; text: string; meta?: string };
 
-// Prebuilt data questions (Groq text-to-SQL over your DB).
-const DATA_PILLS = [
-  'How many bots are enabled and what modes are they in?',
-  'Show my last 10 orders with status and source',
-  'Which symbols were vetoed most by the risk engine?',
-  'My biggest positions by market value',
-  'Which bots fired the most signals?',
-  'Recent risk events and why they were vetoed',
-  'Total realized P/L from filled orders',
-  'What does my watchlist look like with latest research?',
+// Short labels stay one line. Full prompt goes on send.
+const DATA_PILLS: { label: string; q: string }[] = [
+  { label: 'Enabled bots', q: 'How many bots are enabled and what modes are they in?' },
+  { label: 'Last 10 orders', q: 'Show my last 10 orders with status and source' },
+  { label: 'Most vetoed', q: 'Which symbols were vetoed most by the risk engine?' },
+  { label: 'Biggest positions', q: 'My biggest positions by market value' },
+  { label: 'Hottest bots', q: 'Which bots fired the most signals?' },
+  { label: 'Risk events', q: 'Recent risk events and why they were vetoed' },
+  { label: 'Realized P/L', q: 'Total realized P/L from filled orders' },
+  { label: 'Watch + research', q: 'What does my watchlist look like with latest research?' },
 ];
 
-// Prebuilt agent prompts (Kimi — can propose risk-gated bots/trades).
-const AGENT_PILLS = [
-  'Suggest a high-conviction options bot for AMD and explain why',
-  'Review my open positions and flag anything risky',
-  'What swing setup looks best across QQQ, SPY, TSLA right now?',
-  'Propose 3 bots for this week and their risk settings',
+const AGENT_PILLS: { label: string; q: string }[] = [
+  { label: 'AMD options bot', q: 'Suggest a high-conviction options bot for AMD and explain why' },
+  { label: 'Review positions', q: 'Review my open positions and flag anything risky' },
+  { label: 'Best swing now', q: 'What swing setup looks best across QQQ, SPY, TSLA right now?' },
+  { label: '3 bots this week', q: 'Propose 3 bots for this week and their risk settings' },
 ];
 
 export default function ChatView() {
@@ -49,7 +48,7 @@ export default function ChatView() {
         setLog((l) => [...l, { role: 'assistant', text: r.answer }]);
       }
     } catch (e: any) {
-      const m = /api key|provider/i.test(String(e)) ? 'No AI provider configured — set KIMI_API_KEY / GROQ_API_KEY in .env.' : String(e);
+      const m = /api key|provider/i.test(String(e)) ? 'No AI provider configured. Set GROQ_API_KEY, NVIDIA_API_KEY, or META_MUSE_API_KEY in .env.' : String(e);
       setLog((l) => [...l, { role: 'assistant', text: m }]);
     } finally {
       setBusy(false);
@@ -59,7 +58,7 @@ export default function ChatView() {
   const askAgent = (q: string) => { setAgentMode(true); send(q, true); };
 
   return (
-    <Card title={agentMode ? 'Trade Agent (AI proposes risk-gated orders — Kimi)' : 'Ask AI (Vanna text-to-SQL over your data — Groq)'}>
+    <Card title={agentMode ? 'Trade agent (Muse first, risk engine still decides)' : 'Ask AI (Groq text-to-SQL over your data)'}>
       <div className="row" style={{ marginBottom: 10 }}>
         <label className="row"><input type="checkbox" checked={agentMode} onChange={(e) => setAgentMode(e.target.checked)} /> Agent mode</label>
         {agentMode && (
@@ -69,16 +68,16 @@ export default function ChatView() {
       </div>
 
       <div style={{ marginBottom: 10 }}>
-        <div className="muted icon-btn" style={{ fontSize: 11, marginBottom: 4 }}><Icon name="chart" size={14} /> Ask about your data:</div>
+        <div className="muted icon-btn" style={{ fontSize: 11, marginBottom: 4 }}><Icon name="chart" size={14} /> Ask about your data (Groq)</div>
         <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-          {DATA_PILLS.map((q) => (
-            <button key={q} className="pill" style={{ cursor: 'pointer' }} disabled={busy} onClick={() => send(q, false)}>{q}</button>
+          {DATA_PILLS.map((p) => (
+            <button key={p.label} className="pill" style={{ cursor: 'pointer' }} disabled={busy} title={p.q} onClick={() => send(p.q, false)}>{p.label}</button>
           ))}
         </div>
-        <div className="muted icon-btn" style={{ fontSize: 11, margin: '8px 0 4px' }}><Icon name="bot" size={14} /> Ask the agent (suggests bots & trades):</div>
+        <div className="muted icon-btn" style={{ fontSize: 11, margin: '8px 0 4px' }}><Icon name="bot" size={14} /> Ask the agent (Muse)</div>
         <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-          {AGENT_PILLS.map((q) => (
-            <button key={q} className="pill" style={{ cursor: 'pointer', borderColor: 'var(--accent)' }} disabled={busy} onClick={() => askAgent(q)}>{q}</button>
+          {AGENT_PILLS.map((p) => (
+            <button key={p.label} className="pill" style={{ cursor: 'pointer', borderColor: 'var(--accent)' }} disabled={busy} title={p.q} onClick={() => askAgent(p.q)}>{p.label}</button>
           ))}
         </div>
       </div>

@@ -144,14 +144,18 @@ Say this to me, then wait:
       extra fallback capacity, and the only source of embeddings for the search layer.
    c) Kimi / Moonshot, paid, https://platform.moonshot.ai/ . Strong second rung for research
       and the daily review.
-   d) Anthropic, paid, https://console.anthropic.com/ . Leads research, the trade agent, the
-      daily review and idea generation. Tell me which model id your account can use.
-   e) A local OpenAI-compatible server, free. Ollama (http://localhost:11434/v1) or LM Studio
+   d) Anthropic, paid, https://console.anthropic.com/ . Optional. The key may be invalid; the
+      router will skip it. Tell me which model id your account can use if you have one.
+   e) Meta Muse Spark, https://ai.developer.meta.com/ . Leads watch, performance, and agent
+      (short ops). Key goes in META_MUSE_API_KEY (aliases MUSE_API_KEY and Meta's MODEL_API_KEY).
+      Default model muse-spark-1.3 (PAYG Standard, chat completions HTTP 200).
+   f) A local OpenAI-compatible server, free. Ollama (http://localhost:11434/v1) or LM Studio
       (http://localhost:1234/v1). I will need the base URL and the exact model id the server
       returns from GET /v1/models.
    Paste the keys you want to use, and say which of these you are skipping."
 Write the answers into .env only: GROQ_API_KEY, NVIDIA_API_KEY, KIMI_API_KEY,
-ANTHROPIC_API_KEY plus ANTHROPIC_MODEL, and for a local server LOCAL_BASE_URL, LOCAL_MODEL and
+ANTHROPIC_API_KEY plus ANTHROPIC_MODEL, META_MUSE_API_KEY (or MUSE_API_KEY / MODEL_API_KEY),
+and for a local server LOCAL_BASE_URL, LOCAL_MODEL and
 LOCAL_API_KEY (Ollama ignores the key value but the variable must be non-empty).
 If I chose a local server, verify it is reachable and that the model id exists:
   curl -s $LOCAL_BASE_URL/models
@@ -169,11 +173,15 @@ STEP 9: VERIFY
 Expect ok:true, db:true, env:"alpaca_paper", live:false, mode:"observe", and a broker block
 where alpacaConfigured is true if I gave you Alpaca keys.
   curl -s http://127.0.0.1:8011/api/ai/models
-Expect a tasks object with a resolved chain for chat, triage, research, agent, review and
-ideas, and a providers object. A provider with live_ids 0 and an error string has a bad key or
-base URL: tell me which one and what the error says. A provider I skipped should simply be
-absent from the chains.
-Then open http://127.0.0.1:8011/ in my browser.
+Expect a tasks object with a resolved chain for chat, triage, research, agent, review,
+ideas, watch and performance, and a providers object (including muse when a Meta key is set).
+A provider with live_ids 0 and an error string has a bad key or base URL: tell me which one
+and what the error says. A provider I skipped should simply be absent from the chains.
+Also hit:
+  curl -s http://127.0.0.1:8011/api/muse/status
+  curl -s http://127.0.0.1:8011/api/watch/status
+Those payloads must never contain an API key. watch.universe should be SPY, META, TSLA, QQQ
+unless I set WATCH_UNIVERSE. Then open http://127.0.0.1:8011/ in my browser.
 If either check fails, show me the backend log and the exact failing response. Do not change a
 safety setting to make a check pass.
 
@@ -324,8 +332,8 @@ research and learnings. Embeddings are optional and come from NVIDIA NIM when a 
                                                      REAL money
                                     ^
                                     |
-        LLM providers (any subset):  Anthropic  |  Kimi (Moonshot)  |  Groq  |
-        NVIDIA NIM  |  local OpenAI-compatible server (Ollama, LM Studio)
+        LLM providers (any subset):  Muse Spark (Meta Model API)  |  Groq  |
+        NVIDIA NIM  |  Kimi  |  Anthropic  |  local OpenAI-compatible server
 ```
 
 No Apache and no MAMP are required. The Fastify server serves the SPA from `frontend/dist`,
@@ -351,12 +359,16 @@ shows the resolved chain per task plus the last probe result.
 
 | Task | What uses it | Leads with | Falls back to | Why in that order |
 | --- | --- | --- | --- | --- |
-| `chat` | Ask AI text-to-SQL, assistant | Groq `openai/gpt-oss-120b` | Groq 27b and 20b, NVIDIA Nemotron-3 Super, Kimi, Anthropic | Short prompts, one user waiting, latency is the whole experience |
-| `triage` | News classification, quick ticker reads | Groq `openai/gpt-oss-20b` | Groq 27b and 120b, NVIDIA, Kimi, Anthropic | Tiny prompts, hundreds of calls a day, the cheapest rung is enough |
-| `research` | Long analytical passes on a symbol | Anthropic | Kimi, NVIDIA Nemotron-3 Super, NVIDIA Nemotron 49b, Groq | Long context and judgment beat cost here |
-| `agent` | Tool loops that propose orders | Anthropic | Kimi, Groq 120b, NVIDIA | Needs function calling that does not fumble the schema |
-| `review` | The daily learning pass over every trade | Anthropic | Kimi, NVIDIA, Groq | Biggest prompt of the day; Groq's 8K TPM free tier cannot lead it |
-| `ideas` | New strategy generation | Anthropic | Kimi, NVIDIA, Groq | Same shape as review, quality dominates |
+| `chat` | Ask AI text-to-SQL, assistant | Groq `openai/gpt-oss-120b` | Groq 27b and 20b, NVIDIA, Kimi, Muse, Anthropic | Short prompts, one user waiting, latency is the whole experience |
+| `triage` | News classification, quick ticker reads | Groq `openai/gpt-oss-20b` | Groq 27b and 120b, NVIDIA, Kimi, Muse, Anthropic | Tiny prompts, hundreds of calls a day, the cheapest rung is enough |
+| `research` | Long analytical passes on a symbol | NVIDIA Nemotron-3 Super | NVIDIA 49b, Groq 120b, Muse, Kimi, Anthropic | Heavy research stays on NVIDIA then Groq; Muse is the backup |
+| `review` | The daily learning pass over every trade | NVIDIA Nemotron-3 Super | Groq 120b, Muse, Kimi, Anthropic | Same shape as research |
+| `ideas` | New strategy generation | NVIDIA Nemotron-3 Super | Groq 120b, Muse, Kimi, Anthropic | Same shape as research |
+| `agent` | Tool loops (read-only in Observe) | Muse Spark `muse-spark-1.3` | NVIDIA, Groq, Kimi, Anthropic | Short ops judgments; Muse first |
+| `watch` | SPY / META / TSLA / QQQ news + indicator loop | Muse Spark `muse-spark-1.3` | Groq 20b, NVIDIA, Kimi, Anthropic | Fast desk watch. Writes alerts and notes. Never places an order. |
+| `performance` | Paper equity / ops note on each watch cycle | Muse Spark `muse-spark-1.3` | Groq 20b, NVIDIA, Kimi, Anthropic | Same as watch |
+
+Unconfigured providers are skipped. Muse's own ladder leads with PAYG Standard `muse-spark-1.3` (live chat completions, HTTP 200), then `muse-spark-1.1`. Contributor is last on the ladder only, never the default. Meta documents `GET https://api.meta.ai/v1/models`, so the boot probe treats Muse like Groq and NVIDIA. Anthropic stays on the chain; if the key is invalid the probe goes amber and the cascade walks past it.
 
 Practical limits, verified against the providers in August 2026:
 
@@ -364,9 +376,28 @@ Practical limits, verified against the providers in August 2026:
 | --- | --- | --- | --- |
 | **Groq** | Free tier available | 30 RPM, 8K TPM, 1K RPD per model (200K TPD) | Excellent for `chat` and `triage`. The 8K TPM ceiling is why no long-prompt task leads with it. `groq/compound` is deliberately excluded: no custom tools, no `response_format`. Groq retired every llama-3.x chat model in Aug 2026, which is why the router probes ids instead of trusting them. |
 | **NVIDIA NIM** | Free developer tier | roughly 40 RPM per key | Extra fallback capacity, and the only source of embeddings for the RAG layer. Without a key, the NIM chain entries and embeddings are skipped. `meta/llama-3.3-70b-instruct` is listed on NIM but hung on every probe, so it is not in the ladder. |
-| **Kimi (Moonshot)** | Paid | Per-account rate and spend limits | Strong second rung for research, agent and review. Temperature is pinned at 1 for the k2 family. |
-| **Anthropic** | Paid | Per-account rate and spend limits | Leads the four heavy tasks. Set `ANTHROPIC_MODEL` to the model you actually have access to. |
+| **Kimi (Moonshot)** | Paid | Per-account rate and spend limits | Backup for research, agent, watch, and review. Temperature is pinned at 1 for the k2 family. |
+| **Muse Spark (Meta Model API)** | PAYG Standard | Per-account rate and spend limits | OpenAI-compatible Chat Completions at `https://api.meta.ai/v1`. Leads `watch`, `performance`, and `agent`. Backup on research / review / ideas. Set `META_MUSE_API_KEY` (aliases `MUSE_API_KEY` and Meta's official `MODEL_API_KEY`). Default and recommended id is `muse-spark-1.3` (PAYG Standard; chat 200). Leave `META_MUSE_MODEL` empty. |
+| **Anthropic** | Paid | Per-account rate and spend limits | Optional last hosted rung. The key may be invalid; the lamp goes amber and the chain skips it. Set `ANTHROPIC_MODEL` to the model you actually have access to. |
 | **Local** | Free, your hardware | Whatever your machine sustains | Any OpenAI-compatible server: `LOCAL_BASE_URL` (Ollama: `http://localhost:11434/v1`, LM Studio: `http://localhost:1234/v1`), `LOCAL_MODEL`, `LOCAL_API_KEY` (Ollama ignores the key, send anything). Caveats below. |
+
+**Safety loop.** Adding Muse does not change trading. Keep `TRADING_ENV=alpaca_paper` and `DEFAULT_MODE=observe`. The watcher writes alerts, research notes, and learnings only. Keys stay in `.env` (gitignored) and are never committed. Status JSON never includes secrets.
+
+**Iteration loop.** The watch loop (default `WATCH_UNIVERSE=SPY,META,TSLA,QQQ`, every 15 minutes plus once ~20s after boot) asks Muse for a short take. In Observe it never enables a bot or places an order.
+
+### Muse status and the watcher, locally
+
+```bash
+# After `npm start` in ./backend (and a frontend build, or Vite on :5173)
+curl -s http://127.0.0.1:8011/api/health | jq '{ok,mode,env,aiShort,chips:(.connections.chips|map(.label))}'
+curl -s http://127.0.0.1:8011/api/models/status | jq '{chips,tasks,muse,watch}'
+curl -s http://127.0.0.1:8011/api/muse/status | jq
+curl -s http://127.0.0.1:8011/api/watch/status | jq
+# One Observe-only cycle (notes / alerts / learnings, no orders)
+curl -s -X POST http://127.0.0.1:8011/api/watch/run | jq '{at,alerts,notes,learnings,error,symbols}'
+```
+
+Dashboard: connection chips (Muse first), the Muse progress panel (current call, last watch cycle, last news pass, errors), and the first-run "How this desk works" card. Watchlist page shows the universe. No API keys appear in any of those payloads.
 
 **Local model caveats.** A local server is a good fit for `triage` and acceptable for `chat`.
 It is a poor fit for `agent`, `review` and `ideas` unless the model is large and genuinely

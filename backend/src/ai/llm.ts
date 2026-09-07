@@ -4,6 +4,7 @@ import {
   PROVIDERS, isConfigured, isPoisoned, providerConfig, resolveChain, firstFor,
   type ProviderName, type Task, type ResolvedEntry,
  TASKS } from './models.js';
+import { recordLlmCall } from './activity.js';
 
 export type { ProviderName, Task };
 export type Tool = { name: string; description: string; parameters: any };
@@ -24,7 +25,7 @@ export function aiReady(): boolean {
   return PROVIDERS.some(isConfigured);
 }
 
-const LABEL: Record<ProviderName, string> = { anthropic: 'Claude', kimi: 'Kimi', groq: 'Groq', nvidia: 'NVIDIA', local: 'Local' };
+const LABEL: Record<ProviderName, string> = { muse: 'Muse', anthropic: 'Claude', kimi: 'Kimi', groq: 'Groq', nvidia: 'NVIDIA', local: 'Local' };
 
 export function aiLabel(): string {
   const one = (t: Task) => {
@@ -39,7 +40,8 @@ export function aiProvider(): ProviderName | null { return providerFor('research
 
 export function aiShort(): string {
   const cap = (p: ProviderName | null) => (p ? LABEL[p] : null);
-  const names = [...new Set([cap(providerFor('research')), cap(providerFor('chat'))].filter(Boolean))];
+  // Watch lead (Muse when configured) + chat lead (Groq) is the desk lamp.
+  const names = [...new Set([cap(providerFor('watch')), cap(providerFor('chat'))].filter(Boolean))];
   return names.length ? names.join(' + ') : 'no AI key';
 }
 
@@ -55,15 +57,20 @@ function ocFor(e: ResolvedEntry): OpenAICompat {
   return { name: e.provider, baseUrl: c.baseUrl, apiKey: c.apiKey, model: e.model };
 }
 
-const FAST_TASKS: Task[] = ['chat', 'triage'];
+const FAST_TASKS: Task[] = ['chat', 'triage', 'watch', 'performance'];
 
 /** Per-model request shaping (patterns proven in the frida project, 2026-08):
  *  gpt-oss takes reasoning_effort; nemotron/deepseek need thinking switched OFF
  *  (prefix + chat_template_kwargs) and room to answer; Kimi wants temperature 1. */
 function shapeBody(oc: OpenAICompat, task: Task, body: any): any {
   const m = oc.model.toLowerCase();
-  const out: any = { model: oc.model, temperature: oc.name === 'kimi' ? 1 : 0.2, ...body };
+  const out: any = { model: oc.model, temperature: oc.name === 'kimi' || oc.name === 'muse' ? 1 : 0.2, ...body };
   if (m.includes('gpt-oss')) out.reasoning_effort = FAST_TASKS.includes(task) ? 'low' : 'medium';
+  // Muse Spark always reasons; reasoning_effort:"none" is HTTP 400. Meta tunes it for temperature 1.0.
+  if (oc.name === 'muse' || m.includes('muse-spark')) {
+    out.reasoning_effort = FAST_TASKS.includes(task) ? 'low' : 'high';
+    out.temperature = 1;
+  }
   if (/nemotron|deepseek/.test(m)) {
     // Nemotron-3 reads enable_thinking, older nemotron/deepseek templates read thinking; send both.
     out.chat_template_kwargs = { ...(out.chat_template_kwargs || {}), thinking: false, enable_thinking: false };
@@ -112,7 +119,7 @@ function withMeta(obj: any, e: ResolvedEntry): any {
   return obj;
 }
 
-const NO_PROVIDER = 'No AI provider configured (set GROQ_API_KEY / KIMI_API_KEY / NVIDIA_API_KEY / ANTHROPIC_API_KEY)';
+const NO_PROVIDER = 'No AI provider configured (set META_MUSE_API_KEY / GROQ_API_KEY / NVIDIA_API_KEY / KIMI_API_KEY / ANTHROPIC_API_KEY)';
 
 /** Single completion expected to return JSON.
  *  LAW (2026-08-24): cascade on ANY per-model error (404 decommission, 400, 429,
@@ -125,6 +132,7 @@ export async function llmJSON(system: string, user: string, task: Task = 'resear
   for (const e of chain) {
     try {
       poisonCheck(e.provider);
+      recordLlmCall({ provider: e.provider, task, model: e.model, phase: 'start' });
       let raw = '';
       if (e.provider === 'anthropic') {
         const res: any = await (anthropic().messages.create as any)({
@@ -140,10 +148,13 @@ export async function llmJSON(system: string, user: string, task: Task = 'resear
         raw = stripThink(res.choices?.[0]?.message?.content || '');
       }
       console.log(`[llm] ${task} answered by ${e.provider} ${e.model}`);
+      recordLlmCall({ provider: e.provider, task, model: e.model, phase: 'ok' });
       return withMeta(parseJSONLoose(raw), e);
     } catch (err: any) {
-      errs.push(`${e.provider} ${e.model}: ${String(err?.message || err).slice(0, 160)}`);
-      console.error(`[llm] ${e.provider} ${e.model} failed (${task}): ${String(err?.message || err).slice(0, 160)} — cascading to next model`);
+      const msg = String(err?.message || err).slice(0, 160);
+      recordLlmCall({ provider: e.provider, task, model: e.model, phase: 'error', detail: msg });
+      errs.push(`${e.provider} ${e.model}: ${msg}`);
+      console.error(`[llm] ${e.provider} ${e.model} failed (${task}): ${msg} — cascading to next model`);
     }
   }
   throw new Error(`all providers failed (${task}) — ${errs.join(' | ')}`);
@@ -165,12 +176,16 @@ export async function llmAgent(
   for (const e of chain) {
     try {
       poisonCheck(e.provider);
+      recordLlmCall({ provider: e.provider, task, model: e.model, phase: 'start' });
       const out = await agentWith(e, task, system, userPrompt, tools, runTool, maxIters);
       console.log(`[llm] ${task} answered by ${e.provider} ${e.model}`);
+      recordLlmCall({ provider: e.provider, task, model: e.model, phase: 'ok' });
       return out;
     } catch (err: any) {
-      errs.push(`${e.provider} ${e.model}: ${String(err?.message || err).slice(0, 160)}`);
-      console.error(`[llm] ${e.provider} ${e.model} agent failed (${task}): ${String(err?.message || err).slice(0, 160)}${err?.toolsRan ? ' — tools already ran, NOT cascading' : ' — cascading to next model'}`);
+      const msg = String(err?.message || err).slice(0, 160);
+      recordLlmCall({ provider: e.provider, task, model: e.model, phase: 'error', detail: msg });
+      errs.push(`${e.provider} ${e.model}: ${msg}`);
+      console.error(`[llm] ${e.provider} ${e.model} agent failed (${task}): ${msg}${err?.toolsRan ? ' — tools already ran, NOT cascading' : ' — cascading to next model'}`);
       if (err?.toolsRan && !opts?.readOnlyTools) throw err; // a re-run on another provider would re-execute side-effectful tools
     }
   }
@@ -214,7 +229,7 @@ async function agentWith(
     return { text: 'Reached max tool iterations.', calls };
   }
 
-  // OpenAI-compatible (Kimi / Groq / NVIDIA NIM).
+  // OpenAI-compatible (Muse / Kimi / Groq / NVIDIA NIM).
   const oc = ocFor(e);
   const oTools = tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }));
   const messages: any[] = [{ role: 'system', content: system }, { role: 'user', content: userPrompt }];

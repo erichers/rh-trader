@@ -16,6 +16,8 @@ import { recordEquitySnapshot } from './market/pnl.js';
 import { ensureFleet } from './fleet.js';
 import { embedPending } from './rag.js';
 import { learningTick } from './learning.js';
+import { config } from './config.js';
+import { ensureWatchUniverse, hydrateWatchStatus, runWatchCycle } from './watch.js';
 
 let timers: NodeJS.Timeout[] = [];
 
@@ -110,9 +112,15 @@ export function startWorker() {
   // Re-verify every provider's live model ids (model ids get retired without notice).
   const models = loop('models', 6 * 3_600_000, async () => { await probeProviders(); });
 
-  timers = [sync, bots, news, monitors, campaign, newsAi, review, focusLearn, alerts, models, embed, learning];
+  // Observe-only Muse watcher: news + simple indicators on the desk universe.
+  // Writes alerts / notes / learnings. Never places an order.
+  const watch = loop('watch', config.watch.intervalMs, async () => { await runWatchCycle(); });
+
+  timers = [sync, bots, news, monitors, campaign, newsAi, review, focusLearn, alerts, models, embed, learning, watch];
   void (async () => {
     await probeProviders().catch(() => {}); // non-blocking at boot, before the first AI call
+    await ensureWatchUniverse().catch(() => {});
+    await hydrateWatchStatus().catch(() => {});
     if (await brokerReady()) await syncAll().catch(() => {});
     await refreshNews().catch(() => {});
     if (await getActiveCampaign()) await recordSnapshot().catch(() => {});
@@ -121,6 +129,7 @@ export function startWorker() {
       dailyReview().catch(() => {});
       newsMonitor().catch(() => {});
       getFocus().then((f) => { if (f.enabled) learnTicker(f.symbol).catch(() => {}); }).catch(() => {});
+      runWatchCycle().catch(() => {});
     }, 20_000);
   })();
 }

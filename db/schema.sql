@@ -385,9 +385,10 @@ CREATE TABLE IF NOT EXISTS playbooks (
 ) ENGINE=InnoDB;
 
 INSERT INTO watchlist (symbol, note) VALUES
- ('META','Mega-cap, high IV swings'),('TSLA','High-beta day/swing'),
- ('SPY','Index hedge/momentum'),('QQQ','Nasdaq momentum'),
- ('AMD','Semis high-beta'),('MSFT','Mega-cap trend')
+ ('SPY','Index hedge / momentum. Desk default.'),
+ ('META','Mega-cap. Desk default.'),
+ ('TSLA','High-beta. Desk default.'),
+ ('QQQ','Nasdaq momentum. Desk default.')
 ON DUPLICATE KEY UPDATE symbol=symbol;
 
 -- Earnings calendar + transcript highlights (web-researched).

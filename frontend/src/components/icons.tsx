@@ -6,7 +6,7 @@ export type IconName =
   | 'dashboard' | 'focus' | 'growth' | 'positions' | 'shield' | 'orders' | 'journal'
   | 'chart' | 'options' | 'bolt' | 'beaker' | 'bot' | 'library' | 'playbook' | 'backtest'
   | 'watchlist' | 'research' | 'news' | 'bell' | 'chat' | 'activity' | 'settings'
-  | 'check' | 'x' | 'warning' | 'trophy' | 'gauge' | 'learn';
+  | 'check' | 'x' | 'warning' | 'trophy' | 'gauge' | 'learn' | 'more';
 
 const P: Record<IconName, React.ReactNode> = {
   dashboard: <><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></>,
@@ -37,6 +37,7 @@ const P: Record<IconName, React.ReactNode> = {
   trophy: <><path d="M7 4h10v4a5 5 0 0 1-10 0V4z" /><path d="M7 6H4v1a3 3 0 0 0 3 3M17 6h3v1a3 3 0 0 1-3 3M9 16h6M8 20h8M12 13v3" /></>,
   gauge: <><path d="M12 13l4-4" /><path d="M3 18a9 9 0 1 1 18 0" /><circle cx="12" cy="13" r="1.5" /></>,
   learn: <><path d="M3 8l9-4 9 4-9 4-9-4z" /><path d="M7 10.5V15c0 1.7 2.2 3 5 3s5-1.3 5-3v-4.5" /><path d="M21 8v6" /></>,
+  more: <><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></>,
 };
 
 export function Icon({ name, size = 18, className, strokeWidth = 1.75 }: { name: IconName; size?: number; className?: string; strokeWidth?: number }) {

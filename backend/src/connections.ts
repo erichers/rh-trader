@@ -1,5 +1,7 @@
 import { ping, q } from './db.js';
 import { PROVIDERS, providerStatus, probeProviders, probedOnce, sanitizeError, type ProviderName } from './ai/models.js';
+import { museActivity } from './ai/activity.js';
+import { hydrateWatchStatus, watchStatus } from './watch.js';
 import { alpacaConfigured, alpacaPaper } from './brokers/alpaca.js';
 
 /** UI lamp color: green = configured + last probe ok, amber = key present but not live, gray = no key. */
@@ -17,6 +19,7 @@ export type Connection = {
 };
 
 const PROVIDER_LABEL: Record<ProviderName, string> = {
+  muse: 'Muse',
   groq: 'Groq',
   nvidia: 'NVIDIA',
   kimi: 'Kimi',
@@ -24,8 +27,8 @@ const PROVIDER_LABEL: Record<ProviderName, string> = {
   local: 'Local',
 };
 
-/** Chip order on the desk: models first, then paper broker, then DB. Muse is optional and not required. */
-const PROVIDER_ORDER: ProviderName[] = ['groq', 'nvidia', 'kimi', 'anthropic', 'local'];
+/** Chip order: Muse first (desk ops lamp), then the rest of the cascade, paper broker, DB. */
+const PROVIDER_ORDER: ProviderName[] = ['muse', 'groq', 'nvidia', 'kimi', 'anthropic', 'local'];
 
 function kindOf(configured: boolean, live: boolean | null): ConnKind {
   if (configured && live === true) return 'green';
@@ -83,6 +86,8 @@ export async function connectionStatus(opts: { probe?: boolean } = {}): Promise<
   db: Connection;
   corpus: { news: number; learnings: number; learning_runs: number };
   chips: Connection[];
+  muse: ReturnType<typeof museActivity>;
+  watch: ReturnType<typeof watchStatus>;
 }> {
   if (opts.probe) {
     const jobs: Promise<void>[] = [probeAlpaca(), probeDb()];
@@ -128,5 +133,14 @@ export async function connectionStatus(opts: { probe?: boolean } = {}): Promise<
   });
 
   const chips = [...PROVIDER_ORDER.map((id) => providers[id]), alpaca, db];
-  return { providers, alpaca, db, corpus: await corpusCounts(), chips };
+  await hydrateWatchStatus().catch(() => {});
+  return {
+    providers,
+    alpaca,
+    db,
+    corpus: await corpusCounts(),
+    chips,
+    muse: museActivity(),
+    watch: watchStatus(),
+  };
 }
