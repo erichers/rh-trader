@@ -157,18 +157,31 @@ function ladderFor(name: ProviderName): string[] {
 }
 
 // ── Liveness probe ───────────────────────────────────────────────────────────
-type ProbeState = { live: Set<string>; probed_at: number | null; error: string | null };
+type ProbeState = { live: Set<string>; probed_at: number | null; last_attempt_at: number | null; error: string | null };
 const probes: Record<ProviderName, ProbeState> = {
-  anthropic: { live: new Set(), probed_at: null, error: null },
-  kimi: { live: new Set(), probed_at: null, error: null },
-  groq: { live: new Set(), probed_at: null, error: null },
-  nvidia: { live: new Set(), probed_at: null, error: null },
-  local: { live: new Set(), probed_at: null, error: null },
+  anthropic: { live: new Set(), probed_at: null, last_attempt_at: null, error: null },
+  kimi: { live: new Set(), probed_at: null, last_attempt_at: null, error: null },
+  groq: { live: new Set(), probed_at: null, last_attempt_at: null, error: null },
+  nvidia: { live: new Set(), probed_at: null, last_attempt_at: null, error: null },
+  local: { live: new Set(), probed_at: null, last_attempt_at: null, error: null },
 };
+
+/** Strip anything that looks like a secret from probe error text before it leaves the process. */
+export function sanitizeError(s: string | null | undefined): string | null {
+  if (!s) return null;
+  return String(s)
+    .replace(/sk-ant-[A-Za-z0-9_-]+/g, '[redacted]')
+    .replace(/gsk_[A-Za-z0-9]+/g, '[redacted]')
+    .replace(/nvapi-[A-Za-z0-9_-]+/g, '[redacted]')
+    .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
+    .replace(/APCA-API-[A-Z-]+/gi, '[redacted-header]')
+    .slice(0, 160);
+}
 
 async function probeOne(name: ProviderName): Promise<void> {
   const st = probes[name];
-  if (isPoisoned(name)) { st.live = new Set(); st.probed_at = null; st.error = 'poisoned via LLM_POISON_PROVIDERS'; return; }
+  const now = Date.now();
+  if (isPoisoned(name)) { st.live = new Set(); st.probed_at = null; st.last_attempt_at = now; st.error = 'poisoned via LLM_POISON_PROVIDERS'; return; }
   const { apiKey, baseUrl } = providerConfig(name);
   try {
     const headers: Record<string, string> = name === 'anthropic'
@@ -180,11 +193,13 @@ async function probeOne(name: ProviderName): Promise<void> {
     const ids: string[] = (JSON.parse(text).data || []).map((m: any) => String(m.id)).filter(Boolean);
     if (!ids.length) throw new Error('empty model list');
     st.live = new Set(ids);
-    st.probed_at = Date.now();
+    st.probed_at = now;
+    st.last_attempt_at = now;
     st.error = null;
   } catch (e: any) {
     st.live = new Set();
-    st.probed_at = null; // a failed probe means "unknown", not "nothing is live"
+    st.probed_at = null; // a failed probe means "unknown" for chain resolution, not "nothing is live"
+    st.last_attempt_at = now;
     st.error = String(e?.message || e).slice(0, 160);
   }
 }
@@ -201,14 +216,37 @@ export function probedOnce(): boolean {
   return PROVIDERS.some((n) => probes[n].probed_at != null || probes[n].error != null);
 }
 
-export function providerStatus(): Record<string, { configured: boolean; live_ids: number; probed_at: string | null; error: string | null }> {
-  const out: Record<string, { configured: boolean; live_ids: number; probed_at: string | null; error: string | null }> = {};
+/** The id this provider will actually send (env override, else the ladder default). Never a secret. */
+export function defaultModelId(name: ProviderName): string {
+  return preferred(name);
+}
+
+export type ProviderStatus = {
+  configured: boolean;
+  live: boolean | null;
+  defaultModel: string;
+  lastProbeAt: string | null;
+  live_ids: number;
+  probed_at: string | null;
+  error: string | null;
+};
+
+export function providerStatus(): Record<string, ProviderStatus> {
+  const out: Record<string, ProviderStatus> = {};
   for (const n of PROVIDERS) {
+    const st = probes[n];
+    const lastAttempt = st.last_attempt_at ?? st.probed_at;
+    const live = st.probed_at != null && st.live.size > 0
+      ? true
+      : (st.error != null || st.last_attempt_at != null) && st.probed_at == null ? false : null;
     out[n] = {
       configured: isConfigured(n),
-      live_ids: probes[n].live.size,
-      probed_at: probes[n].probed_at ? new Date(probes[n].probed_at as number).toISOString() : null,
-      error: probes[n].error,
+      live,
+      defaultModel: preferred(n),
+      lastProbeAt: lastAttempt ? new Date(lastAttempt).toISOString() : null,
+      live_ids: st.live.size,
+      probed_at: st.probed_at ? new Date(st.probed_at).toISOString() : null,
+      error: sanitizeError(st.error),
     };
   }
   return out;

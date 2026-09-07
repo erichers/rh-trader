@@ -36,6 +36,7 @@ export function wsUrl(): string {
 
 // Typed-ish endpoint helpers --------------------------------------------------
 export const Health = () => api.get('/health');
+export const ModelsStatus = () => api.get('/models/status');
 export const RhStatus = () => api.get('/rh/status');
 export const RhConnect = () => api.post('/rh/connect');
 export const RhAuthStart = () => api.post('/rh/auth/start');
@@ -149,6 +150,7 @@ export const SetJournalMeta = (id: number, patch: { tags?: string[]; note?: stri
 export const LearningStatus = () => api.get('/learning/status');
 export const LearningRuns = (limit = 30) => api.get(`/learning/runs?limit=${limit}`);
 export const LearningIdeas = (status?: string) => api.get(`/learning/ideas${status ? `?status=${encodeURIComponent(status)}` : ''}`);
+export const Learnings = (limit = 80) => api.get(`/learnings?limit=${limit}`);
 export const RunLearning = (body: { kind?: string; dry_run?: boolean; force?: boolean } = {}) => api.post('/learning/run', body);
 export const AlertRules = () => api.get('/alerts/rules');
 export const SetAlertRules = (body: any) => api.post('/alerts/rules', body);
