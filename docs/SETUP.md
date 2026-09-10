@@ -169,9 +169,15 @@ them empty and the router picks the top live id on each provider's ladder.
 ## 7. Build and run
 
 ```bash
+./scripts/start.sh --build       # preferred: API on :8011, crash-respawn, health wait
+# or the two-step form:
 (cd frontend && npm run build)   # produces frontend/dist, which the backend serves
 (cd backend  && npm start)       # Fastify on http://127.0.0.1:8011
 ```
+
+`./scripts/health.sh` must return 0 before you trade-watch the session. `./scripts/stop.sh`
+stops the pid file and leftover `tsx` processes. The full paper-desk runbook is
+[`docs/RUNBOOK.md`](RUNBOOK.md).
 
 For development with hot reload, `./scripts/dev.sh` runs the backend under `tsx watch` on
 :8011 and the Vite dev server on :5173 with a proxy for `/api` and `/ws`.
