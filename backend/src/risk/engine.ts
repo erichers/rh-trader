@@ -1,5 +1,6 @@
 import { config, HARD_BLOCKED_ASSET_CLASSES, isCryptoSymbol, isLiveEnv, type Mode, type TradingEnv } from '../config.js';
 import { q, exec, getKillSwitch, getSetting, setSetting, getTradingEnv, getRiskLimits } from '../db.js';
+import { evaluateSymbolCaps, openSymbolExposureUsd, reservedBuyNotional, splitInflightBuys, todayEt, type ExposureOrder } from './exposure.js';
 
 /** Options trade in 100-share contracts; quoted premium is per share. */
 const CONTRACT_MULT = 100;
@@ -27,6 +28,9 @@ export type OrderDraft = {
   // QuickBot per-play overrides: DTE-scaled exits (monitor) + position cap (risk sizing).
   // `tag` is a stable ASCII contract identity (e.g. "call-7") used for same-day dedup.
   _play?: { name?: string; tag?: string; dte?: number; tp?: number; sl?: number; trail?: number; maxPositionUsd?: number };
+  // Watch stubs. When true (or the loaded bot is observe-only), executeDraft must
+  // not insert an order row. Re-checked from the bot row so a missing flag cannot bypass.
+  _observe_only?: boolean;
 };
 
 export type RiskResult = {
@@ -153,18 +157,10 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
   const unpriceableOptionBuy = ac === 'option' && draft.side === 'buy' && !(notional > 0);
   const sizeWithinCap = !unpriceableOptionBuy && (draft.side === 'sell' || notional === 0 || notional <= maxPositionUsd);
   computed.max_position_usd_limit = maxPositionUsd;
-  // An unpriceable option buy ALWAYS fails (can't size what we can't price) even in full-auto.
-  const sizeOk = sizeWithinCap || (fullAuto && !unpriceableOptionBuy);
-  checks.max_position_usd = {
-    pass: sizeOk,
-    detail: sizeWithinCap
-      ? `${computed.notional_usd} <= ${maxPositionUsd}`
-      : unpriceableOptionBuy
-        ? 'option buy not priceable — cannot size'
-        : `${computed.notional_usd} > ${maxPositionUsd}${fullAuto ? ' — bypassed (full-auto)' : ''}`,
-  };
 
-  // 5. Concentration vs portfolio equity (active env only).
+  // 5. Same-symbol book (all bots) + concentration vs equity.
+  //    Per-ticket math is not enough: three META tickets each under the $10k ticket
+  //    cap stacked ~$13.7k. Sum position + in-flight + same-cycle reservations here.
   const [acct] = await q<{ equity: number }>(
     'SELECT equity FROM accounts WHERE env=:env ORDER BY updated_at DESC LIMIT 1', { env },
   );
@@ -173,39 +169,72 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
   let concentrationOk = true;
   let concDetail = 'no equity snapshot — skipped';
   let concFailClosed = false;
-  // FAIL-CLOSED for LIVE money: if we can't read the live account's equity (0 / stale /
-  // not yet synced), we cannot size a BUY safely — veto rather than silently skip the cap.
-  // (Paper always has equity; a SELL is a close-only exit and is never blocked here.)
+  let aggregatePositionOk = sizeWithinCap;
+  let positionDetail = sizeWithinCap
+    ? `${computed.notional_usd} <= ${maxPositionUsd}`
+    : unpriceableOptionBuy
+      ? 'option buy not priceable — cannot size'
+      : `${computed.notional_usd} > ${maxPositionUsd}`;
+
   if (isLiveEnv(env) && draft.side === 'buy' && !(equity > 0)) {
     concentrationOk = false;
     concFailClosed = true;
     concDetail = 'live account equity unknown/zero — fail-closed (fund + Sync the account first)';
-  } else if (equity > 0 && draft.side === 'buy' && notional > 0) {
+  } else if (draft.side === 'buy' && notional > 0) {
     const [pos] = await q<{ mv: number }>(
       'SELECT COALESCE(market_value,0) mv FROM positions WHERE symbol=:s AND env=:env ORDER BY updated_at DESC LIMIT 1',
       { s: draft.symbol, env },
     );
-    // Include TODAY's in-flight buys on this symbol that may not yet be reflected in
-    // the position snapshot — so several bots firing the same name in one cycle
-    // (common in Focus mode) can't each pass the cap independently.
-    const [pend] = await q<{ pending: number }>(
-      // Fall back to the order's estimated fill price (from the draft) when a market order
-      // has no filled/limit price yet — otherwise today's in-flight bot buys count as $0
-      // and several could each pass the concentration cap.
-      `SELECT COALESCE(SUM(qty * COALESCE(filled_price, limit_price, CAST(raw->>'$.draft.est_price' AS DECIMAL(20,4)), 0) * IF(asset_class='option',100,1)),0) pending
-       FROM orders WHERE symbol=:s AND env=:env AND side='buy' AND status IN ('placed','filled') AND created_at >= CURDATE()`,
+    // Sum in JS — do not rely on MySQL 8 JSON operators (MAMP 5.7 / MariaDB diverge,
+    // and a failed extract used to count in-flight market buys as $0).
+    const inflight = await q<ExposureOrder>(
+      `SELECT qty, filled_price, limit_price, asset_class, status, raw, created_at
+       FROM orders WHERE symbol=:s AND env=:env AND side='buy'
+         AND status IN ('placed','filled','staged')`,
       { s: draft.symbol, env },
     );
-    const newExposure = Number(pos?.mv ?? 0) + Number(pend?.pending ?? 0) + notional;
-    const pct = (newExposure / equity) * 100;
-    computed.concentration_pct = Math.round(pct * 100) / 100;
-    concentrationOk = pct <= maxConcentrationPct;
-    concDetail = `${computed.concentration_pct}% vs cap ${maxConcentrationPct}%${overrideActive ? ' (bot override)' : ''}`;
+    const { pendingUsd, todayFilledUsd } = splitInflightBuys(inflight, todayEt());
+    const reservedUsd = reservedBuyNotional(env, draft.symbol);
+    const openUsd = openSymbolExposureUsd({
+      positionMv: Number(pos?.mv ?? 0),
+      todayFilledUsd,
+      pendingUsd,
+      reservedUsd,
+    });
+    const caps = evaluateSymbolCaps({
+      side: draft.side,
+      ticketNotional: notional,
+      openUsd,
+      equity,
+      maxPositionUsd,
+      maxConcentrationPct,
+    });
+    computed.symbol_open_usd = Math.round(openUsd * 100) / 100;
+    computed.symbol_stacked_usd = caps.stackedUsd;
+    computed.pending_usd = Math.round(pendingUsd * 100) / 100;
+    computed.reserved_usd = Math.round(reservedUsd * 100) / 100;
+    aggregatePositionOk = !unpriceableOptionBuy && caps.ticketOk && caps.positionOk;
+    positionDetail = unpriceableOptionBuy
+      ? 'option buy not priceable — cannot size'
+      : `${caps.ticketDetail}; ${caps.positionDetail}${overrideActive ? ' (bot override)' : ''}`;
+    if (equity > 0) {
+      computed.concentration_pct = caps.concentrationPct ?? 0;
+      concentrationOk = caps.concentrationOk;
+      concDetail = `${caps.concentrationDetail}${overrideActive ? ' (bot override)' : ''}`;
+    } else {
+      concDetail = 'no equity snapshot — skipped';
+    }
   }
-  // Full-auto: don't let concentration veto (still surfaced in the detail + Portfolio Risk view).
-  // The daily-loss breaker below remains the backstop — incl. its live-equity fail-closed.
-  // EXCEPTION (2026-08-24 audit): the live-equity fail-closed above is a safety veto,
-  // not a sizing preference — full-auto must never bypass it.
+  // Full-auto: don't let SOFT sizing veto (still surfaced). Hard rails + daily-loss stay.
+  // EXCEPTION: live-equity fail-closed is a safety veto — full-auto must never bypass it.
+  // Auto / cautious keep the stacked symbol book (the META pile-on).
+  const sizeOk = aggregatePositionOk || (fullAuto && !unpriceableOptionBuy);
+  checks.max_position_usd = {
+    pass: sizeOk,
+    detail: aggregatePositionOk
+      ? positionDetail
+      : `${positionDetail}${fullAuto && !unpriceableOptionBuy ? ' — bypassed (full-auto)' : ''}`,
+  };
   if (!concentrationOk && fullAuto && !concFailClosed) { concDetail = `${concDetail} — bypassed (full-auto)`; concentrationOk = true; }
   checks.concentration = { pass: concentrationOk, detail: concDetail };
 

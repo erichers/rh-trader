@@ -72,9 +72,19 @@ export async function registerRoutes(app: FastifyInstance) {
   // ── Health & status ───────────────────────────────────────────────────────
   app.get('/api/health', async () => {
     const env = await getTradingEnv();
+    const live = isLiveEnv(env);
+    const db = await ping();
+    const watch = {
+      available: false,
+      observeOnly: true,
+      running: false,
+      lastCycle: null as string | null,
+      lastError: null as string | null,
+      note: 'Muse watcher is optional. If this API is down, treat watch as unknown — never green.',
+    };
     return {
-      ok: true,
-      db: await ping(),
+      ok: db,
+      db,
       ai: aiReady(),
       aiLabel: aiLabel(),
       aiShort: aiShort(),
@@ -82,9 +92,14 @@ export async function registerRoutes(app: FastifyInstance) {
       mode: await getGlobalMode(),
       killSwitch: await getKillSwitch(),
       env,
-      live: isLiveEnv(env),
+      live,
+      paper: !live,
+      listen: `127.0.0.1:${config.server.port}`,
+      pid: process.pid,
+      uptime_s: Math.round(process.uptime()),
       broker: await brokerStatus(),
       model: aiShort(),
+      watch,
     };
   });
 

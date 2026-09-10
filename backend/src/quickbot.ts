@@ -8,6 +8,7 @@ import { executeDraft } from './execute.js';
 import { sizeDraft } from './risk/sizing.js';
 import type { OrderDraft } from './risk/engine.js';
 import type { TradingEnv } from './config.js';
+import { isObserveOnlyBot, observeOnlySkipWhy } from './risk/observe.js';
 
 /**
  * QUICKBOTS — single-underlying (or tight-basket) short-DTE options bots that trade
@@ -530,6 +531,22 @@ export async function evaluateQuickbot(botRow: any): Promise<any[]> {
   const symbols: string[] = parse(botRow.symbols) || [];
   const env = await getTradingEnv();
   const results: any[] = [];
+  if (isObserveOnlyBot(botRow)) {
+    for (const symRaw of symbols) {
+      results.push({
+        symbol: String(symRaw).toUpperCase(),
+        fired: false,
+        observe_only: true,
+        action: 'observe',
+        status: 'observe_only',
+        why: observeOnlySkipWhy('QuickBot tagged observe-only.'),
+      });
+    }
+    await exec('UPDATE bots SET last_evaluated_at=NOW(), last_result=CAST(:r AS JSON) WHERE id=:id AND env=:env', {
+      r: JSON.stringify(results), id: botRow.id, env: botRow.env,
+    });
+    return results;
+  }
   const closesCache = new Map<string, number[]>();
   const { refreshBars } = await import('./brokers/index.js'); // hoisted out of the per-symbol loop
 
