@@ -78,7 +78,7 @@ export const config = {
   },
   server: {
     port: num(process.env.PORT, 8011),
-    basePath: process.env.BASE_PATH || '/rh.tradingbot',
+    basePath: process.env.BASE_PATH || '/grokbot/rh-trader',
   },
   alpaca: {
     apiKey: process.env.ALPACA_API_KEY || '',

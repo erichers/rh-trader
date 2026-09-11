@@ -35,6 +35,7 @@ import { searchKnowledge } from '../knowledge.js';
 import { knowledgeStats } from '../rag.js';
 import { getFutures, leadingFuture } from '../market/futures.js';
 import { runLearning, listRuns, listIdeas, learningStatus } from '../learning.js';
+import { armPaperFromBacktests } from '../paperArm.js';
 
 /** Attach each bot's EFFECTIVE risk (bot value, else the global trade default, with the
  *  source of every field) to a bot list. Additive — no existing field changes. */
@@ -788,6 +789,20 @@ export async function registerRoutes(app: FastifyInstance) {
     const Q = req.query as any;
     const env = (TRADING_ENVS.includes(Q?.env) ? Q.env : await getTradingEnv()) as TradingEnv;
     return learningStatus(env);
+  });
+
+  // Paper-only: backtest the fleet, Auto-enable winners, keep watch stubs observe-only.
+  // Refuses robinhood_live and a raised kill switch. Never places a live order.
+  app.post('/api/paper/arm-from-backtests', async (req, reply) => {
+    const b = (req.body as any) || {};
+    try {
+      return await armPaperFromBacktests({
+        dryRun: b.dry_run === true,
+        days: Number(b.days) > 0 ? Number(b.days) : undefined,
+      });
+    } catch (e: any) {
+      return reply.code(409).send({ error: e?.message || String(e) });
+    }
   });
 
   // ── Chat / agent ──────────────────────────────────────────────────────────

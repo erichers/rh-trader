@@ -83,7 +83,7 @@ DB_NAME=rh_tradingbot
 
 # Server
 PORT=8011
-BASE_PATH=/rh.tradingbot   # only used by the optional Apache mapping
+BASE_PATH=/grokbot/rh-trader   # optional Apache mapping (Mac: /Users/eric/Sites/grokbot/rh-trader)
 
 # Safety (leave these alone until you have watched it run)
 DEFAULT_MODE=observe
@@ -267,10 +267,10 @@ place, order types, and what is not available.
 ## 10. Optional: Apache or MAMP in front
 
 Not required. The Fastify server already serves the SPA. If you want the app at a path on a
-local Apache instead of on :8011, `deploy/apache-rh.tradingbot.conf` holds a managed block that
-proxies a path prefix (`BASE_PATH`) plus `/api` and `/ws` to :8011, and `scripts/run-web.sh`
-builds the SPA, restarts the backend and reloads Apache in one step. That script hardcodes MAMP
-paths and MAMP's MySQL on :8889, so adapt it if your setup differs.
+local Apache instead of on :8011, `deploy/apache-grokbot-rh-trader.conf` holds a managed block that
+proxies `/grokbot/rh-trader` plus `/api` and `/ws` to :8011. On the author's Mac, `./scripts/desk-up.sh`
+moves the checkout to `/Users/eric/Sites/grokbot/rh-trader`, rewrites MAMP, starts paper, and opens
+the browser. `scripts/run-web.sh` still hardcodes MAMP MySQL on :8889.
 
 The Vite build uses a relative base, so the same `frontend/dist` works served from `/`, from a
 path prefix, or inside the Tauri window.
