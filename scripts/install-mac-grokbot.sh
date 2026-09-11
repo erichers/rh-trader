@@ -1,26 +1,29 @@
 #!/usr/bin/env bash
-# Put this paper-desk checkout at /Users/eric/Sites/grokbot/rh-trader and wire MAMP.
-# Moves /Users/eric/Sites/rh.tradingbot here if that is where the old desk lived.
+# Put this paper-desk checkout at /Users/eric/Sites/grokbot/grokbot-rh-trader and wire MAMP.
+# Moves rh.tradingbot, grokbot/rh-trader, or Sites/grokbot-rhtrader here if those exist.
 # Never prints .env secrets. Never switches TRADING_ENV to live.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GROKBOT_ROOT="${RH_GROKBOT_ROOT:-/Users/eric/Sites/grokbot}"
-TARGET="${GROKBOT_ROOT}/rh-trader"
+TARGET="${GROKBOT_ROOT}/grokbot-rh-trader"
 LEGACY="/Users/eric/Sites/rh.tradingbot"
+WRONG_NAME="${GROKBOT_ROOT}/rh-trader"
+SIBLING="/Users/eric/Sites/grokbot-rhtrader"
 CONF="/Applications/MAMP/conf/apache/httpd.conf"
+BASE_PATH="/grokbot/grokbot-rh-trader"
 DRY=0
 [ "${1:-}" = "--dry-run" ] && DRY=1
 
 echo "▸ Mac desk install"
 echo "▸ grokbot root  $GROKBOT_ROOT"
 echo "▸ this branch   $TARGET"
-echo "▸ MAMP URL      http://localhost:8888/grokbot/rh-trader/"
+echo "▸ MAMP URL      http://localhost:8888${BASE_PATH}/"
 
 if [ "$DRY" = 1 ]; then
   echo "dry-run: mkdir -p $GROKBOT_ROOT"
-  echo "dry-run: move $LEGACY → $TARGET if the legacy desk exists and target does not"
+  echo "dry-run: move first existing of $LEGACY | $WRONG_NAME | $SIBLING → $TARGET"
   echo "dry-run: rsync this checkout onto $TARGET (keep .env and oauth tokens)"
-  echo "dry-run: BASE_PATH=/grokbot/rh-trader in .env"
+  echo "dry-run: BASE_PATH=$BASE_PATH in .env"
   echo "dry-run: rewrite MAMP $CONF managed block from deploy/apache-grokbot-rh-trader.conf"
   echo "HOME=$TARGET"
   exit 0
@@ -34,10 +37,18 @@ fi
 
 mkdir -p "$GROKBOT_ROOT"
 
-if [ -e "$LEGACY" ] && [ ! -e "$TARGET" ]; then
-  echo "▸ moving $LEGACY → $TARGET"
-  mv "$LEGACY" "$TARGET"
-fi
+move_if_needed() {
+  local src="$1"
+  if [ -e "$src" ] && [ ! -e "$TARGET" ]; then
+    echo "▸ moving $src → $TARGET"
+    mv "$src" "$TARGET"
+  fi
+}
+
+# Prefer the live Finder desk, then the misnamed grokbot/rh-trader, then the sibling folder.
+move_if_needed "$LEGACY"
+move_if_needed "$WRONG_NAME"
+move_if_needed "$SIBLING"
 
 sync_onto_target() {
   mkdir -p "$TARGET"
@@ -62,10 +73,10 @@ set_base_path() {
   local envf="$1"
   [ -f "$envf" ] || return 0
   if grep -q '^BASE_PATH=' "$envf"; then
-    sed -i.bak 's|^BASE_PATH=.*|BASE_PATH=/grokbot/rh-trader|' "$envf"
+    sed -i.bak "s|^BASE_PATH=.*|BASE_PATH=${BASE_PATH}|" "$envf"
     rm -f "${envf}.bak"
   else
-    printf '\nBASE_PATH=/grokbot/rh-trader\n' >> "$envf"
+    printf '\nBASE_PATH=%s\n' "$BASE_PATH" >> "$envf"
   fi
 }
 set_base_path "$TARGET/.env"
@@ -79,7 +90,6 @@ import pathlib, re, sys
 conf, snippet = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 text = conf.read_text()
 block = snippet.read_text()
-# Keep only the grokbot managed block from the snippet (between markers).
 m = re.search(r"# === rh-trader grokbot — BEGIN \(managed\) ===.*?# === rh-trader grokbot — END \(managed\) ===\n?", block, re.S)
 if not m:
     raise SystemExit("snippet missing managed markers")
@@ -99,4 +109,4 @@ fi
 
 echo "HOME=$TARGET"
 echo "install: desk is at $TARGET"
-echo "install: open http://localhost:8888/grokbot/rh-trader/ after ./scripts/desk-up.sh"
+echo "install: open http://localhost:8888${BASE_PATH}/ after ./scripts/desk-up.sh"

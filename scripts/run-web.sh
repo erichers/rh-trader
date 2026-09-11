@@ -11,7 +11,7 @@ echo "▸ run-web — paper desk (never switches to live Robinhood)"
 if [ "$DRY" = 1 ]; then
   echo "dry-run: ./scripts/start.sh --build  (API :8011 + frontend/dist)"
   echo "dry-run: optional MAMP MySQL :8889 / Apache :8888 if those binaries exist"
-  echo "dry-run: UI http://127.0.0.1:8011/  or  http://localhost:8888/grokbot/rh-trader/"
+  echo "dry-run: UI http://127.0.0.1:8011/  or  http://localhost:8888/grokbot/grokbot-rh-trader/"
   exit 0
 fi
 
@@ -36,10 +36,10 @@ if [ -x "$HTTPD" ]; then
   else
     "$HTTPD" -k restart -f "$CONF" 2>/dev/null || true
   fi
-  CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8888/grokbot/rh-trader/ 2>/dev/null || true)
-  echo "▸ http://localhost:8888/grokbot/rh-trader/ -> ${CODE:-down}"
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8888/grokbot/grokbot-rh-trader/ 2>/dev/null || true)
+  echo "▸ http://localhost:8888/grokbot/grokbot-rh-trader/ -> ${CODE:-down}"
   if command -v open >/dev/null 2>&1 && [ "$CODE" = "200" ]; then
-    open "http://localhost:8888/grokbot/rh-trader/"
+    open "http://localhost:8888/grokbot/grokbot-rh-trader/"
   elif command -v open >/dev/null 2>&1; then
     open "http://127.0.0.1:8011/"
   fi

@@ -8,11 +8,11 @@ Stay on **Alpaca paper**. Do not switch `TRADING_ENV` to `robinhood_live` from t
 | --- | --- | --- |
 | Backend API | `http://127.0.0.1:8011/api/health` | Bots, quotes, Muse/watch lamps, and the React app (when served by Fastify) all fail. The MAMP static shell at `:8888` can still show HTML. |
 | MySQL | `.env` `DB_HOST` / `DB_PORT` (MAMP often `127.0.0.1:8889`, database `ulric_rhtrader` or `rh_tradingbot`) | Health returns `db: false`. |
-| Frontend | Fastify serves `frontend/dist` on `:8011`, or Vite on `:5173`, or MAMP `http://localhost:8888/grokbot/rh-trader/` | Rebuild with `./scripts/start.sh --build`. |
+| Frontend | Fastify serves `frontend/dist` on `:8011`, or Vite on `:5173`, or MAMP `http://localhost:8888/grokbot/grokbot-rh-trader/` | Rebuild with `./scripts/start.sh --build`. |
 
 ## Mac desk (author's machine)
 
-Checkout lives at **`/Users/eric/Sites/grokbot/rh-trader`**. That is a folder inside the grokbot Sites root, not the grokbot decks tree and not `grokbot-app`.
+Checkout lives at **`/Users/eric/Sites/grokbot/grokbot-rh-trader`**. That is a folder inside the grokbot Sites root, not the grokbot decks tree and not `grokbot-app`.
 
 ```bash
 # Move /Users/eric/Sites/rh.tradingbot here if needed, wire MAMP, start paper,
@@ -20,7 +20,7 @@ Checkout lives at **`/Users/eric/Sites/grokbot/rh-trader`**. That is a folder in
 ./scripts/desk-up.sh
 ```
 
-- UI: `http://localhost:8888/grokbot/rh-trader/` (compat: `http://localhost:8888/rh.tradingbot/`)
+- UI: `http://localhost:8888/grokbot/grokbot-rh-trader/` (compat: `http://localhost:8888/rh.tradingbot/`)
 - API: `http://127.0.0.1:8011`
 - DB: MAMP MySQL `:8889`
 
@@ -59,7 +59,7 @@ Expect `/api/health` JSON with `ok`/`db` true, `env: "alpaca_paper"`, `live: fal
 
 ## Historical local path
 
-The desk used to live at `/Users/eric/Sites/rh.tradingbot`. `./scripts/install-mac-grokbot.sh` moves that folder to `/Users/eric/Sites/grokbot/rh-trader` and keeps the old MAMP alias as a bookmark.
+The desk used to live at `/Users/eric/Sites/rh.tradingbot`. `./scripts/install-mac-grokbot.sh` moves that folder to `/Users/eric/Sites/grokbot/grokbot-rh-trader` (and will also pick up a misnamed `grokbot/rh-trader` or sibling `Sites/grokbot-rhtrader`) and keeps the old MAMP alias as a bookmark.
 
 The static Apache shell can look "up" while the API is a 503. Trust the red **API down** banner and `./scripts/health.sh`, not the HTML shell.
 

@@ -20,7 +20,7 @@ if [ "$DRY" = 1 ]; then
   echo "dry-run: ./scripts/start.sh --build"
   echo "dry-run: optional MAMP Apache :8888 + MySQL :8889"
   echo "dry-run: ./scripts/paper-trade.sh"
-  echo "dry-run: open http://localhost:8888/grokbot/rh-trader/  (fallback http://127.0.0.1:8011/)"
+  echo "dry-run: open http://localhost:8888/grokbot/grokbot-rh-trader/  (fallback http://127.0.0.1:8011/)"
   "$ROOT/scripts/install-mac-grokbot.sh" --dry-run
   "$ROOT/scripts/start.sh" --dry-run
   "$ROOT/scripts/paper-trade.sh" --dry-run
@@ -42,7 +42,7 @@ fi
 MYSQL="/Applications/MAMP/Library/bin/mysql"
 HTTPD="/Applications/MAMP/Library/bin/httpd"
 CONF="/Applications/MAMP/conf/apache/httpd.conf"
-MAMP_URL="http://localhost:8888/grokbot/rh-trader/"
+MAMP_URL="http://localhost:8888/grokbot/grokbot-rh-trader/"
 API_URL="http://127.0.0.1:8011/"
 
 if [ -x "$MYSQL" ]; then

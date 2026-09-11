@@ -52,7 +52,7 @@ describe('decidePaperArm', () => {
 describe('MAC_DESK', () => {
   it('lives under the grokbot Sites root', () => {
     assert.equal(MAC_DESK.grokbotRoot, '/Users/eric/Sites/grokbot');
-    assert.equal(MAC_DESK.repo, '/Users/eric/Sites/grokbot/rh-trader');
-    assert.ok(MAC_DESK.mamp.startsWith('http://localhost:8888/grokbot/rh-trader'));
+    assert.equal(MAC_DESK.repo, '/Users/eric/Sites/grokbot/grokbot-rh-trader');
+    assert.ok(MAC_DESK.mamp.startsWith('http://localhost:8888/grokbot/grokbot-rh-trader'));
   });
 });

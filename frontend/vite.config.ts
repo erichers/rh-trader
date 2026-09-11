@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 // base: './' so the built assets load whether served from / (backend) or
-// /grokbot/rh-trader/ (MAMP Apache proxy) or inside the Tauri app.
+// /grokbot/grokbot-rh-trader/ (MAMP Apache proxy) or inside the Tauri app.
 export default defineConfig({
   plugins: [react()],
   base: './',

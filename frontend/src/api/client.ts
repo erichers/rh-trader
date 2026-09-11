@@ -1,5 +1,5 @@
 // Resolve the app's mount path so API calls work whether served from
-// http://localhost:5173/ (dev), /rh.tradingbot/ (MAMP), or the Tauri app.
+// http://localhost:5173/ (dev), /grokbot/grokbot-rh-trader/ (MAMP), or the Tauri app.
 const APP_BASE = (() => {
   let p = window.location.pathname.replace(/index\.html$/, '').replace(/\/$/, '');
   return p;

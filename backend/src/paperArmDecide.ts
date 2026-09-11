@@ -3,10 +3,12 @@ export const PAPER_ARM_MIN_TRADES = 8;
 
 export const MAC_DESK = {
   grokbotRoot: '/Users/eric/Sites/grokbot',
-  repo: '/Users/eric/Sites/grokbot/rh-trader',
-  mamp: 'http://localhost:8888/grokbot/rh-trader/',
+  repo: '/Users/eric/Sites/grokbot/grokbot-rh-trader',
+  mamp: 'http://localhost:8888/grokbot/grokbot-rh-trader/',
   api: 'http://127.0.0.1:8011/',
   legacy: '/Users/eric/Sites/rh.tradingbot',
+  sibling: '/Users/eric/Sites/grokbot-rhtrader',
+  wrongName: '/Users/eric/Sites/grokbot/rh-trader',
   legacyUrl: 'http://localhost:8888/rh.tradingbot/',
 } as const;
 

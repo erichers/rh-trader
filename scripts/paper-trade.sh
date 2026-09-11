@@ -55,4 +55,4 @@ for (const row of d.watching || []) console.log(`  watch  #${row.bot_id} ${row.n
 JS
 
 echo "paper-trade: desk is in Alpaca paper Auto for backtest winners"
-echo "paper-trade: UI  http://127.0.0.1:8011/   or  http://localhost:8888/grokbot/rh-trader/"
+echo "paper-trade: UI  http://127.0.0.1:8011/   or  http://localhost:8888/grokbot/grokbot-rh-trader/"
