@@ -1,7 +1,9 @@
-import { exec, getGlobalMode, audit, getTradingEnv } from './db.js';
+import { exec, getGlobalMode, audit, getTradingEnv, q } from './db.js';
 import type { Mode, TradingEnv } from './config.js';
 import { decideExecution, logRiskEvent, type OrderDraft } from './risk/engine.js';
 import { placeOrder as brokerPlace } from './brokers/index.js';
+import { execObserveBlock } from './risk/observe.js';
+import { releaseBuyNotional, reserveBuyNotional } from './risk/exposure.js';
 
 export type ExecResult = {
   orderId: number;
@@ -56,9 +58,49 @@ export async function executeDraft(
 
   await resolveDraftContract(draft, env);
 
+  // Observe-only stubs never create an order row — even when enabled=1 and mode=auto.
+  // Re-read the bot so a missing draft._observe_only cannot bypass the gate.
+  let botRow: { name?: any; action?: any; rules?: any; risk?: any; mode?: any } | null = null;
+  if (draft.bot_id) {
+    const rows = await q<any>('SELECT name, action, rules, risk, mode FROM bots WHERE id=:id AND env=:env', {
+      id: draft.bot_id, env,
+    });
+    botRow = rows[0] || null;
+  }
+  const og = execObserveBlock(draft, botRow);
+  if (og.blocked) {
+    await audit('order.observe_only', `${draft.side} ${draft.qty} ${draft.symbol} blocked — observe-only stub`, {
+      bot_id: draft.bot_id ?? null, env, reason: og.reason,
+    });
+    return {
+      orderId: 0,
+      action: 'observe',
+      status: 'observe_only',
+      reason: og.reason,
+      risk: {
+        ok: true,
+        reason: og.reason,
+        checks: { observe_only: { pass: true, detail: og.reason } },
+        computed: {},
+      },
+    };
+  }
+
   const decision = await decideExecution(draft, mode, env);
   await logRiskEvent(draft, decision.risk);
 
+  // Reserve only after a passing buy so the next bot in this cycle sees the
+  // notional without double-counting this ticket inside riskCheck.
+  const ac = (draft.asset_class || 'equity').toLowerCase();
+  const px = Number(draft.est_price ?? draft.limit_price) || 0;
+  const reserveUsd = draft.side === 'buy'
+    && (decision.action === 'execute' || decision.action === 'stage')
+    && px > 0
+    ? px * Number(draft.qty || 0) * (ac === 'option' ? 100 : 1)
+    : 0;
+  if (reserveUsd > 0) reserveBuyNotional(env, draft.symbol, reserveUsd);
+
+  try {
   const statusByAction: Record<string, string> = {
     veto: 'vetoed',
     observe: 'draft',
@@ -158,6 +200,9 @@ export async function executeDraft(
   });
 
   return { orderId, action: decision.action, status, reason: decision.risk.reason, rh_order_id: rhOrderId, fillPrice, risk: decision.risk };
+  } finally {
+    if (reserveUsd > 0) releaseBuyNotional(env, draft.symbol, reserveUsd);
+  }
 }
 
 /** Approve a staged order (cautious mode) → execute it now. */

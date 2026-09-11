@@ -20,7 +20,7 @@ export function startAuthCallbackServer(): void {
       `<!doctype html><html><body style="font-family:system-ui;background:#0b0e11;color:#e6eaf0;padding:48px;text-align:center">
        <h2 style="color:${ok ? '#2ecc71' : '#ff5c5c'}">${title}</h2>
        <p>${msg}</p>
-       <p><a style="color:#00d09c" href="http://localhost:8888/rh.tradingbot/">← Back to rh.tradingbot</a></p>
+       <p><a style="color:#00d09c" href="http://localhost:8888/grokbot/grokbot-rh-trader/">← Back to grokbot-rh-trader</a></p>
        </body></html>`;
     if (!code) {
       res.writeHead(200, { 'content-type': 'text/html' });
