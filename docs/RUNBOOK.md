@@ -2,6 +2,8 @@
 
 Stay on **Alpaca paper**. Do not switch `TRADING_ENV` to `robinhood_live` from these scripts.
 
+Monday one-pager (full_auto arm, $10k / 50% rails, Mac stash instructions): [`MONDAY-PAPER-TEST.md`](./MONDAY-PAPER-TEST.md).
+
 ## What must be up
 
 | Piece | Address | If it is down |
@@ -24,7 +26,7 @@ Checkout lives at **`/Users/eric/Sites/grokbot/grokbot-rh-trader`**. That is a f
 - API: `http://127.0.0.1:8011`
 - DB: MAMP MySQL `:8889`
 
-`./scripts/paper-trade.sh` scans backtests, Auto-enables winners on **Alpaca paper**, and leaves watch stubs observe-only. It refuses if health is `robinhood_live`.
+`./scripts/paper-trade.sh` scans backtests, enables winners on **Alpaca paper** in **full_auto**, and leaves watch stubs observe-only. It refuses if health is `robinhood_live`. Book/concentration still bind in full_auto.
 
 ## Bring the stack up
 

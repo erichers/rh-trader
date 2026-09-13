@@ -12,8 +12,8 @@ export type { ScanRow, ArmAction, ArmDecision } from './paperArmDecide.js';
 export type ArmOpts = { dryRun?: boolean; days?: number };
 
 /**
- * Paper-only: scan every bot, enable winners in Auto, leave watch stubs as
- * observe-only, skip losers. Never flips TRADING_ENV to Robinhood live.
+ * Paper-only: scan every bot, enable winners in full_auto (Monday arm), leave
+ * watch stubs as observe-only, skip losers. Never flips TRADING_ENV to Robinhood live.
  */
 export async function armPaperFromBacktests(opts: ArmOpts = {}): Promise<any> {
   const env = await getTradingEnv();
@@ -49,15 +49,15 @@ export async function armPaperFromBacktests(opts: ArmOpts = {}): Promise<any> {
 
   if (!dryRun) {
     for (const d of armed) {
-      await exec("UPDATE bots SET enabled=1, mode='auto' WHERE id=:id AND env=:env", { id: d.bot_id, env });
+      await exec("UPDATE bots SET enabled=1, mode='full_auto' WHERE id=:id AND env=:env", { id: d.bot_id, env });
     }
     for (const d of watching) {
       await exec("UPDATE bots SET enabled=1, mode='observe' WHERE id=:id AND env=:env", { id: d.bot_id, env });
     }
-    await setSetting('global_mode', 'auto');
+    await setSetting('global_mode', 'full_auto');
     await audit(
       'paper.arm_from_backtests',
-      `armed ${armed.length} bot(s) for Alpaca paper Auto from ${days}d backtests; ${watching.length} watch stub(s); ${skipped.length} skipped`,
+      `armed ${armed.length} bot(s) for Alpaca paper full_auto from ${days}d backtests; ${watching.length} watch stub(s); ${skipped.length} skipped`,
       { env, days, armed: armed.map((d) => d.bot_id), watching: watching.map((d) => d.bot_id) },
     );
   }
@@ -79,7 +79,7 @@ export async function armPaperFromBacktests(opts: ArmOpts = {}): Promise<any> {
     env,
     live: false,
     paper: true,
-    global_mode: dryRun ? 'unchanged' : 'auto',
+    global_mode: dryRun ? 'unchanged' : 'full_auto',
     days,
     desk: MAC_DESK,
     armed,

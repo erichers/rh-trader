@@ -94,6 +94,15 @@ describe('evaluateSymbolCaps — META three-bot stack', () => {
     assert.equal(r.concentrationPct, 26);
   });
 
+  it('Monday META replay: third $4.5k ticket fails the $10k book (auto and full_auto share this math)', () => {
+    const third = evaluateSymbolCaps({
+      side: 'buy', ticketNotional: 4566, openUsd: 9132, equity, maxPositionUsd, maxConcentrationPct,
+    });
+    assert.equal(third.ticketOk, true);
+    assert.equal(third.positionOk, false);
+    assert.ok(third.stackedUsd > 10_000);
+  });
+
   it('does not apply new-exposure caps to sells', () => {
     const r = evaluateSymbolCaps({
       side: 'sell', ticketNotional: 20_000, openUsd: 20_000, equity, maxPositionUsd, maxConcentrationPct,
