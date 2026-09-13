@@ -35,6 +35,8 @@ import { searchKnowledge } from '../knowledge.js';
 import { knowledgeStats } from '../rag.js';
 import { getFutures, leadingFuture } from '../market/futures.js';
 import { runLearning, listRuns, listIdeas, learningStatus } from '../learning.js';
+import { armPaperFromBacktests } from '../paperArm.js';
+import { collectPaperHealth } from '../risk/health.js';
 
 /** Attach each bot's EFFECTIVE risk (bot value, else the global trade default, with the
  *  source of every field) to a bot list. Additive — no existing field changes. */
@@ -70,22 +72,54 @@ export async function registerRoutes(app: FastifyInstance) {
   });
 
   // ── Health & status ───────────────────────────────────────────────────────
+  // Always HTTP 200 with a structured body. Existing fields (ok/db/ai/env/mode/
+  // killSwitch/paper/listen) stay so a running Mac desk is unchanged. Extra:
+  // ready, failures[], alpaca, riskLaw.
   app.get('/api/health', async () => {
-    const env = await getTradingEnv();
-    return {
-      ok: true,
-      db: await ping(),
-      ai: aiReady(),
-      aiLabel: aiLabel(),
-      aiShort: aiShort(),
-      rh: { status: rh.status, tools: rh.listToolsCached().length, authUrl: rh.authUrl },
-      mode: await getGlobalMode(),
-      killSwitch: await getKillSwitch(),
-      env,
-      live: isLiveEnv(env),
-      broker: await brokerStatus(),
-      model: aiShort(),
+    const watch = {
+      available: false,
+      observeOnly: true,
+      running: false,
+      lastCycle: null as string | null,
+      lastError: null as string | null,
+      note: 'Muse watcher is optional. If this API is down, treat watch as unknown — never green.',
     };
+    try {
+      const paper = await collectPaperHealth();
+      let broker: any = { ready: paper.alpaca.ok, kind: 'alpaca', alpacaConfigured: paper.alpaca.configured };
+      try { broker = await brokerStatus(); } catch { /* keep probe-only */ }
+      let ai = false, aiL = 'unknown', aiS = 'unknown';
+      try { ai = aiReady(); aiL = aiLabel(); aiS = aiShort(); } catch { /* no keys */ }
+      return {
+        ...paper,
+        ai,
+        aiLabel: aiL,
+        aiShort: aiS,
+        rh: { status: rh.status, tools: rh.listToolsCached().length, authUrl: rh.authUrl },
+        broker,
+        model: aiS,
+        watch,
+      };
+    } catch (e: any) {
+      // Fall back to the old shape if the collector throws — do not 500 the desk.
+      const env = await getTradingEnv().catch(() => 'unknown');
+      const db = await ping().catch(() => false);
+      return {
+        ok: db,
+        db,
+        ready: false,
+        ai: aiReady(),
+        env,
+        live: false,
+        paper: true,
+        mode: await getGlobalMode().catch(() => 'unknown'),
+        killSwitch: await getKillSwitch().catch(() => false),
+        listen: `127.0.0.1:${config.server.port}`,
+        failures: ['db_down'],
+        watch,
+        error: e?.message || 'health collector failed',
+      };
+    }
   });
 
   // Which model answers which task, and what the last liveness probe saw.
@@ -773,6 +807,20 @@ export async function registerRoutes(app: FastifyInstance) {
     const Q = req.query as any;
     const env = (TRADING_ENVS.includes(Q?.env) ? Q.env : await getTradingEnv()) as TradingEnv;
     return learningStatus(env);
+  });
+
+  // Paper-only: backtest the fleet, Auto-enable winners, keep watch stubs observe-only.
+  // Refuses robinhood_live and a raised kill switch. Never places a live order.
+  app.post('/api/paper/arm-from-backtests', async (req, reply) => {
+    const b = (req.body as any) || {};
+    try {
+      return await armPaperFromBacktests({
+        dryRun: b.dry_run === true,
+        days: Number(b.days) > 0 ? Number(b.days) : undefined,
+      });
+    } catch (e: any) {
+      return reply.code(409).send({ error: e?.message || String(e) });
+    }
   });
 
   // ── Chat / agent ──────────────────────────────────────────────────────────

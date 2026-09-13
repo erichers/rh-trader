@@ -92,13 +92,36 @@ const ENV_LABELS: Record<string, string> = {
   robinhood_live: 'LIVE · Robinhood',
 };
 
+function museWatchDot(apiDown: boolean, health: any): string {
+  if (apiDown || !health || health._unreachable) return 'gray';
+  const w = health.watch;
+  if (!w || !w.available) return 'gray';
+  if (w.lastError) return 'amber';
+  if (w.running) return 'green';
+  return 'gray';
+}
+
+function museWatchLabel(apiDown: boolean, health: any): string {
+  if (apiDown || health?._unreachable) return 'unknown (API down)';
+  const w = health?.watch;
+  if (!w) return 'unknown';
+  if (!w.available) return 'n/a · observe-only';
+  if (w.lastError) return 'error';
+  if (w.running) return 'running · observe-only';
+  return 'idle · observe-only';
+}
+
 export default function App() {
   const [health, setHealth] = useState<any>(null);
+  const [apiDown, setApiDown] = useState(false);
   const [busy, setBusy] = useState(false);
   const [pendingEnv, setPendingEnv] = useState<string | null>(null); // live-switch confirmation
   const [focus, setFocusState] = useState<any>({ enabled: false, symbol: 'SPY', tickers: ['SPY', 'QQQ'] });
 
-  const refresh = () => Health().then(setHealth).catch(() => setHealth({ ok: false }));
+  const refresh = () => Health().then((h) => { setHealth(h); setApiDown(false); }).catch(() => {
+    setHealth({ ok: false, _unreachable: true });
+    setApiDown(true);
+  });
   const refreshFocus = () => FocusApi().then(setFocusState).catch(() => {});
   useEffect(() => {
     refresh(); refreshFocus();
@@ -172,12 +195,18 @@ export default function App() {
           </nav>
           <div style={{ flex: 1 }} />
           <div style={{ padding: '0 18px', fontSize: 11 }} className="muted">
-            <div className="row"><span className={`dot ${rhDot}`} /> Robinhood: {rhStatus}</div>
+            <div className="row"><span className={`dot ${apiDown ? 'red' : 'green'}`} /> API: {apiDown ? 'down (:8011)' : (health?.listen || 'up')}</div>
             <div className="row" style={{ marginTop: 4 }}>
-              <span className={`dot ${health?.ai ? 'green' : 'gray'}`} /> AI: {health?.ai ? (health?.aiShort || 'ready') : 'no key'}
+              <span className={`dot ${rhDot}`} /> Robinhood: {apiDown ? 'unknown' : rhStatus}
             </div>
             <div className="row" style={{ marginTop: 4 }}>
-              <span className={`dot ${health?.db ? 'green' : 'red'}`} /> MAMP DB
+              <span className={`dot ${apiDown ? 'gray' : (health?.ai ? 'green' : 'gray')}`} /> AI: {apiDown ? 'unknown' : (health?.ai ? (health?.aiShort || 'ready') : 'no key')}
+            </div>
+            <div className="row" style={{ marginTop: 4 }}>
+              <span className={`dot ${apiDown ? 'red' : (health?.db ? 'green' : 'red')}`} /> DB: {apiDown ? 'unknown' : (health?.db ? 'up' : 'down')}
+            </div>
+            <div className="row" style={{ marginTop: 4 }} title={health?.watch?.note || 'Muse watch is observe-only. Never green when the API is down.'}>
+              <span className={`dot ${museWatchDot(apiDown, health)}`} /> Muse watch: {museWatchLabel(apiDown, health)}
             </div>
           </div>
         </aside>
@@ -214,6 +243,11 @@ export default function App() {
               {health?.killSwitch ? '● KILL ENGAGED — release' : 'KILL SWITCH'}
             </button>
           </header>
+          {apiDown && (
+            <div className="api-down-banner">
+              API down — backend not reachable on 127.0.0.1:8011. The static shell (MAMP :8888) can still show this page. Muse watch is unknown, not live. Start with <code>./scripts/start.sh</code> then <code>./scripts/health.sh</code>.
+            </div>
+          )}
           {isLive && (
             <div className="live-banner">
               ● LIVE — REAL MONEY ({ENV_LABELS[env]}). Orders place against your real account. Kill switch + risk limits still apply.
