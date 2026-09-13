@@ -8,13 +8,13 @@ export const MODE_INFO: Record<string, { label: string; short: string; tip: stri
   observe: { label: 'Observe', short: 'obs', cls: 'blue', tip: 'WATCH ONLY — logs every signal but places NO orders. Use it to watch how a bot behaves before trusting it with money.' },
   cautious: { label: 'Cautious', short: 'caut', cls: 'amber', tip: 'STAGE FOR APPROVAL — when the bot fires, the order waits for your one-click approve/reject on the Orders page. Nothing trades without you. Best default for a new strategy.' },
   auto: { label: 'Auto', short: 'auto', cls: 'green', tip: 'AUTO-TRADE — executes automatically when the rules + risk engine pass, no approval needed. The TP/SL/trailing-stop monitor enforces exits. Real money if your environment is Live.' },
-  full_auto: { label: 'Full-Auto', short: 'full', cls: 'red', tip: 'FULL AUTONOMY — auto-executes its rules with the SOFT sizing caps OFF: position-size, concentration, and orders/day limits no longer veto (still computed + shown for reference). Only the kill switch and the daily-loss circuit breaker (plus no-crypto / long-only) can still stop a buy. The most hands-off mode. Real money if Live — use once you trust the bot.' },
+  full_auto: { label: 'Full-Auto', short: 'full', cls: 'red', tip: 'FULL AUTONOMY — auto-executes like Auto. Same-symbol book ($10k) and 25% concentration stay HARD (they used to be bypassed — that let META stack). Only the orders/day throttle is soft. Monday paper: use Auto, not Full-Auto. Real money if Live.' },
 };
 export const MODES = ['observe', 'cautious', 'auto', 'full_auto'] as const;
 
 /** The full "what do the modes mean" explainer (for an Info tooltip / legend). */
 export const MODE_LEGEND =
-  'Bot modes (increasing autonomy): Observe = watch only, no orders. Cautious = every order is staged for your one-click approval. Auto = trades automatically when rules + risk pass (exits auto-enforced). Full-Auto = trades automatically with the soft sizing caps OFF (position/concentration/orders-per-day no longer veto) — only the kill switch + daily-loss breaker + no-crypto/long-only still apply. Enable the bot (ON), then pick a mode — you can change either from any tab.';
+  'Bot modes (increasing autonomy): Observe = watch only, no orders. Cautious = every order is staged for your one-click approval. Auto = trades automatically when rules + risk pass (exits auto-enforced). Full-Auto = same hard rails as Auto ($10k book, 25% concentration, kill switch, 50% daily breaker) — only the orders/day throttle is skipped. Monday paper default is Auto. Enable the bot (ON), then pick a mode — you can change either from any tab.';
 
 /** Reusable enable toggle + mode segmented control with per-mode tooltips. Works on ANY
  *  tab — calls the API and the parent's reload; optimistic so it feels instant. */

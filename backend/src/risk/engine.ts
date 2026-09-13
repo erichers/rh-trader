@@ -1,6 +1,7 @@
 import { config, HARD_BLOCKED_ASSET_CLASSES, isCryptoSymbol, isLiveEnv, type Mode, type TradingEnv } from '../config.js';
 import { q, exec, getKillSwitch, getSetting, setSetting, getTradingEnv, getRiskLimits } from '../db.js';
 import { evaluateSymbolCaps, openSymbolExposureUsd, reservedBuyNotional, splitInflightBuys, todayEt, type ExposureOrder } from './exposure.js';
+import { RISK_LAW, applyFullAutoSoftBypass, clampRiskLawDailyLossPct, clampRiskLawPositionUsd } from './law.js';
 
 /** Options trade in 100-share contracts; quoted premium is per share. */
 const CONTRACT_MULT = 100;
@@ -73,9 +74,9 @@ export function resolveCaps(botRisk: any, play: OrderDraft['_play'] | undefined,
     // CLAMP the override to safe bounds — a bot must never be able to disable the safety
     // breakers (e.g. set daily-loss to 100% so it never trips, or remove the concentration cap).
     const clamp = (v: any, lo: number, hi: number, fallback: number) => (Number(v) > 0 ? Math.min(hi, Math.max(lo, Number(v))) : fallback);
-    maxPositionUsd = clamp(r.max_position_usd, 50, 1_000_000_000, maxPositionUsd);
+    maxPositionUsd = clampRiskLawPositionUsd(r.max_position_usd, maxPositionUsd);
     maxConcentrationPct = clamp(r.max_concentration_pct, 1, 95, maxConcentrationPct); // never 100% (no cap)
-    maxDailyLossPct = clamp(r.max_daily_loss_pct, 1, 50, maxDailyLossPct);            // breaker must trip before half gone
+    maxDailyLossPct = clampRiskLawDailyLossPct(r.max_daily_loss_pct, maxDailyLossPct);
     maxOrdersPerDay = clamp(r.max_orders_per_day, 1, 1000, maxOrdersPerDay);
   } else if (r && Number(r.max_position_usd) > 0) {
     maxPositionUsd = Math.min(maxPositionUsd, Number(r.max_position_usd));
@@ -89,11 +90,10 @@ export function resolveCaps(botRisk: any, play: OrderDraft['_play'] | undefined,
 /** Pure deterministic risk gate. Crypto and the kill switch are hard blocks.
  *  `env` scopes all account/position lookups to the ACTIVE trading environment so
  *  paper data can never loosen a live-account check (and vice versa).
- *  `mode` (the EFFECTIVE execution mode for this order): in `full_auto` the SOFT sizing
- *  throttles — position size, concentration, orders/day — are bypassed (still computed &
- *  shown, just not vetoed) so a fully-autonomous bot can act freely. The HARD rails always
- *  hold: kill switch, no-crypto, asset allowlist, no-short / no-naked-write, and the
- *  daily-loss circuit breaker (the one protection that stops a runaway from draining it). */
+ *  Hard rails in EVERY mode (including full_auto): kill switch, no-crypto, asset
+ *  allowlist, no-short / no-naked-write, daily-loss breaker (≤50%), per-ticket and
+ *  same-symbol book cap (≤$10k), and 25% concentration. full_auto may bypass only
+ *  the orders/day throttle. Monday paper default is `auto` so that throttle stays on. */
 export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode): Promise<RiskResult> {
   const checks: RiskResult['checks'] = {};
   const computed: Record<string, number> = {};
@@ -102,7 +102,7 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
   const ac = (draft.asset_class || 'equity').toLowerCase();
   if (!env) env = await getTradingEnv();
   const mult = ac === 'option' ? CONTRACT_MULT : 1; // option premium is per-share; contracts are ×100
-  // Full-auto bypasses the SOFT sizing caps only (never the hard rails / daily-loss breaker).
+  // full_auto is recorded for audit. Soft bypass is orders/day only (see applyFullAutoSoftBypass).
   const fullAuto = mode === 'full_auto';
   computed.full_auto = fullAuto ? 1 : 0;
 
@@ -119,8 +119,9 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
     botRisk = bot?.risk ? (typeof bot.risk === 'string' ? safeParse(bot.risk) : bot.risk) : null;
   }
   const caps = resolveCaps(botRisk, draft._play, lim);
-  const { maxConcentrationPct, maxDailyLossPct, maxOrdersPerDay, overrideActive } = caps;
-  const maxPositionUsd = caps.maxPositionUsd;
+  const { maxConcentrationPct, maxOrdersPerDay, overrideActive } = caps;
+  const maxDailyLossPct = clampRiskLawDailyLossPct(caps.maxDailyLossPct, caps.maxDailyLossPct);
+  const maxPositionUsd = clampRiskLawPositionUsd(caps.maxPositionUsd, RISK_LAW.maxTradeUsd);
   computed.override_active = overrideActive ? 1 : 0;
 
   // 1. Kill switch — blocks NEW exposure (buys) but NEVER a close-only SELL. Exits are
@@ -225,18 +226,20 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
       concDetail = 'no equity snapshot — skipped';
     }
   }
-  // Full-auto: don't let SOFT sizing veto (still surfaced). Hard rails + daily-loss stay.
-  // EXCEPTION: live-equity fail-closed is a safety veto — full-auto must never bypass it.
-  // Auto / cautious keep the stacked symbol book (the META pile-on).
-  const sizeOk = aggregatePositionOk || (fullAuto && !unpriceableOptionBuy);
+  // Soft bypass is orders/day only. Same-symbol book + concentration stay hard in
+  // auto AND full_auto (META 4.5k+4.5k+4.5k must veto). See applyFullAutoSoftBypass.
+  const soft = applyFullAutoSoftBypass({
+    mode,
+    aggregatePositionOk,
+    concentrationOk,
+    concFailClosed,
+    throttleOk: true, // filled below after we know today's count
+  });
   checks.max_position_usd = {
-    pass: sizeOk,
-    detail: aggregatePositionOk
-      ? positionDetail
-      : `${positionDetail}${fullAuto && !unpriceableOptionBuy ? ' — bypassed (full-auto)' : ''}`,
+    pass: soft.sizeOk,
+    detail: positionDetail,
   };
-  if (!concentrationOk && fullAuto && !concFailClosed) { concDetail = `${concDetail} — bypassed (full-auto)`; concentrationOk = true; }
-  checks.concentration = { pass: concentrationOk, detail: concDetail };
+  checks.concentration = { pass: soft.concentrationOk, detail: concDetail };
 
   // 6. No short selling — long-only. A sell may not exceed the held quantity
   //    (equity OR option), scoped to the active env. You can only close a long.
@@ -309,7 +312,17 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
     const placedToday = Number(cnt?.n ?? 0);
     computed.orders_today = placedToday;
     const throttleOk = placedToday < maxOrdersPerDay;
-    checks.orders_per_day = { pass: throttleOk || fullAuto, detail: `${placedToday}/${maxOrdersPerDay} buys today${overrideActive ? ' (bot override)' : ''}${!throttleOk && fullAuto ? ' — bypassed (full-auto)' : ''}` };
+    const th = applyFullAutoSoftBypass({
+      mode,
+      aggregatePositionOk: soft.sizeOk,
+      concentrationOk: soft.concentrationOk,
+      concFailClosed,
+      throttleOk,
+    });
+    checks.orders_per_day = {
+      pass: th.throttleOk,
+      detail: `${placedToday}/${maxOrdersPerDay} buys today${overrideActive ? ' (bot override)' : ''}${th.throttleBypassed ? ' — bypassed (full-auto)' : ''}`,
+    };
   } else {
     checks.orders_per_day = { pass: true, detail: 'sell/exit — not throttled' };
   }

@@ -2,10 +2,11 @@
 -- Stores everything: account snapshots, positions, orders, bots, signals,
 -- risk decisions, approvals, research, news, chat, RAG index, learnings, audit.
 -- Idempotent: safe to re-run (CREATE TABLE IF NOT EXISTS).
-
-CREATE DATABASE IF NOT EXISTS rh_tradingbot
-  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE rh_tradingbot;
+--
+-- Do NOT CREATE DATABASE rh_tradingbot — that schema name is retired.
+-- Eric's Mac desk uses the existing database `ulric_rhtrader` (DB_NAME in .env).
+-- Apply against that database:
+--   /Applications/MAMP/Library/bin/mysql -h 127.0.0.1 -P 8889 -u root -proot ulric_rhtrader < db/schema.sql
 
 -- Key/value config: global mode, kill switch, risk limits overrides, etc.
 CREATE TABLE IF NOT EXISTS settings (

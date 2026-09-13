@@ -11,6 +11,7 @@ echo "▸ run-web — paper desk (never switches to live Robinhood)"
 if [ "$DRY" = 1 ]; then
   echo "dry-run: ./scripts/start.sh --build  (API :8011 + frontend/dist)"
   echo "dry-run: optional MAMP MySQL :8889 / Apache :8888 if those binaries exist"
+  echo "dry-run: never CREATE DATABASE rh_tradingbot — desk DB is ulric_rhtrader"
   echo "dry-run: UI http://127.0.0.1:8011/  or  http://localhost:8888/rh.tradingbot/"
   exit 0
 fi
@@ -22,11 +23,11 @@ HTTPD="/Applications/MAMP/Library/bin/httpd"
 CONF="/Applications/MAMP/conf/apache/httpd.conf"
 
 if [ -x "$MYSQL" ]; then
-  echo "▸ MAMP MySQL (optional, :8889)…"
-  "$MYSQL" -u root -proot -h 127.0.0.1 -P 8889 -e "CREATE DATABASE IF NOT EXISTS rh_tradingbot" >/dev/null 2>&1 \
-    || echo "  (MySQL not reachable on :8889 — start MAMP, or point .env at another MySQL)"
+  echo "▸ MAMP MySQL (optional, :8889) — expecting existing DB ulric_rhtrader (never creating rh_tradingbot)…"
+  "$MYSQL" -u root -proot -h 127.0.0.1 -P 8889 -e "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='ulric_rhtrader'" >/dev/null 2>&1 \
+    || echo "  (MySQL not reachable on :8889, or ulric_rhtrader missing — start MAMP and use the existing desk DB)"
 else
-  echo "▸ no MAMP mysql binary — using whatever DB_HOST/DB_PORT is in .env"
+  echo "▸ no MAMP mysql binary — using whatever DB_HOST/DB_PORT/DB_NAME is in .env (ulric_rhtrader)"
 fi
 
 if [ -x "$HTTPD" ]; then

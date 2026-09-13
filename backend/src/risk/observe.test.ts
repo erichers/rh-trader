@@ -101,6 +101,18 @@ describe('execObserveBlock — order pipeline', () => {
     assert.equal(g.createOrderRow, false);
   });
 
+  it('blocks every known stub when enabled=1 and mode=full_auto (no order row)', () => {
+    for (const name of OBSERVE_STUB_NAMES) {
+      const g = execObserveBlock(
+        { side: 'buy' },
+        { name, mode: 'full_auto', enabled: 1, action: { side: 'buy', qty: 10 } },
+      );
+      assert.equal(g.blocked, true, name);
+      assert.equal(g.createOrderRow, false, name);
+      assert.equal(g.status, 'observe_only', name);
+    }
+  });
+
   it('lets a real Donchian / Momentum / ORB ticket through the observe gate', () => {
     for (const name of ['Donchian Breakout', 'Momentum Day Trade', 'Opening Range Breakout']) {
       const g = execObserveBlock({ side: 'buy' }, { name, mode: 'auto', action: { side: 'buy', _strategy: 'donchian-breakout' } });

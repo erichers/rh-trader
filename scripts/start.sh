@@ -85,7 +85,8 @@ done
 if [ "$ok" != 1 ]; then
   echo "start: health check failed. Last log lines:"
   tail -n 40 "$LOG_FILE" || true
-  echo "start: common causes — MySQL down, bad .env DB_*, port in use, missing npm install"
+  echo "start: common causes — MySQL down (DB_NAME=ulric_rhtrader, MAMP :8889), Alpaca paper keys/network, port in use, missing npm install"
+  echo "start: do NOT create a rh_tradingbot schema — use the existing ulric_rhtrader database"
   exit 1
 fi
 
@@ -94,3 +95,4 @@ echo "start: health     http://127.0.0.1:${PORT}/api/health"
 echo "start: log        $LOG_FILE"
 echo "start: stop       ./scripts/stop.sh"
 echo "start: MAMP shell (optional) http://localhost:8888/rh.tradingbot/"
+echo "start: Monday default mode is auto (not full_auto). Kill switch is on the top bar."

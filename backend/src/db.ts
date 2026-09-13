@@ -1,5 +1,6 @@
 import mysql from 'mysql2/promise';
 import { config, type Mode, type TradingEnv } from './config.js';
+import { RISK_LAW, clampRiskLawDailyLossPct, clampRiskLawPositionUsd } from './risk/law.js';
 
 export const pool = mysql.createPool({
   host: config.db.host,
@@ -87,9 +88,9 @@ export async function getRiskLimits(): Promise<RiskLimits> {
   const o = await getSetting<Partial<RiskLimits>>('risk_limits', {});
   const pick = (v: any, d: number) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d);
   return {
-    maxPositionUsd: pick(o?.maxPositionUsd, defaults.maxPositionUsd),
+    maxPositionUsd: clampRiskLawPositionUsd(pick(o?.maxPositionUsd, defaults.maxPositionUsd), defaults.maxPositionUsd),
     maxConcentrationPct: pick(o?.maxConcentrationPct, defaults.maxConcentrationPct),
-    maxDailyLossPct: pick(o?.maxDailyLossPct, defaults.maxDailyLossPct),
+    maxDailyLossPct: clampRiskLawDailyLossPct(pick(o?.maxDailyLossPct, defaults.maxDailyLossPct), defaults.maxDailyLossPct),
     maxOrdersPerDay: pick(o?.maxOrdersPerDay, defaults.maxOrdersPerDay),
   };
 }
@@ -140,7 +141,7 @@ export async function getTradeDefaults(): Promise<TradeDefaults> {
  *  Money fields must be positive and ordered min <= amount <= max; percentages are either
  *  0 (feature off) or a sane 1-95 (a 0.2% stop would round-trip every trade instantly). */
 export function clampTradeDefaults(next: Partial<TradeDefaults>, base: TradeDefaults): TradeDefaults {
-  const money = (v: any, prev: number) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.min(1_000_000_000, Math.max(25, Number(v))) : prev);
+  const money = (v: any, prev: number) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.min(RISK_LAW.maxTradeUsd, Math.max(25, Number(v))) : prev);
   // Only an explicit 0 turns a percentage off; anything unparseable or negative keeps
   // the current value rather than silently disabling an exit.
   const pct = (v: any, prev: number, hi: number) => {
@@ -208,13 +209,13 @@ export async function setRiskLimits(next: Partial<RiskLimits>): Promise<RiskLimi
   const clamp = (v: any, lo: number, hi: number, prev: any) =>
     Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Number(v))) : prev;
   const merged: Partial<RiskLimits> = {
-    maxPositionUsd: clamp(next.maxPositionUsd, 50, 1_000_000_000, cur.maxPositionUsd),
+    maxPositionUsd: clamp(next.maxPositionUsd, 50, RISK_LAW.maxTradeUsd, cur.maxPositionUsd),
     // Concentration up to 95% (you can go heavy on one ticker in Focus) — but never
     // a literal 100% that removes the cap entirely.
     maxConcentrationPct: clamp(next.maxConcentrationPct, 1, 95, cur.maxConcentrationPct),
     // Daily-loss is a SAFETY breaker — capped at 50% so it always trips before the
     // account is half gone (a value of 100 would silently disable it).
-    maxDailyLossPct: clamp(next.maxDailyLossPct, 1, 50, cur.maxDailyLossPct),
+    maxDailyLossPct: clamp(next.maxDailyLossPct, 1, RISK_LAW.maxDailyDrawdownPct, cur.maxDailyLossPct),
     maxOrdersPerDay: clamp(next.maxOrdersPerDay, 1, 1000, cur.maxOrdersPerDay),
   };
   await setSetting('risk_limits', merged);

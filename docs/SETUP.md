@@ -38,15 +38,16 @@ cd rh-trader
 
 ## 3. Create the database
 
-`db/schema.sql` creates the database (`rh_tradingbot`), the tables, and the indexes. It is
-idempotent, so re-running it is safe.
+`db/schema.sql` creates the tables in the **already existing** desk database
+(`ulric_rhtrader` on the author's Mac). It does **not** create `rh_tradingbot`.
+It is idempotent, so re-running it is safe.
 
 ```bash
-# Standard local MySQL on 3306:
-mysql -h 127.0.0.1 -P 3306 -u root -p < db/schema.sql
+# MAMP MySQL on 8889 (author's Mac):
+/Applications/MAMP/Library/bin/mysql -h 127.0.0.1 -P 8889 -u root -proot ulric_rhtrader < db/schema.sql
 
-# MAMP MySQL on 8889:
-/Applications/MAMP/Library/bin/mysql -h 127.0.0.1 -P 8889 -u root -proot < db/schema.sql
+# Another local MySQL — pass YOUR existing database name (never rh_tradingbot):
+mysql -h 127.0.0.1 -P 3306 -u root -p ulric_rhtrader < db/schema.sql
 ```
 
 On boot the backend runs `migrate()`, which adds any missing columns and indexes with
@@ -57,7 +58,7 @@ If you prefer a least-privilege user over `root`:
 
 ```sql
 CREATE USER 'rhtrader'@'127.0.0.1' IDENTIFIED BY 'a-password-you-choose';
-GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX ON rh_tradingbot.* TO 'rhtrader'@'127.0.0.1';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX ON ulric_rhtrader.* TO 'rhtrader'@'127.0.0.1';
 FLUSH PRIVILEGES;
 ```
 
@@ -79,7 +80,7 @@ DB_HOST=127.0.0.1
 DB_PORT=3306          # 8889 if you use MAMP
 DB_USER=root
 DB_PASSWORD=
-DB_NAME=rh_tradingbot
+DB_NAME=ulric_rhtrader
 
 # Server
 PORT=8011

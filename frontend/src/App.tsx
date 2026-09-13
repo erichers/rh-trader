@@ -174,6 +174,11 @@ export default function App() {
   const rhDot = rhStatus === 'connected' ? 'green' : rhStatus === 'needs_auth' ? 'amber' : 'red';
   const env = health?.env || 'alpaca_paper';
   const isLive = !!health?.live;
+  const alpaca = health?.alpaca;
+  const alpacaDot = apiDown ? 'gray' : !alpaca ? 'gray' : alpaca.ok ? 'green' : 'red';
+  const alpacaLabel = apiDown ? 'unknown' : !alpaca ? 'unknown' : alpaca.ok ? 'paper up' : (alpaca.configured ? 'unreachable' : 'no keys');
+  const dbDown = !apiDown && health && health.db === false;
+  const alpacaDown = !apiDown && alpaca && alpaca.ok === false;
 
   return (
     <HashRouter>
@@ -204,6 +209,9 @@ export default function App() {
             </div>
             <div className="row" style={{ marginTop: 4 }}>
               <span className={`dot ${apiDown ? 'red' : (health?.db ? 'green' : 'red')}`} /> DB: {apiDown ? 'unknown' : (health?.db ? 'up' : 'down')}
+            </div>
+            <div className="row" style={{ marginTop: 4 }} title={alpaca?.error || 'Alpaca paper account probe'}>
+              <span className={`dot ${alpacaDot}`} /> Alpaca: {alpacaLabel}
             </div>
             <div className="row" style={{ marginTop: 4 }} title={health?.watch?.note || 'Muse watch is observe-only. Never green when the API is down.'}>
               <span className={`dot ${museWatchDot(apiDown, health)}`} /> Muse watch: {museWatchLabel(apiDown, health)}
@@ -246,6 +254,16 @@ export default function App() {
           {apiDown && (
             <div className="api-down-banner">
               API down — backend not reachable on 127.0.0.1:8011. The static shell (MAMP :8888) can still show this page. Muse watch is unknown, not live. Start with <code>./scripts/start.sh</code> then <code>./scripts/health.sh</code>.
+            </div>
+          )}
+          {dbDown && (
+            <div className="api-down-banner">
+              MySQL is down — API answered but cannot persist. Check MAMP on :8889 and <code>.env</code> <code>DB_NAME=ulric_rhtrader</code> (do not create <code>rh_tradingbot</code>). Do not arm bots.
+            </div>
+          )}
+          {alpacaDown && (
+            <div className="api-down-banner">
+              Alpaca paper is {alpaca?.configured ? 'unreachable' : 'not configured'} — {alpaca?.error || 'set paper keys in .env'}. Do not arm bots until <code>./scripts/health.sh</code> prints <code>alpaca ok=true</code>.
             </div>
           )}
           {isLive && (
