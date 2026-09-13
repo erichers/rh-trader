@@ -28,6 +28,9 @@ broker. Nothing trades until you turn it on, and the crypto block is not a setti
 > `alpaca_paper`, global mode `observe`, every bot disabled. Watch it for a while, read the
 > journal, and only then decide whether to give it money. You are responsible for every order
 > placed under your credentials.
+>
+> Monday paper checklist (author's Mac desk): [`docs/MONDAY-PAPER-TEST.md`](docs/MONDAY-PAPER-TEST.md).
+> Monday paper: arm **full_auto**. Book/concentration still bind. Database is `ulric_rhtrader` — do not create `rh_tradingbot`.
 
 ---
 
@@ -83,11 +86,12 @@ and cd into it if the folder is not empty). Then `npm install` in ./backend and 
 in ./frontend.
 
 STEP 3: DATABASE
-db/schema.sql creates the database rh_tradingbot and every table, and it is idempotent. Load it
-with the MySQL you identified in step 1, for example:
-  mysql -h 127.0.0.1 -P 3306 -u root -p < db/schema.sql
+db/schema.sql creates tables in an *existing* database. It does not CREATE DATABASE
+rh_tradingbot (that name is retired). On the author's Mac the database is
+ulric_rhtrader. Load it with the MySQL you identified in step 1, for example:
+  mysql -h 127.0.0.1 -P 8889 -u root -proot ulric_rhtrader < db/schema.sql
 Confirm it worked by counting tables:
-  mysql -h 127.0.0.1 -P 3306 -u root -p -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='rh_tradingbot'"
+  mysql -h 127.0.0.1 -P 8889 -u root -proot -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='ulric_rhtrader'"
 Expect 30 tables. The backend also runs a migrate() on boot that adds any missing
 columns and indexes, so a partially old schema is fine.
 

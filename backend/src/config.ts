@@ -74,7 +74,7 @@ export const config = {
     port: num(process.env.DB_PORT, 8889),
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD ?? 'root',
-    database: process.env.DB_NAME || 'rh_tradingbot',
+    database: process.env.DB_NAME || 'ulric_rhtrader',
   },
   server: {
     port: num(process.env.PORT, 8011),

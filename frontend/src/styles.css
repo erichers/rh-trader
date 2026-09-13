@@ -275,6 +275,17 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
   border-bottom: 1px solid var(--red); color: #ffe0d4;
   padding: 8px 22px; font-weight: 800; font-size: 12px; text-align: center; letter-spacing: 0.6px;
 }
+.api-down-banner {
+  background: linear-gradient(90deg, rgba(245, 176, 65, 0.28), rgba(245, 176, 65, 0.08));
+  border-bottom: 1px solid var(--amber); color: #ffe7c2;
+  padding: 10px 16px; font-weight: 700; font-size: 13px; text-align: center; letter-spacing: 0.2px;
+}
+.api-down-banner code {
+  font-size: 12px; color: #fff; background: rgba(0,0,0,.25); padding: 1px 6px; border-radius: 6px;
+}
+@media (max-width: 720px) {
+  .api-down-banner { font-size: 12px; padding: 12px 14px; text-align: left; }
+}
 .app.live .topbar { border-bottom-color: var(--red); box-shadow: inset 0 -1px 0 var(--red); }
 
 /* ════════════════════════ Modal ════════════════════════ */

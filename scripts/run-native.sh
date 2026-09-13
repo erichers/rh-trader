@@ -7,10 +7,10 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MYSQL="/Applications/MAMP/Library/bin/mysql80/bin/mysql"
 
-echo "▸ MAMP MySQL…"
-"$MYSQL" -u root -proot -h 127.0.0.1 -P 8889 -e "CREATE DATABASE IF NOT EXISTS rh_tradingbot" >/dev/null 2>&1 \
-  || echo "  (start MAMP)"
-"$MYSQL" -u root -proot -h 127.0.0.1 -P 8889 < "$ROOT/db/schema.sql" >/dev/null 2>&1 || true
+echo "▸ MAMP MySQL (ulric_rhtrader — never creating rh_tradingbot)…"
+"$MYSQL" -u root -proot -h 127.0.0.1 -P 8889 -e "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='ulric_rhtrader'" >/dev/null 2>&1 \
+  || echo "  (start MAMP; desk DB must already be ulric_rhtrader)"
+"$MYSQL" -u root -proot -h 127.0.0.1 -P 8889 ulric_rhtrader < "$ROOT/db/schema.sql" >/dev/null 2>&1 || true
 
 echo "▸ Building SPA…"; ( cd "$ROOT/frontend" && npm run build ) || exit 1
 

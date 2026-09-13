@@ -9,14 +9,20 @@ import { ping, getGlobalMode, getKillSwitch, audit, migrate } from './db.js';
 import { rh } from './rh/mcpClient.js';
 import { startAuthCallbackServer } from './rh/authServer.js';
 import { registerRoutes } from './routes/api.js';
-import { startWorker } from './worker.js';
+import { startWorker, stopWorker } from './worker.js';
 import { aiReady } from './ai/claude.js';
+import { hardenObserveOnlyBots } from './bots/strategies.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const frontendDist = path.resolve(__dirname, '../../frontend/dist');
+function logFatal(kind: string, err: unknown): void {
+  const msg = err instanceof Error ? (err.stack || err.message) : String(err);
+  console.error(`[fatal] ${kind} ${new Date().toISOString()} ${msg}`);
+}
 
 async function main() {
   await migrate().catch((e) => console.error('migrate failed (non-fatal):', e?.message || e));
+  await hardenObserveOnlyBots().catch((e) => console.error('observe-only harden (non-fatal):', e?.message || e));
   const app = Fastify({ logger: { level: 'info' }, bodyLimit: 5 * 1024 * 1024 });
 
   // Tolerate empty-body application/json POSTs (many buttons send no body) →
@@ -80,15 +86,37 @@ async function main() {
     .then((s) => app.log.info(`[robinhood] status: ${s}`))
     .catch(() => {});
 
-  await app.listen({ port: config.server.port, host: '127.0.0.1' });
-  app.log.info(`rh.tradingbot backend on http://127.0.0.1:${config.server.port}`);
-  app.log.info(`via MAMP: http://localhost:8888${config.server.basePath}/`);
-  await audit('boot', 'backend started', { port: config.server.port, ai: aiReady() });
+  const host = '127.0.0.1';
+  const port = config.server.port;
+  try {
+    await app.listen({ port, host });
+  } catch (e: any) {
+    if (e?.code === 'EADDRINUSE') {
+      console.error(`[boot] ${host}:${port} is already in use. Stop the old process (./scripts/stop.sh) or change PORT.`);
+    }
+    throw e;
+  }
+  app.log.info(`rh.tradingbot backend on http://${host}:${port}`);
+  app.log.info(`health: http://${host}:${port}/api/health`);
+  app.log.info(`via MAMP (optional): http://localhost:8888${config.server.basePath}/`);
+  await audit('boot', 'backend started', { port, ai: aiReady(), paper: true });
 
   startWorker();
+
+  const shutdown = async (signal: string) => {
+    app.log.info(`[boot] ${signal} — stopping worker and closing listen socket`);
+    stopWorker();
+    try { await app.close(); } catch { /* already closing */ }
+    process.exit(0);
+  };
+  process.once('SIGTERM', () => { void shutdown('SIGTERM'); });
+  process.once('SIGINT', () => { void shutdown('SIGINT'); });
 }
 
+process.on('uncaughtException', (err) => logFatal('uncaughtException', err));
+process.on('unhandledRejection', (err) => logFatal('unhandledRejection', err));
+
 main().catch((e) => {
-  console.error(e);
+  logFatal('main', e);
   process.exit(1);
 });

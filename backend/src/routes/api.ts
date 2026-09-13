@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { config, MODES, TRADING_ENVS, isLiveEnv, type Mode, type TradingEnv } from '../config.js';
-import { q, exec, ping, getGlobalMode, getKillSwitch, getTradingEnv, setTradingEnv, setSetting, audit, getRiskLimits, setRiskLimits, riskLimitDefaults, getExitPolicy, setExitPolicy, getTradeDefaults, setTradeDefaults, tradeDefaultsFactory } from '../db.js';
+import { q, exec, getGlobalMode, getKillSwitch, getTradingEnv, setTradingEnv, setSetting, audit, getRiskLimits, setRiskLimits, riskLimitDefaults, getExitPolicy, setExitPolicy, getTradeDefaults, setTradeDefaults, tradeDefaultsFactory } from '../db.js';
 import { rh } from '../rh/mcpClient.js';
 import { syncAll, brokerStatus } from '../brokers/index.js';
 import { executeDraft, approveOrder, rejectOrder } from '../execute.js';
@@ -35,6 +35,7 @@ import { searchKnowledge } from '../knowledge.js';
 import { knowledgeStats } from '../rag.js';
 import { getFutures, leadingFuture } from '../market/futures.js';
 import { runLearning, listRuns, listIdeas, learningStatus } from '../learning.js';
+import { collectPaperHealth } from '../risk/health.js';
 
 /** Attach each bot's EFFECTIVE risk (bot value, else the global trade default, with the
  *  source of every field) to a bot list. Additive — no existing field changes. */
@@ -70,22 +71,53 @@ export async function registerRoutes(app: FastifyInstance) {
   });
 
   // ── Health & status ───────────────────────────────────────────────────────
+  // Always HTTP 200 with a structured body so health.sh can tell "API down"
+  // from "API up, MySQL/Alpaca down". Never throws.
   app.get('/api/health', async () => {
-    const env = await getTradingEnv();
-    return {
-      ok: true,
-      db: await ping(),
-      ai: aiReady(),
-      aiLabel: aiLabel(),
-      aiShort: aiShort(),
-      rh: { status: rh.status, tools: rh.listToolsCached().length, authUrl: rh.authUrl },
-      mode: await getGlobalMode(),
-      killSwitch: await getKillSwitch(),
-      env,
-      live: isLiveEnv(env),
-      broker: await brokerStatus(),
-      model: aiShort(),
+    const watch = {
+      available: false,
+      observeOnly: true,
+      running: false,
+      lastCycle: null as string | null,
+      lastError: null as string | null,
+      note: 'Muse watcher is optional. If this API is down, treat watch as unknown — never green.',
     };
+    try {
+      const paper = await collectPaperHealth();
+      let broker: any = { ready: paper.alpaca.ok, kind: 'alpaca', alpacaConfigured: paper.alpaca.configured };
+      try { broker = await brokerStatus(); } catch { /* keep probe-only */ }
+      let ai = false, aiL = 'unknown', aiS = 'unknown';
+      try { ai = aiReady(); aiL = aiLabel(); aiS = aiShort(); } catch { /* no keys */ }
+      return {
+        ...paper,
+        ai,
+        aiLabel: aiL,
+        aiShort: aiS,
+        rh: { status: rh.status, tools: rh.listToolsCached().length, authUrl: rh.authUrl },
+        broker,
+        model: aiS,
+        watch,
+      };
+    } catch (e: any) {
+      return {
+        ok: false,
+        ready: false,
+        db: false,
+        paper: true,
+        live: false,
+        env: 'unknown',
+        mode: 'unknown',
+        killSwitch: false,
+        listen: `127.0.0.1:${config.server.port}`,
+        pid: process.pid,
+        uptime_s: Math.round(process.uptime()),
+        alpaca: { ok: false, configured: false, error: 'health collector failed' },
+        failures: ['db_down'],
+        ai: false,
+        watch,
+        error: e?.message || 'health collector failed',
+      };
+    }
   });
 
   // Which model answers which task, and what the last liveness probe saw.

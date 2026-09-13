@@ -27,7 +27,7 @@ elsewhere. Do not bind it to `0.0.0.0`, do not port-forward it, and do not put i
 public reverse proxy as it stands. Anyone who can reach the port can place orders.
 
 The database should be equally local. If you can, give it a dedicated user limited to
-`rh_tradingbot` rather than reusing `root`.
+`ulric_rhtrader` rather than reusing `root`. Do not create a `rh_tradingbot` schema.
 
 ## The kill switch
 

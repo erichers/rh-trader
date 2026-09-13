@@ -8,6 +8,7 @@ import type { OrderDraft } from '../risk/engine.js';
 import { isCryptoSymbol } from '../config.js';
 import { refreshBars } from '../brokers/index.js';
 import { sizeDraft } from '../risk/sizing.js';
+import { isObserveOnlyBot, observeOnlySkipWhy } from '../risk/observe.js';
 
 export type Bot = {
   id: number;
@@ -377,6 +378,15 @@ export async function evaluateBot(botRow: any): Promise<any> {
     );
 
     if (ev.fired && aiOk) {
+      // Hard stop before sizing / executeDraft. enabled=1 and mode=auto must not
+      // turn a watch stub into a trading bot (drafts and vetoes included).
+      if (isObserveOnlyBot(bot)) {
+        results.push({
+          symbol, fired: true, observe_only: true, action: 'observe', status: 'observe_only',
+          checks: ev.checks, why: observeOnlySkipWhy(ev.why),
+        });
+        continue;
+      }
       const side = (bot.action?.side as 'buy' | 'sell') || ev.side;
       // RE-ENTRY POLICY: the worker re-evaluates every 120s on DAILY bars and a fired daily
       // signal holds all session — so allow a few entries/day SPACED by a cooldown (a persistent
@@ -405,6 +415,7 @@ export async function evaluateBot(botRow: any): Promise<any> {
           source: 'bot',
           bot_id: bot.id,
         };
+        if (isObserveOnlyBot(bot) || bot.action?._observe_only) draft._observe_only = true;
         if (isOption) {
           // Option bots MUST carry the contract spec so executeDraft resolves a REAL contract
           // and sizes off its PREMIUM. Two bugs lived here: (1) these fields were dropped, so the
