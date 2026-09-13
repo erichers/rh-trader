@@ -63,4 +63,4 @@ Hard in **both** `auto` and `full_auto`:
 - per-ticket and same-symbol book (**$10k** risk law)
 - 25% concentration vs equity
 
-`full_auto` still bypasses **only** the max-orders/day throttle (40). That is why Monday's watched session should run **`auto`**, not `full_auto`.
+`full_auto` still bypasses **only** the max-orders/day throttle (40). Monday's watched session arms **`full_auto`**; book and concentration still bind.

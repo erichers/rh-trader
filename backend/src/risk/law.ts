@@ -39,8 +39,8 @@ export type SoftGate = {
  * and the META stack (Donchian + Momentum Day + Opening Range) slipped past the
  * $10k book. Those are now hard rails in every mode.
  *
- * The only remaining soft throttle is orders/day. Monday default is still `auto`
- * so that throttle stays on.
+ * The only remaining soft throttle is orders/day. Monday arming mode is
+ * `full_auto`; book + concentration still bind.
  */
 export function applyFullAutoSoftBypass(opts: {
   mode?: Mode | string;
@@ -62,5 +62,5 @@ export function applyFullAutoSoftBypass(opts: {
   };
 }
 
-/** Monday recommendation: auto. full_auto only skips the orders/day throttle. */
-export const MONDAY_DEFAULT_MODE: Mode = 'auto';
+/** Monday arming mode: full_auto. Book + concentration still bind; only orders/day is soft. */
+export const MONDAY_DEFAULT_MODE: Mode = 'full_auto';

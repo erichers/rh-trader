@@ -30,7 +30,7 @@ broker. Nothing trades until you turn it on, and the crypto block is not a setti
 > placed under your credentials.
 >
 > Monday paper checklist (author's Mac desk): [`docs/MONDAY-PAPER-TEST.md`](docs/MONDAY-PAPER-TEST.md).
-> Use **auto**, not **full_auto**. Database is `ulric_rhtrader` — do not create `rh_tradingbot`.
+> Monday paper: arm **full_auto**. Book/concentration still bind. Database is `ulric_rhtrader` — do not create `rh_tradingbot`.
 
 ---
 

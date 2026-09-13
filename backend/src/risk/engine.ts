@@ -93,7 +93,7 @@ export function resolveCaps(botRisk: any, play: OrderDraft['_play'] | undefined,
  *  Hard rails in EVERY mode (including full_auto): kill switch, no-crypto, asset
  *  allowlist, no-short / no-naked-write, daily-loss breaker (≤50%), per-ticket and
  *  same-symbol book cap (≤$10k), and 25% concentration. full_auto may bypass only
- *  the orders/day throttle. Monday paper default is `auto` so that throttle stays on. */
+ *  the orders/day throttle. Monday paper arms `full_auto`; those book rails still bind. */
 export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode): Promise<RiskResult> {
   const checks: RiskResult['checks'] = {};
   const computed: Record<string, number> = {};

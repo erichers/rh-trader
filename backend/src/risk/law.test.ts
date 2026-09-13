@@ -79,7 +79,16 @@ describe('applyFullAutoSoftBypass — META stack / concentration', () => {
     assert.equal(g.throttleBypassed, false);
   });
 
-  it('Monday default mode is auto (throttle stays on)', () => {
-    assert.equal(MONDAY_DEFAULT_MODE, 'auto');
+  it('Monday arming mode is full_auto (book/concentration still hard)', () => {
+    assert.equal(MONDAY_DEFAULT_MODE, 'full_auto');
+    const g = applyFullAutoSoftBypass({
+      mode: MONDAY_DEFAULT_MODE,
+      aggregatePositionOk: false,
+      concentrationOk: false,
+      throttleOk: false,
+    });
+    assert.equal(g.sizeOk, false);
+    assert.equal(g.concentrationOk, false);
+    assert.equal(g.throttleBypassed, true);
   });
 });
