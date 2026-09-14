@@ -1,6 +1,7 @@
 import { q, exec, audit, getTradingEnv, getExitPolicy } from '../db.js';
 import { raiseAlert } from '../alerts.js';
-import { exitReason } from './exitpolicy.js';
+import { effectiveHardStop, exitReason, overnightFlattenReason, swingExitBand } from './exitpolicy.js';
+import { isLeapsTrade, calendarDte } from './dte.js';
 import { alpacaPaper } from '../brokers/alpaca.js';
 import { contractPrice, occToContract } from '../brokers/options.js';
 import { getClock } from '../market/clock.js';
@@ -28,22 +29,20 @@ export async function createMonitor(draft: OrderDraft, orderId: number, entryPri
   // EXITS: the bot's own take-profit / stop / trail, falling back to the global trade
   // defaults for any field it doesn't set (resolveBotRisk is the single resolver, shared
   // with the API and the UI). Bot positions only — an AI-opened position has no bot risk
-  // and keeps its asset-class-aware defaults below.
+  // and inherits the swing-law band below.
   const eff = draft.bot_id ? await resolveBotRisk(r) : null;
   // A play's tp of 0 is DELIBERATE ("no cap, ride the trail" — the positive-skew rule),
   // so when the play states a take-profit it wins outright over bot/global values.
+  const swing = swingExitBand();
   let tp = p && p.tp != null ? Math.max(0, Number(p.tp) || 0) : (eff ? eff.take_profit_pct : Number(r?.take_profit_pct) || 0);
   let sl = Number(p?.sl) || (eff ? eff.stop_loss_pct : Number(r?.stop_loss_pct) || 0);
   let trail = Number(p?.trail) || (eff ? eff.trailing_stop_pct : Number(r?.trailing_stop_pct) || 0);
-  // AI-opened positions have no per-bot risk config — give them sensible default stops so they
-  // are never left unmanaged. Asymmetric "small loss, big win" profile: a fixed small stop, NO
-  // take-profit cap (tp=0), and a trailing stop to let winners run (matches the QuickBot bands).
-  if (draft.source === 'ai' && !tp && !sl && !trail) {
-    if (ac === 'option') { tp = 0; sl = 35; trail = 40; } else { tp = 0; sl = 8; trail = 12; }
-  }
-  // Only the absence of ALL three means "unmanaged". A tp of 0 with a stop/trail is a valid
-  // (no-cap) config, so guard on sl/trail too — don't bail just because there's no take-profit.
-  if (!tp && !sl && !trail) return; // nothing to manage
+  // Swing law fallback: every bot/AI fill gets a monitor. Hard stop / gain-lock still
+  // apply in exitReason even if a stored sl is wider — this just seeds the row.
+  if (!sl) sl = swing.sl;
+  if (!trail) trail = swing.trail;
+  if (tp == null || !(tp >= 0)) tp = swing.tp;
+  sl = effectiveHardStop(sl);
   // Entry = the fill basis: option premium for options, share price for shares.
   let entry = entryPrice;
   if (!(entry > 0)) entry = (ac === 'option' ? (await contractPrice(occ)) : (await alpacaPaper.lastPrice(draft.symbol, { allowStale: true }))) || 0;
@@ -118,27 +117,45 @@ export async function checkMonitors(opts?: { reconcileOnly?: boolean }): Promise
     // Exit ladder lives in risk/exitpolicy.ts — SHARED with the backtest simulator (no drift).
     // Adds the breakeven lock (a +30% trade can't close negative) and the ratcheting trail.
     let reason = exitReason(fav, peakFav, { tp: Number(m.tp_pct) || 0, sl: Number(m.sl_pct) || 0, trail: Number(m.trail_pct) || 0 }) || '';
-    // Time-based flatten (no-overnight / no-weekend), with per-bot override of the global policy.
+    // Time-based flatten: non-LEAPS never hold overnight/weekend (bot overrides ignored).
+    // LEAPS bots are the exception and hold unless they explicitly opt out.
     if (!reason && nearClose) {
-      let holdOvernight = policy.holdOvernight, holdOverWeekend = policy.holdOverWeekend;
+      let botHoldOvernight: boolean | null = null;
+      let botHoldOverWeekend: boolean | null = null;
       let maxHoldBars = 0;
+      let botName = '';
+      let botKey = '';
       if (m.bot_id) {
-        const [bot] = await q<{ risk: any; action: any }>('SELECT risk, action FROM bots WHERE id=:id AND env=:env', { id: m.bot_id, env });
+        const [bot] = await q<{ name: string; risk: any; action: any }>('SELECT name, risk, action FROM bots WHERE id=:id AND env=:env', { id: m.bot_id, env });
         const r = bot?.risk ? (typeof bot.risk === 'string' ? safeParse(bot.risk) : bot.risk) : null;
         const a = bot?.action ? (typeof bot.action === 'string' ? safeParse(bot.action) : bot.action) : null;
-        if (r && typeof r.hold_overnight === 'boolean') holdOvernight = r.hold_overnight;
-        if (r && typeof r.hold_over_weekend === 'boolean') holdOverWeekend = r.hold_over_weekend;
+        if (r && typeof r.hold_overnight === 'boolean') botHoldOvernight = r.hold_overnight;
+        if (r && typeof r.hold_over_weekend === 'boolean') botHoldOverWeekend = r.hold_over_weekend;
         maxHoldBars = Number(a?._max_hold_bars) || 0;
+        botName = String(bot?.name || '');
+        botKey = String(a?.key || a?._key || '');
       }
-      // Hard limits that OVERRIDE any hold policy (final gate 2026-08-25): a long option is
-      // always sold on its expiration day (never carried into expiry/assignment), and an
-      // idea bot's backtested max hold is enforced live (the sim exited at that bar).
       const etToday = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
       const c = isOption && m.occ_symbol ? occToContract(m.occ_symbol) : null;
-      if (c?.expiration && c.expiration <= etToday) reason = 'flatten: contract expires today';
-      else if (maxHoldBars > 0 && m.opened_at && businessDaysSince(m.opened_at, etToday) >= maxHoldBars) reason = `flatten: max hold ${maxHoldBars} sessions reached`;
-      else if (!holdOvernight) reason = 'flatten: no overnight';
-      else if (longGap && !holdOverWeekend) reason = 'flatten: no weekend hold';
+      const occDte = c?.expiration ? calendarDte(c.expiration) : null;
+      const leaps = isLeapsTrade({
+        expiration: c?.expiration,
+        dte: occDte,
+        name: botName,
+        key: botKey,
+      });
+      const maxHoldReason = (maxHoldBars > 0 && m.opened_at && businessDaysSince(m.opened_at, etToday) >= maxHoldBars)
+        ? `flatten: max hold ${maxHoldBars} sessions reached`
+        : null;
+      reason = overnightFlattenReason({
+        nearClose,
+        longGap,
+        isLeaps: leaps,
+        botHoldOvernight,
+        botHoldOverWeekend,
+        expiresToday: !!(c?.expiration && c.expiration <= etToday),
+        maxHoldReason,
+      }) || '';
     }
     if (!reason) continue;
 

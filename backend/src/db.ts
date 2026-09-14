@@ -1,6 +1,7 @@
 import mysql from 'mysql2/promise';
 import { config, type Mode, type TradingEnv } from './config.js';
 import { RISK_LAW, clampRiskLawDailyLossPct, clampRiskLawPositionUsd } from './risk/law.js';
+import { HARD_STOP_PCT, SOFT_TAKE_PROFIT_PCT, SWING_TRAIL_PCT } from './risk/exitpolicy.js';
 
 export const pool = mysql.createPool({
   host: config.db.host,
@@ -103,8 +104,8 @@ export function riskLimitDefaults(): RiskLimits {
 // ── Trade defaults: how much money goes into ONE trade, and how it exits ─────
 /** The global sizing + exit defaults every bot inherits when it does not pin its own.
  *  `amount_usd` is the TARGET notional per trade (shares × price, or contracts × premium
- *  × 100); `min_usd`/`max_usd` bracket what is actually allowed. `take_profit_pct` 0 means
- *  NO cap — the system rule is positive skew (small stop, let winners ride the trail). */
+ *  × 100); `min_usd`/`max_usd` bracket what is actually allowed. Soft take-profit
+ *  defaults to ~25%; a stored 0 still means "no cap, ride the trail". Hard stop is −10%. */
 export type TradeDefaults = {
   amount_usd: number | null;
   min_usd: number;
@@ -124,9 +125,9 @@ export async function tradeDefaultsFactory(): Promise<TradeDefaults> {
     amount_usd: null,
     min_usd: Math.max(25, Math.round(max * 0.05)),
     max_usd: max,
-    take_profit_pct: 0,   // no cap — ride the trailing stop
-    stop_loss_pct: 35,
-    trailing_stop_pct: 40,
+    take_profit_pct: SOFT_TAKE_PROFIT_PCT, // soft ~25% goal; trail rides past it
+    stop_loss_pct: HARD_STOP_PCT,
+    trailing_stop_pct: SWING_TRAIL_PCT,
   };
 }
 
@@ -165,11 +166,13 @@ export function clampTradeDefaults(next: Partial<TradeDefaults>, base: TradeDefa
     if (max < amount) max = amount;    // a maximum below the target would veto every trade
   }
   const tp = pct(next.take_profit_pct, base.take_profit_pct, 500);
-  let sl = pct(next.stop_loss_pct, base.stop_loss_pct, 95);
+  let sl = pct(next.stop_loss_pct, base.stop_loss_pct, HARD_STOP_PCT);
   const trail = pct(next.trailing_stop_pct, base.trailing_stop_pct, 95);
   // A default of "no stop AND no trailing stop" would leave every inheriting bot's position
   // unmanaged, so the global set always keeps at least one exit. One of them may be 0.
-  if (!sl && !trail) sl = base.stop_loss_pct || 35;
+  if (!sl && !trail) sl = base.stop_loss_pct || HARD_STOP_PCT;
+  // Swing law: a saved 35% stop cannot loosen the −10% hard cut.
+  if (sl > HARD_STOP_PCT) sl = HARD_STOP_PCT;
   return { amount_usd: amount, min_usd: min, max_usd: max, take_profit_pct: tp, stop_loss_pct: sl, trailing_stop_pct: trail };
 }
 

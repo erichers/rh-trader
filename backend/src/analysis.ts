@@ -1,5 +1,5 @@
 import { q, exec, audit, getTradingEnv } from './db.js';
-import { BREAKEVEN_ARM_PCT, RATCHET_1, RATCHET_2 } from './risk/exitpolicy.js';
+import { GAIN_LOCK_ARM_PCT, GAIN_LOCK_FLOOR_PCT, RATCHET_1, RATCHET_2 } from './risk/exitpolicy.js';
 import { raiseAlert } from './alerts.js';
 import type { TradingEnv } from './config.js';
 
@@ -29,9 +29,9 @@ function suggestFor(t: { pl: number; peak: number; reason: string; status: strin
   const { pl, peak, reason, status } = t;
   if (status === 'open') return `Open — managed live (stop −${t.sl}%, trail ${t.trail}pts${t.tp > 0 ? `, cap +${t.tp}%` : ', no cap'}).`;
   const giveback = peak - pl;
-  if (reason === 'breakeven-lock') return `Round-trip prevented: peaked +${r1(peak)}% and the breakeven lock closed it at ~+1% instead of a loss.`;
-  if (reason === 'take-profit') return `Capped at +${r1(pl)}% by a take-profit. TP caps are now OFF by default — this setup now rides the ratchet trail instead (a +${r1(peak)}% peak would have kept running).`;
-  if (pl < 0 && peak >= BREAKEVEN_ARM_PCT) return `Was up +${r1(peak)}% but closed ${r1(pl)}%. The breakeven lock (live now) makes this impossible going forward — a +${BREAKEVEN_ARM_PCT}% trade can no longer close negative.`;
+  if (reason === 'gain-lock' || reason === 'breakeven-lock') return `Gain-lock: peaked +${r1(peak)}% and the +${GAIN_LOCK_ARM_PCT}% lock closed at floor ${GAIN_LOCK_FLOOR_PCT}% (breakeven) instead of a loss.`;
+  if (reason === 'take-profit') return `Booked the soft +${r1(pl)}% take-profit goal. With a trail armed, winners keep riding past ~25%.`;
+  if (pl < 0 && peak >= GAIN_LOCK_ARM_PCT) return `Was up +${r1(peak)}% but closed ${r1(pl)}%. The gain-lock (live now) makes this impossible going forward — a +${GAIN_LOCK_ARM_PCT}% trade can no longer close below ${GAIN_LOCK_FLOOR_PCT}%.`;
   if (pl < 0 && (reason === 'stop-loss' || reason === 'trailing-stop') && peak < 12) return `Clean cut: thesis failed fast (peaked only +${r1(peak)}%), exited ${r1(pl)}%. This is the "small loss" half of the design — keep it.`;
   if (pl < 0 && reason === 'expiry') return `Held to expiry for ${r1(pl)}% — theta ate it. The stop should have acted earlier; verify the monitor covered this position all session.`;
   if (pl < 0 && String(reason).startsWith('flatten')) return `EOD flatten cut a fading position at ${r1(pl)}% instead of carrying overnight gap risk. Working as designed.`;

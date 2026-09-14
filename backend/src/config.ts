@@ -95,7 +95,7 @@ export const config = {
       .split(',')
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean),
-    maxPositionUsd: num(process.env.MAX_POSITION_USD, 2000),
+    maxPositionUsd: num(process.env.MAX_POSITION_USD, 10_000),
     maxConcentrationPct: num(process.env.MAX_PORTFOLIO_CONCENTRATION_PCT, 25),
     maxDailyLossPct: num(process.env.MAX_DAILY_LOSS_PCT, 3),
     maxOrdersPerDay: num(process.env.MAX_ORDERS_PER_DAY, 40),

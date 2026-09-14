@@ -2,6 +2,7 @@ import { config, HARD_BLOCKED_ASSET_CLASSES, isCryptoSymbol, isLiveEnv, type Mod
 import { q, exec, getKillSwitch, getSetting, setSetting, getTradingEnv, getRiskLimits } from '../db.js';
 import { evaluateSymbolCaps, openSymbolExposureUsd, reservedBuyNotional, splitInflightBuys, todayEt, type ExposureOrder } from './exposure.js';
 import { RISK_LAW, applyFullAutoSoftBypass, clampRiskLawDailyLossPct, clampRiskLawPositionUsd } from './law.js';
+import { optionEntryDteCheck } from './dte.js';
 
 /** Options trade in 100-share contracts; quoted premium is per share. */
 const CONTRACT_MULT = 100;
@@ -92,8 +93,9 @@ export function resolveCaps(botRisk: any, play: OrderDraft['_play'] | undefined,
  *  paper data can never loosen a live-account check (and vice versa).
  *  Hard rails in EVERY mode (including full_auto): kill switch, no-crypto, asset
  *  allowlist, no-short / no-naked-write, daily-loss breaker (≤50%), per-ticket and
- *  same-symbol book cap (≤$10k), and 25% concentration. full_auto may bypass only
- *  the orders/day throttle. Monday paper arms `full_auto`; those book rails still bind. */
+ *  same-symbol book cap (≤$10k), 25% concentration, and the 2–14 DTE entry window
+ *  (never 0DTE/1DTE; LEAPS waived). full_auto may bypass only the orders/day
+ *  throttle. Monday paper arms `full_auto`; those book rails still bind. */
 export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode): Promise<RiskResult> {
   const checks: RiskResult['checks'] = {};
   const computed: Record<string, number> = {};
@@ -147,6 +149,13 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
     pass: allowed,
     detail: allowed ? ac : `'${ac}' not in allowlist [${t.allowedAssetClasses.join(',')}]`,
   };
+
+  // 3b. Option entry DTE — never 0DTE/1DTE; non-LEAPS must be 2–14. Fail-closed
+  //     when the contract is unresolved so a weekly Friday cannot slip through.
+  const dteGate = optionEntryDteCheck(draft);
+  checks.entry_dte = { pass: dteGate.ok, detail: dteGate.detail };
+  if (dteGate.dte != null) computed.entry_dte = dteGate.dte;
+  if (dteGate.leaps) computed.leaps = 1;
 
   // 4. Position size cap (USD). Options are ×100 (contract multiplier) so the
   //    cap actually applies to the real dollar cost, not per-share premium.

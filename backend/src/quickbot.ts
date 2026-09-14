@@ -33,13 +33,15 @@ import { isObserveOnlyBot, observeOnlySkipWhy } from './risk/observe.js';
 // (or expiry). Shorter DTE = tighter stop + smaller size (fast theta/noise); longer = more room.
 // Result is a low-win-rate / high-expectancy payoff: many small losses, occasional huge wins.
 export const DTE_BANDS: Record<number, { tp: number; sl: number; trail: number; max_position_usd: number; qty: number }> = {
-  1: { tp: 0, sl: 28, trail: 35, max_position_usd: 700, qty: 1 },
-  2: { tp: 0, sl: 30, trail: 40, max_position_usd: 900, qty: 1 },
-  3: { tp: 0, sl: 33, trail: 45, max_position_usd: 1100, qty: 1 },
-  4: { tp: 0, sl: 36, trail: 52, max_position_usd: 1400, qty: 1 },
-  7: { tp: 0, sl: 42, trail: 60, max_position_usd: 2000, qty: 1 },
+  // 1DTE kept for leftover backtest refs only — live entry is blocked (never 0DTE/1DTE).
+  1: { tp: 25, sl: 10, trail: 20, max_position_usd: 700, qty: 1 },
+  2: { tp: 25, sl: 10, trail: 20, max_position_usd: 900, qty: 1 },
+  3: { tp: 25, sl: 10, trail: 20, max_position_usd: 1100, qty: 1 },
+  4: { tp: 25, sl: 10, trail: 20, max_position_usd: 1400, qty: 1 },
+  7: { tp: 25, sl: 10, trail: 20, max_position_usd: 2000, qty: 1 },
+  14: { tp: 25, sl: 10, trail: 20, max_position_usd: 2500, qty: 1 },
 };
-export const QUICK_DTES = [1, 2, 3, 4, 7]; // DTEs searched/traded (1 = highest-variance, gamma-heavy)
+export const QUICK_DTES = [2, 3, 4, 7, 14]; // live entry window 2–14 DTE; never 0DTE/1DTE
 // The full tradable universe: Mag-7 single names + the two big index ETFs.
 export const MAG7 = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA'];
 export const UNIVERSE = [...MAG7, 'SPY', 'QQQ'];
@@ -176,9 +178,9 @@ function simulatePlay(closes: number[], times: number[], snaps: any[], start: nu
       const premNow = bsPrice(cand.dir, price, open.strike, Tleft, open.sigma);
       const oret = open.prem0 > 0 ? ((premNow - open.prem0) / open.prem0) * 100 : 0;
       open.peak = Math.max(open.peak, oret);
-      // Exit ladder SHARED with the live monitor (risk/exitpolicy.ts): tp>0 cap (off by default),
-      // small fixed stop, breakeven lock at +30% peak, and the ratcheting trail that tightens as
-      // the win grows. Backtest and live must agree or the backtest numbers are lies.
+      // Exit ladder SHARED with the live monitor (risk/exitpolicy.ts): −10% hard stop,
+      // +10% gain-lock (floor 0), soft ~25% TP or ride the trail. Backtest and live
+      // must agree or the backtest numbers are lies.
       let reason = exitReason(oret, open.peak, band) || '';
       if (!reason && held >= dte) reason = 'expiry';
       if (!reason && i === end) reason = 'window-end';

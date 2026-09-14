@@ -168,9 +168,12 @@ function pickExpiration2(exps: string[], pref: string): string {
   if (/^\d{4}-\d{2}-\d{2}$/.test(pref)) return exps.find((e) => e >= pref) || exps[exps.length - 1];
   const future = exps.filter((e) => dte(e) >= 2);
   if (!future.length) return exps[exps.length - 1];
-  if (pref === 'monthly') return future.reduce((b, e) => (Math.abs(dte(e) - 32) < Math.abs(dte(b) - 32) ? e : b));
   if (pref === 'leaps') return future.reduce((b, e) => (dte(e) > dte(b) ? e : b)); // furthest
-  return future[0]; // weekly: soonest standard
+  // weekly + monthly: stay inside the 2–14 DTE swing window (never 0DTE/1DTE).
+  const window = future.filter((e) => dte(e) <= 14);
+  const pool = window.length ? window : future;
+  if (pref === 'monthly') return pool.reduce((b, e) => (Math.abs(dte(e) - 14) < Math.abs(dte(b) - 14) ? e : b));
+  return pool[0]; // weekly: soonest in-window
 }
 
 function targetPrice(spot: number, type: 'call' | 'put', strikeTarget: string): number {

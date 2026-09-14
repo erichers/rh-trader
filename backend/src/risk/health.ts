@@ -2,6 +2,7 @@ import { config, isLiveEnv, type Mode, type TradingEnv } from '../config.js';
 import { ping, getGlobalMode, getKillSwitch, getTradingEnv, getRiskLimits } from '../db.js';
 import { alpacaConfigured, probeAlpacaPaper, type AlpacaProbe } from '../brokers/alpaca.js';
 import { RISK_LAW } from './law.js';
+import { SWING_LAW } from './exitpolicy.js';
 
 export type HealthFailure =
   | 'db_down'
@@ -26,6 +27,7 @@ export type PaperHealth = {
   alpaca: AlpacaProbe;
   failures: HealthFailure[];
   riskLaw: { maxTradeUsd: number; maxDailyDrawdownPct: number };
+  swingLaw: typeof SWING_LAW;
   limits: { maxPositionUsd: number; maxConcentrationPct: number; maxDailyLossPct: number; maxOrdersPerDay: number } | null;
 };
 
@@ -59,6 +61,7 @@ export async function collectPaperHealth(): Promise<PaperHealth> {
     pid: process.pid,
     uptime_s: Math.round(process.uptime()),
     riskLaw: { maxTradeUsd: RISK_LAW.maxTradeUsd, maxDailyDrawdownPct: RISK_LAW.maxDailyDrawdownPct },
+    swingLaw: SWING_LAW,
   };
 
   let db = false;

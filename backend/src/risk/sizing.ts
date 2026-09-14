@@ -1,6 +1,7 @@
 import { getRiskLimits, getTradeDefaults, type TradeDefaults } from '../db.js';
 import { resolveCaps, type OrderDraft } from './engine.js';
 import type { TradingEnv } from '../config.js';
+import { HARD_STOP_PCT } from './exitpolicy.js';
 
 // ONE place that answers "how much money goes into this trade, and where does it exit?".
 // Global defaults live in settings.trade_defaults (db.ts); a bot overrides any field in
@@ -66,6 +67,10 @@ export function resolveRiskWith(risk: any, g: TradeDefaults): EffectiveRisk {
         out.amount_usd = out.max_usd;
       }
     }
+  }
+  if (out.stop_loss_pct > HARD_STOP_PCT) {
+    out.notes = [...(out.notes || []), `stop clamped from ${out.stop_loss_pct} to ${HARD_STOP_PCT} (swing hard stop)`];
+    out.stop_loss_pct = HARD_STOP_PCT;
   }
   return out as EffectiveRisk;
 }
