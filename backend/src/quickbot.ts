@@ -34,12 +34,12 @@ import { isObserveOnlyBot, observeOnlySkipWhy } from './risk/observe.js';
 // Result is a low-win-rate / high-expectancy payoff: many small losses, occasional huge wins.
 export const DTE_BANDS: Record<number, { tp: number; sl: number; trail: number; max_position_usd: number; qty: number }> = {
   // 1DTE kept for leftover backtest refs only — live entry is blocked (never 0DTE/1DTE).
-  1: { tp: 25, sl: 10, trail: 20, max_position_usd: 700, qty: 1 },
-  2: { tp: 25, sl: 10, trail: 20, max_position_usd: 900, qty: 1 },
-  3: { tp: 25, sl: 10, trail: 20, max_position_usd: 1100, qty: 1 },
-  4: { tp: 25, sl: 10, trail: 20, max_position_usd: 1400, qty: 1 },
-  7: { tp: 25, sl: 10, trail: 20, max_position_usd: 2000, qty: 1 },
-  14: { tp: 25, sl: 10, trail: 20, max_position_usd: 2500, qty: 1 },
+  1: { tp: 25, sl: 10, trail: 12, max_position_usd: 700, qty: 1 },
+  2: { tp: 25, sl: 10, trail: 12, max_position_usd: 900, qty: 1 },
+  3: { tp: 25, sl: 10, trail: 12, max_position_usd: 1100, qty: 1 },
+  4: { tp: 25, sl: 10, trail: 12, max_position_usd: 1400, qty: 1 },
+  7: { tp: 25, sl: 10, trail: 12, max_position_usd: 2000, qty: 1 },
+  14: { tp: 25, sl: 10, trail: 12, max_position_usd: 2500, qty: 1 },
 };
 export const QUICK_DTES = [2, 3, 4, 7, 14]; // live entry window 2–14 DTE; never 0DTE/1DTE
 // The full tradable universe: Mag-7 single names + the two big index ETFs.

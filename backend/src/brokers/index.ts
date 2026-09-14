@@ -122,6 +122,25 @@ export async function cancelAllLiveOrders(): Promise<void> {
   if (brokerKind(env) === 'alpaca' && alpacaConfigured()) await alpacaFor(env).cancelAll();
 }
 
+/** Fetch one broker order (Alpaca paper). Used by the exit monitor to wait for a fill. */
+export async function getBrokerOrder(brokerOrderId: string, envArg?: TradingEnv): Promise<any | null> {
+  const env = envArg ?? (await getTradingEnv());
+  if (brokerKind(env) !== 'alpaca' || !alpacaConfigured() || !brokerOrderId) return null;
+  try { return await alpacaFor(env).getOrder(brokerOrderId); } catch { return null; }
+}
+
+/** Cancel one stuck working order so qty unlocks and the monitor can retry. */
+export async function cancelBrokerOrder(brokerOrderId: string, envArg?: TradingEnv): Promise<boolean> {
+  const env = envArg ?? (await getTradingEnv());
+  if (brokerKind(env) !== 'alpaca' || !alpacaConfigured() || !brokerOrderId) return false;
+  try {
+    await alpacaFor(env).cancelOrder(brokerOrderId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Extract the underlying ticker from an OCC option symbol (e.g. NVDA260116C00800000 → NVDA). */
 export function underlyingFromOcc(occ: string): string {
   const m = /^([A-Z]+)\d{6}[CP]\d{8}$/.exec(occ);

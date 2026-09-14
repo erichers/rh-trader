@@ -10,9 +10,17 @@ Swing law (enforced in `exitpolicy.ts` + the live monitor — full_auto closes w
 
 - Hard stop **−10%** from entry
 - Gain-lock arms at **+10%**, floor **0** (breakeven)
-- Soft take-profit goal **~25%** (close when hit *or* trail keeps riding)
+- Soft take-profit goal **~25%** (close when hit *or* trail keeps riding; trail **12**)
 - Never **0DTE/1DTE**; entry window **2–14 DTE** (LEAPS excepted)
 - No overnight / no weekend holds except **LEAPS** bots
+
+Exit lifecycle (Monday live bugs):
+
+- Monitor stays **open** until the broker reports a **filled** exit. `new` / `placed` is pending (NVDA #203 / order 7117001).
+- Stuck `new` sells: cancel after 90s, retry up to 3 attempts, then escalate. No close-on-place.
+- `held=0` + flat book → **orphan once**. No trailing-stop spam (`sell N > held 0`).
+- Unprotected longs (open position, no open monitor) get a swing-law monitor re-attached.
+- Corrupt `exit_policy` JSON is rewritten to `{ holdOvernight: false, holdOverWeekend: false, closeBufferMin: 15 }`.
 
 Mac checkout: **`/Users/eric/Sites/grokbot/grokbot-rh-trader`** (PR #7 path). UI `http://localhost:8888/grokbot/grokbot-rh-trader/` or `http://127.0.0.1:8011/`.
 
@@ -77,6 +85,9 @@ If you need a restart after merging this branch: `./scripts/stop.sh && ./scripts
 - Donchian + Momentum + ORB on one name in **full_auto**: third ticket **vetoes** on $10k book or 25% concentration.
 - 0DTE / 1DTE option buys **veto**. Weekly/monthly resolve inside 2–14 DTE.
 - A position that prints −10% from entry should auto-exit (`stop-loss`). A +10% peak that fades to 0 should `gain-lock`.
+- A working Alpaca sell still `new` must **not** close the monitor. NVDA/SPY-style stuck exits cancel+retry or escalate.
+- Flat META/GOOGL: one orphan, zero extra veto rows.
+- Every open long has an open monitor (`swingLaw` sl 10 / trail 12 / tp 25).
 - Kill switch: new buys stop; exits still flatten. Non-LEAPS flatten before the close.
 
 ## Success

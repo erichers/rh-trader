@@ -61,8 +61,8 @@ describe('exitReason — cut losers / winners ride', () => {
 
   it('soft TP ~25% closes when there is no trail, else trail keeps riding', () => {
     assert.equal(exitReason(25, 25, { tp: 25, sl: 10, trail: 0 }), 'take-profit');
-    assert.equal(exitReason(25, 25, { tp: 25, sl: 10, trail: 20 }), null); // ride
-    assert.equal(exitReason(5, 25, { tp: 25, sl: 10, trail: 20 }), 'trailing-stop');
+    assert.equal(exitReason(25, 25, { tp: 25, sl: 10, trail: SWING_TRAIL_PCT }), null); // ride
+    assert.equal(exitReason(13, 25, { tp: 25, sl: 10, trail: SWING_TRAIL_PCT }), 'trailing-stop');
   });
 
   it('full_auto path: loser closes without a human; winner is not capped at 25% with a trail', () => {

@@ -16,7 +16,7 @@ export const HARD_STOP_PCT = 10;
 export const GAIN_LOCK_ARM_PCT = 10;
 export const GAIN_LOCK_FLOOR_PCT = 0;
 export const SOFT_TAKE_PROFIT_PCT = 25;
-export const SWING_TRAIL_PCT = 20;
+export const SWING_TRAIL_PCT = 12;
 export const ENTRY_DTE_MIN = 2;
 export const ENTRY_DTE_MAX = 14;
 

@@ -505,6 +505,8 @@ CREATE TABLE IF NOT EXISTS position_monitors (
   trail_pct     DECIMAL(8,2),
   bot_id        BIGINT,
   order_id      BIGINT,
+  pending_exit_order_id BIGINT NULL,
+  exit_attempts INT NOT NULL DEFAULT 0,
   status        VARCHAR(16) DEFAULT 'open',
   reason        VARCHAR(48),
   opened_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

@@ -122,6 +122,14 @@ export class AlpacaClient {
     return call(this.tradeBase, '/orders', { method: 'POST', body: JSON.stringify(body) });
   }
 
+  getOrder(id: string) {
+    return call(this.tradeBase, `/orders/${encodeURIComponent(id)}`);
+  }
+
+  cancelOrder(id: string) {
+    return call(this.tradeBase, `/orders/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
   cancelAll() {
     return call(this.tradeBase, '/orders', { method: 'DELETE' });
   }
