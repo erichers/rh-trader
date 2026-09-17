@@ -1,6 +1,7 @@
 import { q, exec } from '../db.js';
 import type { Mode, TradingEnv } from '../config.js';
 import { isObserveOnlyBot, OBSERVE_STUB_KEYS } from '../risk/observe.js';
+import { shortDteAllowlistHit, SHORT_DTE_RAILS } from '../risk/shortdte.js';
 
 export type StrategyTemplate = {
   key: string;
@@ -19,8 +20,12 @@ export type StrategyTemplate = {
     option_type?: 'call' | 'put';
     strike_target?: 'itm' | 'atm' | 'otm';
     expiration?: 'weekly' | 'monthly';
+    allow_0_1_dte?: boolean;
+    _dte?: number;
   };
   default_symbols: string[];
+  /** Optional per-template risk (0–1 allowlist bots carry tight SL/TP + small size). */
+  risk?: Record<string, any>;
   /** Watch stub: seed disabled + observe, and tag action._observe_only. */
   observe_only?: boolean;
 };
@@ -175,8 +180,9 @@ export const STRATEGY_LIBRARY: StrategyTemplate[] = [
     category: 'ai',
     asset_class: 'option',
     ai_gate: { enabled: true, min_conviction: 0.7 },
-    education: 'Momentum trigger + high Claude conviction (≥ 0.7) → buy ATM weekly calls.',
-    action: { side: 'buy', qty: 1, order_type: 'market', option_type: 'call', strike_target: 'atm', expiration: 'weekly' },
+    education: 'Momentum trigger + high Claude conviction (≥ 0.7) → the only library option bot allowed to buy 0–1 DTE, and only with tight SL/TP + small size.',
+    action: { side: 'buy', qty: 1, order_type: 'market', option_type: 'call', strike_target: 'atm', expiration: 'weekly', allow_0_1_dte: true, _dte: 1 },
+    risk: { allow_0_1_dte: true, stop_loss_pct: 5, take_profit_pct: 10, trailing_stop_pct: 4, max_position_usd: 400 },
   },
 
   // ── Observe-only watch stubs (signal + journal only — never an order row) ──
@@ -250,13 +256,57 @@ export async function seedStrategies(env: TradingEnv, opts: { mode?: Mode } = {}
           _timeframe: s.timeframe,
           ...(stub ? { _observe_only: true } : {}),
         }),
-        risk: JSON.stringify(stub ? { _observe_only: true } : {}),
+        risk: JSON.stringify(stub ? { _observe_only: true } : (s.risk || {})),
       },
     );
     created++;
   }
   await hardenObserveOnlyBots(env);
+  await hardenShortDteAllowlist(env);
   return { created, skipped };
+}
+
+function parseJson(v: any): any {
+  if (v == null) return {};
+  if (typeof v === 'object') return v;
+  try { return JSON.parse(v); } catch { return {}; }
+}
+
+/** Stamp allow_0_1_dte + tight exits on allowlisted strategy bots (idempotent). */
+export async function hardenShortDteAllowlist(env?: TradingEnv): Promise<{ tagged: number }> {
+  const rows = env
+    ? await q<any>('SELECT id, name, action, risk, env FROM bots WHERE env=:env', { env })
+    : await q<any>('SELECT id, name, action, risk, env FROM bots');
+  let tagged = 0;
+  for (const row of rows) {
+    const action = parseJson(row.action);
+    const risk = parseJson(row.risk);
+    const hit = shortDteAllowlistHit({
+      key: action._strategy || action._key,
+      name: row.name,
+      keys: [action._strategy, action._key],
+    });
+    if (!hit) continue;
+    const already =
+      action.allow_0_1_dte && risk.allow_0_1_dte
+      && Number(risk.stop_loss_pct) > 0 && Number(risk.stop_loss_pct) <= SHORT_DTE_RAILS.slMax
+      && Number(risk.take_profit_pct) >= SHORT_DTE_RAILS.tpMin && Number(risk.take_profit_pct) <= SHORT_DTE_RAILS.tpMax
+      && Number(risk.max_position_usd) > 0 && Number(risk.max_position_usd) <= SHORT_DTE_RAILS.maxPositionUsd;
+    if (already && (hit.key !== 'ai-catalyst-call' || Number(action._dte) === 1)) continue;
+    action.allow_0_1_dte = true;
+    if (hit.key === 'ai-catalyst-call') action._dte = 1;
+    risk.allow_0_1_dte = true;
+    if (!(Number(risk.stop_loss_pct) > 0) || Number(risk.stop_loss_pct) > SHORT_DTE_RAILS.slMax) risk.stop_loss_pct = SHORT_DTE_RAILS.slMax;
+    if (!(Number(risk.take_profit_pct) >= SHORT_DTE_RAILS.tpMin) || Number(risk.take_profit_pct) > SHORT_DTE_RAILS.tpMax) risk.take_profit_pct = 10;
+    if (!(Number(risk.trailing_stop_pct) > 0) || Number(risk.trailing_stop_pct) > SHORT_DTE_RAILS.trailMax) risk.trailing_stop_pct = 4;
+    if (!(Number(risk.max_position_usd) > 0) || Number(risk.max_position_usd) > SHORT_DTE_RAILS.maxPositionUsd) risk.max_position_usd = SHORT_DTE_RAILS.maxPositionUsd;
+    await exec(
+      `UPDATE bots SET action=CAST(:action AS JSON), risk=CAST(:risk AS JSON) WHERE id=:id AND env=:env`,
+      { action: JSON.stringify(action), risk: JSON.stringify(risk), id: row.id, env: row.env },
+    );
+    tagged++;
+  }
+  return { tagged };
 }
 
 /** Stamp `_observe_only` on desk stubs that already exist (enabled or not). Idempotent. */

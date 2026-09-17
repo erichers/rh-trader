@@ -11,7 +11,7 @@ Swing law (enforced in `exitpolicy.ts` + the live monitor — full_auto closes w
 - Hard stop **−10%** from entry
 - Gain-lock arms at **+10%**, floor **0** (breakeven)
 - Soft take-profit goal **~25%** (close when hit *or* trail keeps riding; trail **12**)
-- Never **0DTE/1DTE**; entry window **2–14 DTE** (LEAPS excepted)
+- Never **0DTE/1DTE** for the fleet; entry window **2–14 DTE** (LEAPS excepted). Only `ai-catalyst-call` and `accel_dual_momentum_call` may take 0–1, and only with tight SL/TP (sl ≤5, tp 6–12) and size ≤$400.
 - No overnight / no weekend holds except **LEAPS** bots
 
 Exit lifecycle (Monday live bugs):
@@ -83,7 +83,7 @@ If you need a restart after merging this branch: `./scripts/stop.sh && ./scripts
 
 - No draft/stage/place/veto from watch stubs.
 - Donchian + Momentum + ORB on one name in **full_auto**: third ticket **vetoes** on $10k book or 25% concentration.
-- 0DTE / 1DTE option buys **veto**. Weekly/monthly resolve inside 2–14 DTE.
+- 0DTE / 1DTE option buys **veto** for normal bots. Weekly/monthly resolve inside 2–14 DTE (play.dte is rewritten to the selected contract). Allowlisted high-certainty bots may take 0–1 with tight rails.
 - A position that prints −10% from entry should auto-exit (`stop-loss`). A +10% peak that fades to 0 should `gain-lock`.
 - A working Alpaca sell still `new` must **not** close the monitor. NVDA/SPY-style stuck exits cancel+retry or escalate.
 - Flat META/GOOGL: one orphan, zero extra veto rows.
