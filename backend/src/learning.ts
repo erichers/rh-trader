@@ -57,7 +57,7 @@ const HORIZONS = ['daytrade', 'swing_daily', 'swing_weekly'] as const;
 type Horizon = typeof HORIZONS[number];
 /** DTE a horizon is allowed to trade, and how many bars an equity idea may hold. */
 const HORIZON_SPEC: Record<Horizon, { dtes: number[]; maxHoldBars: number }> = {
-  daytrade: { dtes: [1, 2], maxHoldBars: 2 },
+  daytrade: { dtes: [2], maxHoldBars: 2 },
   swing_daily: { dtes: [3, 4], maxHoldBars: 5 },
   swing_weekly: { dtes: [7], maxHoldBars: 10 },
 };
@@ -301,10 +301,10 @@ function vocabularyPrompt(universe: string[]): string {
     '',
     'COMBINATORS: require_all: true (every trigger must fire together) OR min_matches: integer 1..4 (how many triggers suffice). Default is min_matches 1.',
     '',
-    'EXITS: { "sl_pct": 10..60, "tp_pct": 0 or 20..400, "trail_pct": 15..90, "dte": one of 1,2,3,4,7 for options }',
+    'EXITS: { "sl_pct": 10, "tp_pct": 0 or 25, "trail_pct": 15..90, "dte": one of 2,3,4,7,14 for options — never 0DTE/1DTE }',
     'The house profile is POSITIVE SKEW: a small fixed stop, NO take-profit cap (tp_pct 0 is strongly preferred) and a trailing stop so winners ride. Many small losses and a few very large wins beat a high win rate.',
     '',
-    `HORIZONS: daytrade (dte 1-2, holds hours to a day), swing_daily (dte 3-4, holds 2-5 sessions), swing_weekly (dte 7, holds a week or two).`,
+    `HORIZONS: daytrade (dte 2, holds hours to a day), swing_daily (dte 3-4, holds 2-5 sessions), swing_weekly (dte 7–14, holds a week or two). Never 0DTE/1DTE.`,
     'asset_class: "option" (long calls or long puts only) or "equity" (LONG ONLY).',
     'direction: "call" | "put" | "long". Equity ideas must be "long" and must use bullish triggers only.',
     'A call/long idea must use bullish triggers; a put idea must use bearish triggers.',

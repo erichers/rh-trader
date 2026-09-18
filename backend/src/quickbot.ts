@@ -1,5 +1,6 @@
 import { snapshot } from './market/indicators.js';
 import { dteToExpiration } from './market/expirations.js';
+import { isShortDtePrivileged, SHORT_DTE_BAND } from './risk/dte.js';
 import { evalRules, reentryGate, claimEntrySlot, releaseEntrySlot } from './bots/engine.js';
 import { exitReason } from './risk/exitpolicy.js';
 import { alpacaData } from './brokers/alpaca.js';
@@ -33,13 +34,22 @@ import { isObserveOnlyBot, observeOnlySkipWhy } from './risk/observe.js';
 // (or expiry). Shorter DTE = tighter stop + smaller size (fast theta/noise); longer = more room.
 // Result is a low-win-rate / high-expectancy payoff: many small losses, occasional huge wins.
 export const DTE_BANDS: Record<number, { tp: number; sl: number; trail: number; max_position_usd: number; qty: number }> = {
-  1: { tp: 0, sl: 28, trail: 35, max_position_usd: 700, qty: 1 },
-  2: { tp: 0, sl: 30, trail: 40, max_position_usd: 900, qty: 1 },
-  3: { tp: 0, sl: 33, trail: 45, max_position_usd: 1100, qty: 1 },
-  4: { tp: 0, sl: 36, trail: 52, max_position_usd: 1400, qty: 1 },
-  7: { tp: 0, sl: 42, trail: 60, max_position_usd: 2000, qty: 1 },
+  // 0/1 DTE bands are for the high-certainty allowlist only (tight SL/TP + small size).
+  // Live entry still vetoes these for every other bot.
+  0: { ...SHORT_DTE_BAND },
+  1: { ...SHORT_DTE_BAND },
+  2: { tp: 25, sl: 10, trail: 12, max_position_usd: 900, qty: 1 },
+  3: { tp: 25, sl: 10, trail: 12, max_position_usd: 1100, qty: 1 },
+  4: { tp: 25, sl: 10, trail: 12, max_position_usd: 1400, qty: 1 },
+  7: { tp: 25, sl: 10, trail: 12, max_position_usd: 2000, qty: 1 },
+  14: { tp: 25, sl: 10, trail: 12, max_position_usd: 2500, qty: 1 },
 };
-export const QUICK_DTES = [1, 2, 3, 4, 7]; // DTEs searched/traded (1 = highest-variance, gamma-heavy)
+export const QUICK_DTES = [2, 3, 4, 7, 14]; // live entry window 2–14 DTE for the fleet
+const SHORT_QUICK_DTES = [1, ...QUICK_DTES]; // allowlisted high-certainty plays may also train 1DTE
+
+function dtesForCand(cand: { key: string; label?: string }): number[] {
+  return isShortDtePrivileged({ key: cand.key, name: cand.label }) ? SHORT_QUICK_DTES : QUICK_DTES;
+}
 // The full tradable universe: Mag-7 single names + the two big index ETFs.
 export const MAG7 = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA'];
 export const UNIVERSE = [...MAG7, 'SPY', 'QQQ'];
@@ -176,9 +186,9 @@ function simulatePlay(closes: number[], times: number[], snaps: any[], start: nu
       const premNow = bsPrice(cand.dir, price, open.strike, Tleft, open.sigma);
       const oret = open.prem0 > 0 ? ((premNow - open.prem0) / open.prem0) * 100 : 0;
       open.peak = Math.max(open.peak, oret);
-      // Exit ladder SHARED with the live monitor (risk/exitpolicy.ts): tp>0 cap (off by default),
-      // small fixed stop, breakeven lock at +30% peak, and the ratcheting trail that tightens as
-      // the win grows. Backtest and live must agree or the backtest numbers are lies.
+      // Exit ladder SHARED with the live monitor (risk/exitpolicy.ts): −10% hard stop,
+      // +10% gain-lock (floor 0), soft ~25% TP or ride the trail. Backtest and live
+      // must agree or the backtest numbers are lies.
       let reason = exitReason(oret, open.peak, band) || '';
       if (!reason && held >= dte) reason = 'expiry';
       if (!reason && i === end) reason = 'window-end';
@@ -282,7 +292,7 @@ export async function backtestQuickbot(symbol: string, opts: { days?: number } =
   const midMs = (times[windowStart] + times[end]) / 2; // split point for out-of-sample check
   const all: PlayResult[] = [];
   for (const cand of CANDIDATES) {
-    for (const dte of QUICK_DTES) {
+    for (const dte of dtesForCand(cand)) {
       const band = DTE_BANDS[dte];
       const sim = simulatePlay(closes, times, snaps, windowStart, end, cand, dte, band);
       const h1 = sim.trades.filter((t) => Date.parse(t.exit_date) < midMs);
@@ -399,7 +409,7 @@ export async function walkForwardQuickbot(symbol: string, opts: { days?: number;
     // Optimize on the in-sample window: highest score across all candidates × DTEs.
     let best: { cand: Cand; dte: number; m: PlayMetrics } | null = null;
     for (const cand of CANDIDATES) {
-      for (const dte of QUICK_DTES) {
+      for (const dte of dtesForCand(cand)) {
         const sim = simulatePlay(closes, times, snaps, trainStart, trainEnd, cand, dte, DTE_BANDS[dte]);
         if (scorePlay(sim.metrics) <= (best ? scorePlay(best.m) : -Infinity)) continue;
         best = { cand, dte, m: sim.metrics };
@@ -588,13 +598,21 @@ export async function evaluateQuickbot(botRow: any): Promise<any[]> {
         try {
           const skip = await reentryGate({ botId: botRow.id, symbol, side: 'buy', env, riskCfg: botRow.risk });
           if (skip) { fireSummaries.push({ play: play.name, skipped: skip }); continue; }
-          const band = play.risk;
+          const privileged = isShortDtePrivileged({ key: play.key, name: play.name });
+          const rawDte = Number(play.dte);
+          const targetDte = privileged ? rawDte : Math.max(2, Number.isFinite(rawDte) ? rawDte : 7);
+          let band = play.risk;
+          if (privileged && targetDte <= 1) band = { ...SHORT_DTE_BAND };
           const draft: OrderDraft = {
             env: (botRow.env || env) as any,
             symbol, asset_class: 'option', side: 'buy', qty: Number(band.qty || 1), order_type: 'market',
             option_type: play.direction, strike_target: (play.strike_target as any) || 'atm',
-            expiration: dteToExpiration(play.dte), est_price: undefined, source: 'bot', bot_id: botRow.id,
-            _play: { name: play.name, tag, dte: play.dte, tp: band.tp, sl: band.sl, trail: band.trail, maxPositionUsd: band.max_position_usd },
+            expiration: dteToExpiration(Number.isFinite(targetDte) ? targetDte : 7), est_price: undefined, source: 'bot', bot_id: botRow.id,
+            _play: {
+              name: play.name, tag, key: play.key, dte: targetDte,
+              tp: band.tp, sl: band.sl, trail: band.trail, maxPositionUsd: band.max_position_usd,
+              allow_0_1_dte: privileged,
+            },
           };
           // SIZING: the play's band qty is a floor of 1 contract, not a deliberate pin — so the
           // effective amount per trade (bot override, else the global trade default) decides how
@@ -709,7 +727,8 @@ export async function runLeaderboardPlay(env: TradingEnv, opts: { symbol: string
   const cand = CANDIDATES.find((c) => c.key === opts.key);
   if (!symbol || !/^[A-Z.]{1,6}$/.test(symbol)) throw new Error('invalid symbol');
   if (!cand) throw new Error(`unknown strategy '${opts.key}'`);
-  const dte = QUICK_DTES.includes(Number(opts.dte)) ? Number(opts.dte) : 7;
+  const allowedDtes = dtesForCand(cand);
+  const dte = allowedDtes.includes(Number(opts.dte)) ? Number(opts.dte) : 7;
   const band = DTE_BANDS[dte] || DTE_BANDS[7];
   const mode = ['observe', 'cautious', 'auto', 'full_auto'].includes(opts.mode || '') ? opts.mode! : 'cautious';
   // Route picks to a MODE-SPECIFIC managed bot so a full-auto pick can't flip your staged

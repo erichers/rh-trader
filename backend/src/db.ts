@@ -1,6 +1,8 @@
 import mysql from 'mysql2/promise';
 import { config, type Mode, type TradingEnv } from './config.js';
 import { RISK_LAW, clampRiskLawDailyLossPct, clampRiskLawPositionUsd } from './risk/law.js';
+import { HARD_STOP_PCT, SOFT_TAKE_PROFIT_PCT, SWING_TRAIL_PCT } from './risk/exitpolicy.js';
+import { clampExitPolicy, isCorruptedSettingsObject } from './risk/exitlifecycle.js';
 
 export const pool = mysql.createPool({
   host: config.db.host,
@@ -103,8 +105,8 @@ export function riskLimitDefaults(): RiskLimits {
 // ── Trade defaults: how much money goes into ONE trade, and how it exits ─────
 /** The global sizing + exit defaults every bot inherits when it does not pin its own.
  *  `amount_usd` is the TARGET notional per trade (shares × price, or contracts × premium
- *  × 100); `min_usd`/`max_usd` bracket what is actually allowed. `take_profit_pct` 0 means
- *  NO cap — the system rule is positive skew (small stop, let winners ride the trail). */
+ *  × 100); `min_usd`/`max_usd` bracket what is actually allowed. Soft take-profit
+ *  defaults to ~25%; a stored 0 still means "no cap, ride the trail". Hard stop is −10%. */
 export type TradeDefaults = {
   amount_usd: number | null;
   min_usd: number;
@@ -124,9 +126,9 @@ export async function tradeDefaultsFactory(): Promise<TradeDefaults> {
     amount_usd: null,
     min_usd: Math.max(25, Math.round(max * 0.05)),
     max_usd: max,
-    take_profit_pct: 0,   // no cap — ride the trailing stop
-    stop_loss_pct: 35,
-    trailing_stop_pct: 40,
+    take_profit_pct: SOFT_TAKE_PROFIT_PCT, // soft ~25% goal; trail rides past it
+    stop_loss_pct: HARD_STOP_PCT,
+    trailing_stop_pct: SWING_TRAIL_PCT,
   };
 }
 
@@ -134,6 +136,11 @@ export async function tradeDefaultsFactory(): Promise<TradeDefaults> {
 export async function getTradeDefaults(): Promise<TradeDefaults> {
   const base = await tradeDefaultsFactory();
   const o = await getSetting<Partial<TradeDefaults>>('trade_defaults', {});
+  if (isCorruptedSettingsObject(o, ['take_profit_pct', 'stop_loss_pct', 'trailing_stop_pct', 'amount_usd'])) {
+    await setSetting('trade_defaults', base);
+    await audit('trade.defaults.rewrite', 'corrupted trade_defaults rewritten to swing defaults', base);
+    return base;
+  }
   return clampTradeDefaults(o || {}, base);
 }
 
@@ -165,11 +172,13 @@ export function clampTradeDefaults(next: Partial<TradeDefaults>, base: TradeDefa
     if (max < amount) max = amount;    // a maximum below the target would veto every trade
   }
   const tp = pct(next.take_profit_pct, base.take_profit_pct, 500);
-  let sl = pct(next.stop_loss_pct, base.stop_loss_pct, 95);
+  let sl = pct(next.stop_loss_pct, base.stop_loss_pct, HARD_STOP_PCT);
   const trail = pct(next.trailing_stop_pct, base.trailing_stop_pct, 95);
   // A default of "no stop AND no trailing stop" would leave every inheriting bot's position
   // unmanaged, so the global set always keeps at least one exit. One of them may be 0.
-  if (!sl && !trail) sl = base.stop_loss_pct || 35;
+  if (!sl && !trail) sl = base.stop_loss_pct || HARD_STOP_PCT;
+  // Swing law: a saved 35% stop cannot loosen the −10% hard cut.
+  if (sl > HARD_STOP_PCT) sl = HARD_STOP_PCT;
   return { amount_usd: amount, min_usd: min, max_usd: max, take_profit_pct: tp, stop_loss_pct: sl, trailing_stop_pct: trail };
 }
 
@@ -188,19 +197,20 @@ export async function setTradeDefaults(next: Partial<TradeDefaults>): Promise<Tr
  *  many minutes before the close the flatten kicks in. */
 export type ExitPolicy = { holdOvernight: boolean; holdOverWeekend: boolean; closeBufferMin: number };
 export async function getExitPolicy(): Promise<ExitPolicy> {
-  const o = await getSetting<Partial<ExitPolicy>>('exit_policy', {});
-  return {
-    holdOvernight: o?.holdOvernight === true,           // default false → flatten at EOD
-    holdOverWeekend: o?.holdOverWeekend === true,       // default false → flatten before weekends
-    closeBufferMin: Number.isFinite(Number(o?.closeBufferMin)) && Number(o?.closeBufferMin) > 0 ? Math.min(60, Math.max(2, Number(o?.closeBufferMin))) : 15,
-  };
+  const o = await getSetting<any>('exit_policy', {});
+  const { policy, rewritten } = clampExitPolicy(o);
+  if (rewritten) {
+    await setSetting('exit_policy', policy);
+    await audit('exit.policy.rewrite', 'corrupted exit_policy rewritten to clean defaults', policy);
+  }
+  return policy;
 }
 export async function setExitPolicy(next: Partial<ExitPolicy>): Promise<ExitPolicy> {
-  const cur = await getSetting<Partial<ExitPolicy>>('exit_policy', {});
-  const merged = { ...cur, ...next };
-  await setSetting('exit_policy', merged);
-  await audit('exit.policy.set', 'overnight/weekend hold policy updated', merged);
-  return getExitPolicy();
+  const cur = (await getExitPolicy());
+  const { policy } = clampExitPolicy({ ...cur, ...next });
+  await setSetting('exit_policy', policy);
+  await audit('exit.policy.set', 'overnight/weekend hold policy updated', policy);
+  return policy;
 }
 
 /** Save risk-limit overrides (clamped to sane ranges). Returns the new effective limits. */
@@ -344,6 +354,11 @@ export async function migrate(): Promise<void> {
     `SELECT COUNT(*) n FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='position_monitors' AND column_name='trough_price'`,
   );
   if (!Number(monTrough?.n)) await exec(`ALTER TABLE position_monitors ADD COLUMN trough_price DECIMAL(18,4) NULL AFTER peak_price`).catch((e) => console.error('migrate mon trough_price:', e?.message));
+
+  // pending_exit_order_id: the working sell we must wait to fill/cancel before closing
+  // the monitor (Monday NVDA: monitor closed while Alpaca order was still `new`).
+  await addColumn('position_monitors', 'pending_exit_order_id', 'BIGINT NULL AFTER order_id');
+  await addColumn('position_monitors', 'exit_attempts', 'INT NOT NULL DEFAULT 0 AFTER pending_exit_order_id');
 
   // journal_meta: user tags / note / reviewed flag keyed to a closed monitor (the journal
   // itself is derived live from position_monitors — this only holds the human annotations).

@@ -1,9 +1,11 @@
 import { exec, getGlobalMode, audit, getTradingEnv, q } from './db.js';
 import type { Mode, TradingEnv } from './config.js';
 import { decideExecution, logRiskEvent, type OrderDraft } from './risk/engine.js';
+import { isShortDtePrivileged, syncPlayDteToContract } from './risk/dte.js';
 import { placeOrder as brokerPlace } from './brokers/index.js';
 import { execObserveBlock } from './risk/observe.js';
 import { releaseBuyNotional, reserveBuyNotional } from './risk/exposure.js';
+import { mapBrokerOrderStatus } from './risk/exitlifecycle.js';
 
 export type ExecResult = {
   orderId: number;
@@ -12,6 +14,7 @@ export type ExecResult = {
   reason: string;
   rh_order_id?: string;
   fillPrice?: number | null; // actual broker fill (when reported) — used to record real exit prices
+  filledQty?: number | null;
   risk: Awaited<ReturnType<typeof decideExecution>>['risk'];
 };
 
@@ -27,12 +30,23 @@ export async function resolveDraftContract(draft: OrderDraft, env: TradingEnv): 
     const { brokerKind } = await import('./brokers/index.js');
     // Live Robinhood → resolve against RH's OWN chain so the contract is guaranteed
     // tradable there (nearest listed strike/expiry). Alpaca/paper → Alpaca chain.
+    const pickOpts = {
+      targetDte: Number.isFinite(Number(draft._play?.dte)) ? Number(draft._play?.dte) : undefined,
+      allowShortDte: isShortDtePrivileged({
+        key: draft._play?.key,
+        name: draft._play?.name,
+        keys: [draft._play?.key, draft._play?.tag],
+      }),
+      name: draft._play?.name,
+      key: draft._play?.key,
+    };
     const c = brokerKind(env) === 'robinhood'
-      ? await resolveContractRH(draft.symbol, draft.option_type, draft.strike_target || 'atm', draft.expiration || 'monthly')
-      : await resolveContract(draft.symbol, draft.option_type, draft.strike_target || 'atm', draft.expiration || 'monthly');
+      ? await resolveContractRH(draft.symbol, draft.option_type, draft.strike_target || 'atm', draft.expiration || 'weekly', pickOpts)
+      : await resolveContract(draft.symbol, draft.option_type, draft.strike_target || 'atm', draft.expiration || 'weekly', pickOpts);
     if (c) {
       draft._contract = { occSymbol: c.occSymbol, type: c.type, strike: c.strike, expiration: c.expiration, mid: c.mid, readable: c.readable, instrumentId: c.instrumentId };
       if (!(Number(draft.est_price) > 0) && (c.mid || c.ask)) draft.est_price = Number(c.mid ?? c.ask);
+      syncPlayDteToContract(draft);
     }
   } catch { /* unresolved → risk vetoes the unpriceable buy / unmatched sell */ }
 }
@@ -160,12 +174,12 @@ export async function executeDraft(
       const res = await brokerPlace(draft, env);
       placeRaw = res.raw;
       rhOrderId = res.rhOrderId;
-      status = 'placed';
-      // Capture the actual fill if the broker reported one (Alpaca market orders fill
-      // immediately with filled_avg_price; RH fills async so this may be null at place time).
+      // Persist the BROKER status (new/accepted/filled). Never pretend a working
+      // `new` order is a fill — the monitor must wait for a terminal fill.
+      status = mapBrokerOrderStatus(placeRaw?.status) || 'placed';
       const reportedFill = Number(placeRaw?.filled_avg_price ?? placeRaw?.filled_price ?? placeRaw?.price);
-      if (Number.isFinite(reportedFill) && reportedFill > 0) fillPrice = reportedFill;
       const reportedQty = Number(placeRaw?.filled_qty);
+      if (status === 'filled' && Number.isFinite(reportedFill) && reportedFill > 0) fillPrice = reportedFill;
       await exec('UPDATE orders SET status=:s, rh_order_id=:rid, filled_price=:fp, filled_qty=COALESCE(:fq, filled_qty), raw=CAST(:raw AS JSON) WHERE id=:id', {
         s: status,
         rid: rhOrderId ?? null,
@@ -199,7 +213,12 @@ export async function executeDraft(
     risk: decision.risk.reason,
   });
 
-  return { orderId, action: decision.action, status, reason: decision.risk.reason, rh_order_id: rhOrderId, fillPrice, risk: decision.risk };
+  return {
+    orderId, action: decision.action, status, reason: decision.risk.reason,
+    rh_order_id: rhOrderId, fillPrice,
+    filledQty: Number(placeRaw?.filled_qty) > 0 ? Number(placeRaw.filled_qty) : null,
+    risk: decision.risk,
+  };
   } finally {
     if (reserveUsd > 0) releaseBuyNotional(env, draft.symbol, reserveUsd);
   }

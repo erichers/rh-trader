@@ -1,5 +1,6 @@
 import { config } from '../config.js';
 import { alpacaData } from './alpaca.js';
+import { pickListedExpiration, type PickExpirationOpts } from '../risk/dte.js';
 
 // Alpaca options data: real contracts + live quotes (indicative feed).
 // Greeks/IV are not in the free indicative feed; we surface price/bid/ask/OI.
@@ -161,17 +162,7 @@ export function occToContract(occ: string): { underlying: string; type: 'call' |
   return { underlying, type: cp === 'C' ? 'call' : 'put', strike: Number(strk) / 1000, expiration: `20${yy}-${mm}-${dd}` };
 }
 
-/** Pick a concrete expiration from the real available list for a horizon preference. */
-function pickExpiration2(exps: string[], pref: string): string {
-  const now = Date.now();
-  const dte = (e: string) => (Date.parse(e + 'T00:00:00Z') - now) / 864e5;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(pref)) return exps.find((e) => e >= pref) || exps[exps.length - 1];
-  const future = exps.filter((e) => dte(e) >= 2);
-  if (!future.length) return exps[exps.length - 1];
-  if (pref === 'monthly') return future.reduce((b, e) => (Math.abs(dte(e) - 32) < Math.abs(dte(b) - 32) ? e : b));
-  if (pref === 'leaps') return future.reduce((b, e) => (dte(e) > dte(b) ? e : b)); // furthest
-  return future[0]; // weekly: soonest standard
-}
+export type ResolveContractOpts = Pick<PickExpirationOpts, 'targetDte' | 'allowShortDte' | 'now' | 'name' | 'key'>;
 
 function targetPrice(spot: number, type: 'call' | 'put', strikeTarget: string): number {
   if (strikeTarget === 'atm' || !spot) return spot;
@@ -190,11 +181,20 @@ const readableExp = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateStr
  */
 export async function resolveContract(
   underlying: string, type: 'call' | 'put', strikeTarget: string, expirationPref: string,
+  opts: ResolveContractOpts = {},
 ): Promise<ResolvedContract | null> {
   underlying = underlying.toUpperCase();
   const exps = await expirations(underlying).catch(() => [] as string[]);
   if (!exps.length) return null;
-  const exp = pickExpiration2(exps, expirationPref || 'monthly');
+  const exp = pickListedExpiration(exps, {
+    pref: expirationPref || 'weekly',
+    targetDte: opts.targetDte,
+    allowShortDte: opts.allowShortDte === true,
+    now: opts.now,
+    name: opts.name,
+    key: opts.key,
+  });
+  if (!exp) return null;
   const spot = (await alpacaData.lastPrice(underlying, { allowStale: true }).catch(() => null)) ?? null; // strike selection only — a stale spot is fine here; the contract itself must still have a live two-sided quote to trade
   // Fail closed if we can't price the underlying — don't silently pick a median
   // strike and then mislabel it as the requested moneyness.
@@ -218,18 +218,29 @@ export async function resolveContract(
  *  the Alpaca resolver if RH can't resolve — callers still fail closed if neither works. */
 export async function resolveContractRH(
   underlying: string, type: 'call' | 'put', strikeTarget: string, expirationPref: string,
+  opts: ResolveContractOpts = {},
 ): Promise<ResolvedContract | null> {
   underlying = underlying.toUpperCase();
   const spot = (await alpacaData.lastPrice(underlying, { allowStale: true }).catch(() => null)) ?? null; // strike selection only — a stale spot is fine here; the contract itself must still have a live two-sided quote to trade
-  if (!spot) return resolveContract(underlying, type, strikeTarget, expirationPref);
+  if (!spot) return resolveContract(underlying, type, strikeTarget, expirationPref, opts);
   // Target expiration as an explicit date (QuickBots pass a YYYY-MM-DD DTE date).
   const targetExp = /^\d{4}-\d{2}-\d{2}$/.test(expirationPref) ? expirationPref : new Date(Date.now() + 5 * 864e5).toISOString().slice(0, 10);
   const targetStrike = targetPrice(spot, type, strikeTarget || 'atm');
   try {
     const { rh } = await import('../rh/mcpClient.js');
-    if (!rh.isConnected()) return resolveContract(underlying, type, strikeTarget, expirationPref);
+    if (!rh.isConnected()) return resolveContract(underlying, type, strikeTarget, expirationPref, opts);
     const hit = await rh.resolveTradableOption(underlying, type, targetStrike, targetExp);
-    if (!hit) return resolveContract(underlying, type, strikeTarget, expirationPref);
+    if (!hit) return resolveContract(underlying, type, strikeTarget, expirationPref, opts);
+    // RH nearest-listed can land on 0–1 DTE; refuse that unless this bot is privileged.
+    const picked = pickListedExpiration([hit.expiration], {
+      pref: hit.expiration,
+      targetDte: opts.targetDte,
+      allowShortDte: opts.allowShortDte === true,
+      now: opts.now,
+      name: opts.name,
+      key: opts.key,
+    });
+    if (!picked) return resolveContract(underlying, type, strikeTarget, expirationPref, opts);
     const occ = buildOcc(underlying, hit.expiration, type, hit.strike);
     const qq = await latestQuotes([occ]).catch(() => ({}));
     const mid = (qq as any)[occ]?.mid ?? null;
@@ -239,7 +250,7 @@ export async function resolveContractRH(
       readable: `${underlying} ${readableExp(hit.expiration)} $${hit.strike} ${type}`, instrumentId: hit.instrumentId,
     };
   } catch {
-    return resolveContract(underlying, type, strikeTarget, expirationPref);
+    return resolveContract(underlying, type, strikeTarget, expirationPref, opts);
   }
 }
 
