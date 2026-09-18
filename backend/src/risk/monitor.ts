@@ -1,7 +1,7 @@
 import { q, exec, audit, getTradingEnv, getExitPolicy } from '../db.js';
 import { raiseAlert } from '../alerts.js';
 import { effectiveHardStop, exitReason, overnightFlattenReason, swingExitBand } from './exitpolicy.js';
-import { isLeapsTrade, calendarDte } from './dte.js';
+import { isLeapsTrade, calendarDte, SHORT_DTE_RAILS } from './dte.js';
 import {
   exitPlacementOutcome,
   heldZeroDecision,
@@ -47,6 +47,14 @@ export async function createMonitor(draft: OrderDraft, orderId: number, entryPri
   if (!trail) trail = swing.trail;
   if (tp == null || !(tp >= 0)) tp = swing.tp;
   sl = effectiveHardStop(sl);
+  // Privileged 0–1 fills keep tight exits even if a wider band slipped onto the draft.
+  const expISO = ac === 'option' ? (occToContract(occ)?.expiration || draft._contract?.expiration || '') : '';
+  const entryDte = expISO ? calendarDte(expISO) : null;
+  if (entryDte != null && entryDte <= 1) {
+    sl = Math.min(sl, SHORT_DTE_RAILS.slMax);
+    if (!(tp >= SHORT_DTE_RAILS.tpMin) || tp > SHORT_DTE_RAILS.tpMax) tp = 10;
+    if (trail > SHORT_DTE_RAILS.trailMax) trail = SHORT_DTE_RAILS.trailMax;
+  }
   let entry = entryPrice;
   if (!(entry > 0)) entry = (ac === 'option' ? (await contractPrice(occ)) : (await alpacaPaper.lastPrice(draft.symbol, { allowStale: true }))) || 0;
   if (!(entry > 0)) {

@@ -2,6 +2,7 @@ import { q, exec, audit, getTradingEnv } from '../db.js';
 import type { Mode, TradingEnv } from '../config.js';
 import { snapshot } from '../market/indicators.js';
 import { dteToExpiration } from '../market/expirations.js';
+import { isLeapsTrade, isShortDtePrivileged } from '../risk/dte.js';
 import { analyzeSymbol, aiReady } from '../ai/claude.js';
 import { executeDraft } from '../execute.js';
 import type { OrderDraft } from '../risk/engine.js';
@@ -424,10 +425,32 @@ export async function evaluateBot(botRow: any): Promise<any> {
           // vetoing every order). Pass the spec; leave est_price for the resolved contract's mid.
           draft.option_type = (bot.action?.option_type === 'put' ? 'put' : 'call');
           draft.strike_target = bot.action?.strike_target || 'atm';
+          const key = String(bot.action?._strategy || bot.action?._key || '');
+          const privileged = isShortDtePrivileged({ key, name: bot.name, keys: [bot.action?._strategy, bot.action?._key] });
+          const leaps = isLeapsTrade({ expiration: bot.action?.expiration, name: bot.name, key });
+          const rawDte = Number(bot.action?._dte);
+          const targetDte = Number.isFinite(rawDte)
+            ? ((!privileged && rawDte < 2) ? 2 : rawDte)
+            : (bot.action?.expiration === 'monthly' ? 14 : 7);
           // Resolve DTE → expiration date at EVAL time (never bake a date at bot creation).
-          draft.expiration = Number.isFinite(Number(bot.action?._dte))
-            ? dteToExpiration(Number(bot.action._dte))
-            : (bot.action?.expiration || 'weekly');
+          // LEAPS keep their explicit far date. Everyone else gets a calendar target; the
+          // contract picker then snaps to a listed expiry in the allowed window (2–14, or
+          // 0–1 only if this bot is on the high-certainty allowlist).
+          draft.expiration = leaps && bot.action?.expiration
+            ? bot.action.expiration
+            : (Number.isFinite(rawDte) || !/^\d{4}-\d{2}-\d{2}$/.test(String(bot.action?.expiration || ''))
+              ? dteToExpiration(targetDte)
+              : bot.action.expiration);
+          draft._play = {
+            name: bot.name,
+            key,
+            dte: targetDte,
+            tp: Number(bot.risk?.take_profit_pct) || undefined,
+            sl: Number(bot.risk?.stop_loss_pct) || undefined,
+            trail: Number(bot.risk?.trailing_stop_pct) || undefined,
+            maxPositionUsd: Number(bot.risk?.max_position_usd) || undefined,
+            allow_0_1_dte: !!(bot.action?.allow_0_1_dte || bot.risk?.allow_0_1_dte || privileged),
+          };
           if (Number(bot.action?.est_price) > 0) draft.est_price = Number(bot.action.est_price);
         } else {
           draft.est_price = snap.last ?? bot.action?.est_price;

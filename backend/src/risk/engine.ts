@@ -2,7 +2,7 @@ import { config, HARD_BLOCKED_ASSET_CLASSES, isCryptoSymbol, isLiveEnv, type Mod
 import { q, exec, getKillSwitch, getSetting, setSetting, getTradingEnv, getRiskLimits } from '../db.js';
 import { evaluateSymbolCaps, openSymbolExposureUsd, reservedBuyNotional, splitInflightBuys, todayEt, type ExposureOrder } from './exposure.js';
 import { RISK_LAW, applyFullAutoSoftBypass, clampRiskLawDailyLossPct, clampRiskLawPositionUsd } from './law.js';
-import { optionEntryDteCheck } from './dte.js';
+import { optionEntryDteCheck, SHORT_DTE_RAILS } from './dte.js';
 
 /** Options trade in 100-share contracts; quoted premium is per share. */
 const CONTRACT_MULT = 100;
@@ -29,7 +29,7 @@ export type OrderDraft = {
   _contract?: { occSymbol: string; type: 'call' | 'put'; strike: number; expiration: string; mid?: number | null; readable?: string; instrumentId?: string };
   // QuickBot per-play overrides: DTE-scaled exits (monitor) + position cap (risk sizing).
   // `tag` is a stable ASCII contract identity (e.g. "call-7") used for same-day dedup.
-  _play?: { name?: string; tag?: string; dte?: number; tp?: number; sl?: number; trail?: number; maxPositionUsd?: number };
+  _play?: { name?: string; tag?: string; key?: string; dte?: number; tp?: number; sl?: number; trail?: number; maxPositionUsd?: number; allow_0_1_dte?: boolean };
   // Watch stubs. When true (or the loaded bot is observe-only), executeDraft must
   // not insert an order row. Re-checked from the bot row so a missing flag cannot bypass.
   _observe_only?: boolean;
@@ -94,8 +94,9 @@ export function resolveCaps(botRisk: any, play: OrderDraft['_play'] | undefined,
  *  Hard rails in EVERY mode (including full_auto): kill switch, no-crypto, asset
  *  allowlist, no-short / no-naked-write, daily-loss breaker (≤50%), per-ticket and
  *  same-symbol book cap (≤$10k), 25% concentration, and the 2–14 DTE entry window
- *  (never 0DTE/1DTE; LEAPS waived). full_auto may bypass only the orders/day
- *  throttle. Monday paper arms `full_auto`; those book rails still bind. */
+ *  (never 0DTE/1DTE except an explicit high-certainty allowlist with tight SL/TP;
+ *  LEAPS waived). full_auto may bypass only the orders/day throttle. Monday paper
+ *  arms `full_auto`; those book rails still bind. */
 export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode): Promise<RiskResult> {
   const checks: RiskResult['checks'] = {};
   const computed: Record<string, number> = {};
@@ -114,16 +115,20 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
   // concentration, daily-loss, orders/day) that REPLACE the global ones (hard blocks
   // like crypto/kill-switch/no-short still always apply).
   let botRisk: any = null;
+  let botAction: any = null;
+  let botName: string | null = null;
   if (draft.bot_id) {
     // env-scoped: a bot from another account can never relax THIS account's limits
     // (no match => the global, tighter limits stand — fail-closed).
-    const [bot] = await q<{ risk: any }>('SELECT risk FROM bots WHERE id=:id AND env=:env', { id: draft.bot_id, env });
+    const [bot] = await q<{ risk: any; action: any; name: string }>('SELECT risk, action, name FROM bots WHERE id=:id AND env=:env', { id: draft.bot_id, env });
     botRisk = bot?.risk ? (typeof bot.risk === 'string' ? safeParse(bot.risk) : bot.risk) : null;
+    botAction = bot?.action ? (typeof bot.action === 'string' ? safeParse(bot.action) : bot.action) : null;
+    botName = bot?.name || null;
   }
   const caps = resolveCaps(botRisk, draft._play, lim);
   const { maxConcentrationPct, maxOrdersPerDay, overrideActive } = caps;
   const maxDailyLossPct = clampRiskLawDailyLossPct(caps.maxDailyLossPct, caps.maxDailyLossPct);
-  const maxPositionUsd = clampRiskLawPositionUsd(caps.maxPositionUsd, RISK_LAW.maxTradeUsd);
+  let maxPositionUsd = clampRiskLawPositionUsd(caps.maxPositionUsd, RISK_LAW.maxTradeUsd);
   computed.override_active = overrideActive ? 1 : 0;
 
   // 1. Kill switch — blocks NEW exposure (buys) but NEVER a close-only SELL. Exits are
@@ -150,12 +155,24 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
     detail: allowed ? ac : `'${ac}' not in allowlist [${t.allowedAssetClasses.join(',')}]`,
   };
 
-  // 3b. Option entry DTE — never 0DTE/1DTE; non-LEAPS must be 2–14. Fail-closed
-  //     when the contract is unresolved so a weekly Friday cannot slip through.
-  const dteGate = optionEntryDteCheck(draft);
+  // 3b. Option entry DTE — never 0DTE/1DTE unless the bot is on the high-certainty
+  //     allowlist (tight SL/TP required). Unresolved contract fails closed.
+  //     Play.dte alone cannot pass — the concrete expiration must prove the window.
+  const dteHint = {
+    ...draft,
+    name: draft._play?.name || botName || undefined,
+    key: draft._play?.key || botAction?._strategy || botAction?._key || undefined,
+    allow_0_1_dte: draft._play?.allow_0_1_dte || botAction?.allow_0_1_dte || botRisk?.allow_0_1_dte,
+  };
+  const dteGate = optionEntryDteCheck(dteHint);
   checks.entry_dte = { pass: dteGate.ok, detail: dteGate.detail };
   if (dteGate.dte != null) computed.entry_dte = dteGate.dte;
   if (dteGate.leaps) computed.leaps = 1;
+  if (dteGate.privileged) computed.short_dte_privileged = 1;
+  // Privileged 0–1 tickets also get a hard size clamp (loose SL/TP already vetoed).
+  if (dteGate.privileged && dteGate.dte != null && dteGate.dte <= 1) {
+    maxPositionUsd = Math.min(maxPositionUsd, SHORT_DTE_RAILS.maxPositionUsd);
+  }
 
   // 4. Position size cap (USD). Options are ×100 (contract multiplier) so the
   //    cap actually applies to the real dollar cost, not per-share premium.

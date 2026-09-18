@@ -1,6 +1,7 @@
 import { exec, getGlobalMode, audit, getTradingEnv, q } from './db.js';
 import type { Mode, TradingEnv } from './config.js';
 import { decideExecution, logRiskEvent, type OrderDraft } from './risk/engine.js';
+import { isShortDtePrivileged, syncPlayDteToContract } from './risk/dte.js';
 import { placeOrder as brokerPlace } from './brokers/index.js';
 import { execObserveBlock } from './risk/observe.js';
 import { releaseBuyNotional, reserveBuyNotional } from './risk/exposure.js';
@@ -29,12 +30,23 @@ export async function resolveDraftContract(draft: OrderDraft, env: TradingEnv): 
     const { brokerKind } = await import('./brokers/index.js');
     // Live Robinhood → resolve against RH's OWN chain so the contract is guaranteed
     // tradable there (nearest listed strike/expiry). Alpaca/paper → Alpaca chain.
+    const pickOpts = {
+      targetDte: Number.isFinite(Number(draft._play?.dte)) ? Number(draft._play?.dte) : undefined,
+      allowShortDte: isShortDtePrivileged({
+        key: draft._play?.key,
+        name: draft._play?.name,
+        keys: [draft._play?.key, draft._play?.tag],
+      }),
+      name: draft._play?.name,
+      key: draft._play?.key,
+    };
     const c = brokerKind(env) === 'robinhood'
-      ? await resolveContractRH(draft.symbol, draft.option_type, draft.strike_target || 'atm', draft.expiration || 'monthly')
-      : await resolveContract(draft.symbol, draft.option_type, draft.strike_target || 'atm', draft.expiration || 'monthly');
+      ? await resolveContractRH(draft.symbol, draft.option_type, draft.strike_target || 'atm', draft.expiration || 'weekly', pickOpts)
+      : await resolveContract(draft.symbol, draft.option_type, draft.strike_target || 'atm', draft.expiration || 'weekly', pickOpts);
     if (c) {
       draft._contract = { occSymbol: c.occSymbol, type: c.type, strike: c.strike, expiration: c.expiration, mid: c.mid, readable: c.readable, instrumentId: c.instrumentId };
       if (!(Number(draft.est_price) > 0) && (c.mid || c.ask)) draft.est_price = Number(c.mid ?? c.ask);
+      syncPlayDteToContract(draft);
     }
   } catch { /* unresolved → risk vetoes the unpriceable buy / unmatched sell */ }
 }
