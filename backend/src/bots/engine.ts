@@ -1,15 +1,15 @@
 import { q, exec, audit, getTradingEnv } from '../db.js';
-import type { Mode, TradingEnv } from '../config.js';
+import { config, isCryptoSymbol, type Mode, type TradingEnv } from '../config.js';
 import { snapshot } from '../market/indicators.js';
 import { dteToExpiration } from '../market/expirations.js';
 import { isLeapsTrade, isShortDtePrivileged } from '../risk/dte.js';
 import { analyzeSymbol, aiReady } from '../ai/claude.js';
 import { executeDraft } from '../execute.js';
 import type { OrderDraft } from '../risk/engine.js';
-import { isCryptoSymbol } from '../config.js';
 import { refreshBars } from '../brokers/index.js';
 import { sizeDraft } from '../risk/sizing.js';
 import { isObserveOnlyBot, observeOnlySkipWhy } from '../risk/observe.js';
+import { allowlistSkipReason, assignInferredAssetClass, looksLikeOptionPlay } from '../risk/optionPrice.js';
 
 export type Bot = {
   id: number;
@@ -404,11 +404,16 @@ export async function evaluateBot(botRow: any): Promise<any> {
           results.push({ symbol, fired: true, checks: ev.checks, why: `${ev.why} ${skip}` });
           continue;
         }
-        const isOption = (bot.asset_class || 'equity').toLowerCase() === 'option';
+        const isOption = looksLikeOptionPlay({
+          asset_class: bot.asset_class,
+          option_type: bot.action?.option_type,
+          strike_target: bot.action?.strike_target,
+          expiration: bot.action?.expiration,
+        });
         const draft: OrderDraft = {
           env: bot.env,
           symbol,
-          asset_class: bot.asset_class || 'equity',
+          asset_class: isOption ? 'option' : (bot.asset_class || 'equity'),
           side,
           qty: Number(bot.action?.qty ?? 1),
           order_type: bot.action?.order_type || 'market',
@@ -454,6 +459,13 @@ export async function evaluateBot(botRow: any): Promise<any> {
           if (Number(bot.action?.est_price) > 0) draft.est_price = Number(bot.action.est_price);
         } else {
           draft.est_price = snap.last ?? bot.action?.est_price;
+        }
+        assignInferredAssetClass(draft);
+        const classSkip = allowlistSkipReason(draft.asset_class || 'equity', config.trading.allowedAssetClasses);
+        if (classSkip) {
+          // Do not insert a veto row for a class the desk does not trade.
+          results.push({ symbol, fired: true, skipped: classSkip, checks: ev.checks, why: `${ev.why} ${classSkip} — not submitted.` });
+          continue;
         }
         // SIZING: turn the effective dollar amount per trade (bot override, else the global
         // trade default) into whole shares/contracts. A bot that deliberately pins its own

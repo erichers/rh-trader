@@ -1,6 +1,7 @@
 import { getRiskLimits, getTradeDefaults, type TradeDefaults } from '../db.js';
 import { resolveCaps, type OrderDraft } from './engine.js';
 import type { TradingEnv } from '../config.js';
+import { assignInferredAssetClass } from './optionPrice.js';
 import { HARD_STOP_PCT } from './exitpolicy.js';
 
 // ONE place that answers "how much money goes into this trade, and where does it exit?".
@@ -144,6 +145,7 @@ export async function sizeDraft(
     return { ok: true, qty: draft.qty, notional: 0, unit_cost: 0, basis: 'unsized', reason: 'no amount per trade set — sizing skipped', effective };
   }
   const caps = resolveCaps(opts.risk, draft._play, await getRiskLimits());
+  assignInferredAssetClass(draft);
   const ac = (draft.asset_class || 'equity').toLowerCase();
   if (ac === 'option' && !(Number(draft.est_price) > 0)) {
     const { resolveDraftContract } = await import('../execute.js');

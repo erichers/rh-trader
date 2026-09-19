@@ -147,7 +147,9 @@ export async function agentTradeTurn(userPrompt: string, opts: { allowOpenNew?: 
       if (name === 'propose_order') {
         const draft: OrderDraft = {
           env: envAtStart,
-          symbol: args.symbol, asset_class: args.asset_class || 'equity', side: args.side,
+          symbol: args.symbol,
+          asset_class: args.option_type ? 'option' : (args.asset_class || 'equity'),
+          side: args.side,
           qty: args.qty, order_type: args.order_type || 'market', limit_price: args.limit_price,
           est_price: args.est_price, option_type: args.option_type, source: 'ai',
         };

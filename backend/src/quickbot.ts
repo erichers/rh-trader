@@ -8,8 +8,9 @@ import { q, exec, getTradingEnv, audit } from './db.js';
 import { executeDraft } from './execute.js';
 import { sizeDraft } from './risk/sizing.js';
 import type { OrderDraft } from './risk/engine.js';
-import type { TradingEnv } from './config.js';
+import { config, type TradingEnv } from './config.js';
 import { isObserveOnlyBot, observeOnlySkipWhy } from './risk/observe.js';
+import { allowlistSkipReason } from './risk/optionPrice.js';
 
 /**
  * QUICKBOTS — single-underlying (or tight-basket) short-DTE options bots that trade
@@ -617,6 +618,8 @@ export async function evaluateQuickbot(botRow: any): Promise<any[]> {
           // SIZING: the play's band qty is a floor of 1 contract, not a deliberate pin — so the
           // effective amount per trade (bot override, else the global trade default) decides how
           // many contracts, capped by the band's own max_position_usd inside sizeDraft.
+          const classSkip = allowlistSkipReason('option', config.trading.allowedAssetClasses);
+          if (classSkip) { fireSummaries.push({ play: play.name, skipped: `${classSkip} — not submitted` }); continue; }
           const sized = await sizeDraft(draft, { risk: botRow.risk, env: (botRow.env || env) as TradingEnv, pinnedQty: null });
           if (!sized.ok) { fireSummaries.push({ play: play.name, skipped: `not sized: ${sized.reason}` }); continue; }
           const ex = await executeDraft(draft, { modeOverride: botRow.mode, rationale: `quickbot:${botRow.name} ${play.name} (${play.direction} ${play.dte}DTE)` });

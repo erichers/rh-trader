@@ -1,6 +1,13 @@
 import { config } from '../config.js';
 import { alpacaData } from './alpaca.js';
 import { pickListedExpiration, type PickExpirationOpts } from '../risk/dte.js';
+import {
+  lookupByOcc,
+  optionPremium,
+  pickNearestContract,
+  quoteSides,
+  twoSidedMid,
+} from '../risk/optionPrice.js';
 
 // Alpaca options data: real contracts + live quotes (indicative feed).
 // Greeks/IV are not in the free indicative feed; we surface price/bid/ask/OI.
@@ -87,10 +94,11 @@ export async function latestQuotes(symbols: string[]): Promise<Record<string, { 
     try {
       const res = await get(u);
       for (const [sym, q] of Object.entries<any>(res.quotes || {})) {
-        const bid = Number(q.bp) || 0, ask = Number(q.ap) || 0;
+        const sides = quoteSides(q);
+        const bid = sides.bid ?? 0, ask = sides.ask ?? 0;
         // Only a true two-sided market yields a real mid; a one-sided quote is not
         // a tradable mid, so leave mid null rather than overstate it.
-        out[sym] = { bid, ask, mid: bid > 0 && ask > 0 ? Math.round(((bid + ask) / 2) * 100) / 100 : (null as any) };
+        out[sym] = { bid, ask, mid: twoSidedMid(sides.bid, sides.ask) as any };
       }
     } catch { /* skip batch */ }
   }
@@ -103,23 +111,32 @@ export async function getChain(underlying: string, expiration: string): Promise<
     listContracts(underlying, { expiration, limit: 1000 }),
     snapshots(underlying, expiration).catch(() => ({} as Record<string, any>)),
   ]);
-  // Fall back to plain quotes for any contract the snapshot feed didn't cover.
-  const missing = contracts.filter((c) => !snaps[c.symbol]).map((c) => c.symbol);
-  const quotes = missing.length ? await latestQuotes(missing).catch(() => ({})) : {};
+  // Snapshot-exists ≠ quoted. Indicative snapshots often have greeks/IV and an
+  // empty latestQuote. Fall through to /quotes/latest unless we already have a
+  // mark (bid/ask/last). OCC keys are looked up with and without space-padding.
+  const needQuote = contracts.filter((c) => {
+    const s = lookupByOcc(snaps, c.symbol);
+    if (!s) return true;
+    const sides = quoteSides(s);
+    return sides.bid == null && sides.ask == null && sides.last == null;
+  }).map((c) => c.symbol);
+  const quotes = needQuote.length ? await latestQuotes(needQuote).catch(() => ({})) : {};
   for (const c of contracts) {
-    const s = snaps[c.symbol];
+    const s = lookupByOcc(snaps, c.symbol);
+    const qq = lookupByOcc(quotes as Record<string, any>, c.symbol);
+    const fromSnap = s ? quoteSides(s) : { bid: null, ask: null, last: null, close: null };
+    const bid = fromSnap.bid ?? qq?.bid ?? null;
+    const ask = fromSnap.ask ?? qq?.ask ?? null;
+    c.bid = bid;
+    c.ask = ask;
+    c.mid = twoSidedMid(bid, ask);
+    c.last = fromSnap.last ?? (s?.latestTrade?.p != null ? Number(s.latestTrade.p) : null);
+    if (c.last != null && !(c.last > 0)) c.last = null;
+    if (fromSnap.close != null) c.close_price = fromSnap.close;
     if (s) {
-      const bp = Number(s.latestQuote?.bp) || 0, ap = Number(s.latestQuote?.ap) || 0;
-      c.bid = bp || null; c.ask = ap || null;
-      // Real mid only from a two-sided market; one-sided → null (don't overstate).
-      c.mid = bp > 0 && ap > 0 ? Math.round(((bp + ap) / 2) * 100) / 100 : null;
-      c.last = s.latestTrade?.p != null ? Number(s.latestTrade.p) : null;
       c.iv = s.impliedVolatility != null ? Number(s.impliedVolatility) : null;
       const g = s.greeks || {};
       c.delta = num(g.delta); c.gamma = num(g.gamma); c.theta = num(g.theta); c.vega = num(g.vega); c.rho = num(g.rho);
-    } else if ((quotes as any)[c.symbol]) {
-      const qq = (quotes as any)[c.symbol];
-      c.bid = qq.bid; c.ask = qq.ask; c.mid = qq.mid;
     }
   }
   const calls = contracts.filter((c) => c.type === 'call').sort((a, b) => a.strike - b.strike);
@@ -133,16 +150,18 @@ function num(v: any): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Real current price (mid, else close) for a single contract. */
+/** Real current price (mid → ask → last → close) for a single contract. */
 export async function contractPrice(symbol: string): Promise<number | null> {
   const q = await latestQuotes([symbol]);
-  if (q[symbol]?.mid) return q[symbol].mid;
-  return null;
+  const hit = lookupByOcc(q, symbol) || q[symbol];
+  if (!hit) return null;
+  return optionPremium({ mid: hit.mid, bid: hit.bid, ask: hit.ask }, 'buy').price;
 }
 
 export type ResolvedContract = {
   occSymbol: string; type: 'call' | 'put'; strike: number; expiration: string;
   bid: number | null; ask: number | null; mid: number | null; spot: number | null;
+  last?: number | null; close?: number | null;
   readable: string; instrumentId?: string;
 };
 
@@ -203,10 +222,13 @@ export async function resolveContract(
   const list = type === 'call' ? calls : puts;
   if (!list.length) return null;
   const tgt = targetPrice(spot, type, strikeTarget || 'atm');
-  const c = list.reduce((best, x) => (Math.abs(x.strike - tgt) < Math.abs(best.strike - tgt) ? x : best));
+  const fieldsOf = (x: OptContract) => ({ mid: x.mid, bid: x.bid, ask: x.ask, last: x.last, close: x.close_price });
+  const c = pickNearestContract(list, tgt, fieldsOf, 'buy');
+  if (!c) return null;
   return {
     occSymbol: c.symbol, type, strike: c.strike, expiration: exp,
     bid: c.bid ?? null, ask: c.ask ?? null, mid: c.mid ?? null, spot,
+    last: c.last ?? null, close: c.close_price ?? null,
     readable: `${underlying} ${readableExp(exp)} $${c.strike} ${type}`,
   };
 }
@@ -243,10 +265,11 @@ export async function resolveContractRH(
     if (!picked) return resolveContract(underlying, type, strikeTarget, expirationPref, opts);
     const occ = buildOcc(underlying, hit.expiration, type, hit.strike);
     const qq = await latestQuotes([occ]).catch(() => ({}));
-    const mid = (qq as any)[occ]?.mid ?? null;
+    const qhit = lookupByOcc(qq as Record<string, any>, occ) || (qq as any)[occ];
     return {
       occSymbol: occ, type, strike: hit.strike, expiration: hit.expiration,
-      bid: (qq as any)[occ]?.bid ?? null, ask: (qq as any)[occ]?.ask ?? null, mid, spot,
+      bid: qhit?.bid ?? null, ask: qhit?.ask ?? null, mid: qhit?.mid ?? null, spot,
+      last: qhit?.last ?? null, close: qhit?.close ?? null,
       readable: `${underlying} ${readableExp(hit.expiration)} $${hit.strike} ${type}`, instrumentId: hit.instrumentId,
     };
   } catch {

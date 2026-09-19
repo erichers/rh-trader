@@ -3,9 +3,7 @@ import { q, exec, getKillSwitch, getSetting, setSetting, getTradingEnv, getRiskL
 import { evaluateSymbolCaps, openSymbolExposureUsd, reservedBuyNotional, splitInflightBuys, todayEt, type ExposureOrder } from './exposure.js';
 import { RISK_LAW, applyFullAutoSoftBypass, clampRiskLawDailyLossPct, clampRiskLawPositionUsd } from './law.js';
 import { optionEntryDteCheck, SHORT_DTE_RAILS } from './dte.js';
-
-/** Options trade in 100-share contracts; quoted premium is per share. */
-const CONTRACT_MULT = 100;
+import { assignInferredAssetClass, draftNotionalUsd } from './optionPrice.js';
 
 export type OrderDraft = {
   symbol: string;
@@ -26,7 +24,12 @@ export type OrderDraft = {
   // A concrete resolved contract (set by executeDraft before risk so sizing is real).
   // `instrumentId` (when present) is the broker's native contract id (Robinhood) so
   // placement uses the exact resolved contract without re-looking it up.
-  _contract?: { occSymbol: string; type: 'call' | 'put'; strike: number; expiration: string; mid?: number | null; readable?: string; instrumentId?: string };
+  _contract?: {
+    occSymbol: string; type: 'call' | 'put'; strike: number; expiration: string;
+    mid?: number | null; ask?: number | null; bid?: number | null;
+    last?: number | null; close?: number | null;
+    readable?: string; instrumentId?: string;
+  };
   // QuickBot per-play overrides: DTE-scaled exits (monitor) + position cap (risk sizing).
   // `tag` is a stable ASCII contract identity (e.g. "call-7") used for same-day dedup.
   _play?: { name?: string; tag?: string; key?: string; dte?: number; tp?: number; sl?: number; trail?: number; maxPositionUsd?: number; allow_0_1_dte?: boolean };
@@ -102,9 +105,9 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
   const computed: Record<string, number> = {};
   const t = config.trading;
   const lim = await getRiskLimits(); // adjustable from the UI (overrides .env defaults)
+  assignInferredAssetClass(draft);
   const ac = (draft.asset_class || 'equity').toLowerCase();
   if (!env) env = await getTradingEnv();
-  const mult = ac === 'option' ? CONTRACT_MULT : 1; // option premium is per-share; contracts are ×100
   // full_auto is recorded for audit. Soft bypass is orders/day only (see applyFullAutoSoftBypass).
   const fullAuto = mode === 'full_auto';
   computed.full_auto = fullAuto ? 1 : 0;
@@ -176,12 +179,13 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
 
   // 4. Position size cap (USD). Options are ×100 (contract multiplier) so the
   //    cap actually applies to the real dollar cost, not per-share premium.
-  const price = draft.est_price ?? draft.limit_price ?? 0;
-  const notional = price > 0 ? price * draft.qty * mult : 0;
+  //    Premium comes from resolveDraftContract (mid → ask → last → close).
+  const sized = draftNotionalUsd(draft);
+  const notional = sized.notional;
   computed.notional_usd = Math.round(notional * 100) / 100;
   // An option BUY that couldn't be priced (no contract / no quote) must FAIL the size
   // cap, not pass via notional===0 — otherwise an unpriceable order slips through.
-  const unpriceableOptionBuy = ac === 'option' && draft.side === 'buy' && !(notional > 0);
+  const unpriceableOptionBuy = sized.unpriceableOptionBuy;
   const sizeWithinCap = !unpriceableOptionBuy && (draft.side === 'sell' || notional === 0 || notional <= maxPositionUsd);
   computed.max_position_usd_limit = maxPositionUsd;
 
@@ -200,7 +204,7 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
   let positionDetail = sizeWithinCap
     ? `${computed.notional_usd} <= ${maxPositionUsd}`
     : unpriceableOptionBuy
-      ? 'option buy not priceable — cannot size'
+      ? (sized.reason || 'option buy not priceable — cannot size')
       : `${computed.notional_usd} > ${maxPositionUsd}`;
 
   if (isLiveEnv(env) && draft.side === 'buy' && !(equity > 0)) {
@@ -242,7 +246,7 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
     computed.reserved_usd = Math.round(reservedUsd * 100) / 100;
     aggregatePositionOk = !unpriceableOptionBuy && caps.ticketOk && caps.positionOk;
     positionDetail = unpriceableOptionBuy
-      ? 'option buy not priceable — cannot size'
+      ? (sized.reason || 'option buy not priceable — cannot size')
       : `${caps.ticketDetail}; ${caps.positionDetail}${overrideActive ? ' (bot override)' : ''}`;
     if (equity > 0) {
       computed.concentration_pct = caps.concentrationPct ?? 0;

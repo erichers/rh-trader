@@ -2,6 +2,7 @@ import { exec, getGlobalMode, audit, getTradingEnv, q } from './db.js';
 import type { Mode, TradingEnv } from './config.js';
 import { decideExecution, logRiskEvent, type OrderDraft } from './risk/engine.js';
 import { isShortDtePrivileged, syncPlayDteToContract } from './risk/dte.js';
+import { applyResolvedPremium, assignInferredAssetClass } from './risk/optionPrice.js';
 import { placeOrder as brokerPlace } from './brokers/index.js';
 import { execObserveBlock } from './risk/observe.js';
 import { releaseBuyNotional, reserveBuyNotional } from './risk/exposure.js';
@@ -24,7 +25,22 @@ export type ExecResult = {
  *  carries `_contract` is left alone, so resolving early (to size a bot order off the real
  *  premium) never causes a second lookup or a different contract at execution time. */
 export async function resolveDraftContract(draft: OrderDraft, env: TradingEnv): Promise<void> {
-  if ((draft.asset_class || '').toLowerCase() !== 'option' || !draft.option_type || draft._contract) return;
+  // Option-shaped plays (option_type / _play.dte / _contract) must not stay
+  // labeled equity — that was the Friday allowlist spray (`equity` vs [option]).
+  assignInferredAssetClass(draft);
+  if ((draft.asset_class || '').toLowerCase() !== 'option' || !draft.option_type) return;
+  // A contract already on the draft still needs a premium. Early sizeDraft
+  // used to set `_contract` and skip the second pass, leaving est_price empty.
+  if (draft._contract) {
+    applyResolvedPremium(draft, {
+      mid: draft._contract.mid,
+      ask: draft._contract.ask,
+      bid: draft._contract.bid,
+      last: draft._contract.last,
+      close: draft._contract.close,
+    });
+    return;
+  }
   try {
     const { resolveContract, resolveContractRH } = await import('./brokers/options.js');
     const { brokerKind } = await import('./brokers/index.js');
@@ -44,8 +60,12 @@ export async function resolveDraftContract(draft: OrderDraft, env: TradingEnv): 
       ? await resolveContractRH(draft.symbol, draft.option_type, draft.strike_target || 'atm', draft.expiration || 'weekly', pickOpts)
       : await resolveContract(draft.symbol, draft.option_type, draft.strike_target || 'atm', draft.expiration || 'weekly', pickOpts);
     if (c) {
-      draft._contract = { occSymbol: c.occSymbol, type: c.type, strike: c.strike, expiration: c.expiration, mid: c.mid, readable: c.readable, instrumentId: c.instrumentId };
-      if (!(Number(draft.est_price) > 0) && (c.mid || c.ask)) draft.est_price = Number(c.mid ?? c.ask);
+      draft._contract = {
+        occSymbol: c.occSymbol, type: c.type, strike: c.strike, expiration: c.expiration,
+        mid: c.mid, ask: c.ask, bid: c.bid, last: c.last, close: c.close,
+        readable: c.readable, instrumentId: c.instrumentId,
+      };
+      applyResolvedPremium(draft, { mid: c.mid, ask: c.ask, bid: c.bid, last: c.last, close: c.close });
       syncPlayDteToContract(draft);
     }
   } catch { /* unresolved → risk vetoes the unpriceable buy / unmatched sell */ }
