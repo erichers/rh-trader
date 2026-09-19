@@ -9,7 +9,7 @@ import type { OrderDraft } from '../risk/engine.js';
 import { refreshBars } from '../brokers/index.js';
 import { sizeDraft } from '../risk/sizing.js';
 import { isObserveOnlyBot, observeOnlySkipWhy } from '../risk/observe.js';
-import { allowlistSkipReason, assignInferredAssetClass, looksLikeOptionPlay } from '../risk/optionPrice.js';
+import { allowlistSkipReason, assignInferredAssetClass, botClassSkipReason, looksLikeOptionPlay } from '../risk/optionPrice.js';
 
 export type Bot = {
   id: number;
@@ -343,6 +343,16 @@ export async function evaluateBot(botRow: any): Promise<any> {
   }
   const bot = parseBot(botRow);
   const results: any[] = [];
+  // Fri 8028140: equity ORB on an option-only desk. Stop emission here — do not
+  // convert to a made-up option, and do not open equity live / insert a veto row.
+  const classSkip = botClassSkipReason(bot, config.trading.allowedAssetClasses);
+  if (classSkip) {
+    const skipped = [{ skipped: classSkip, why: `${classSkip} — not submitted.` }];
+    await exec('UPDATE bots SET last_evaluated_at=NOW(), last_result=CAST(:r AS JSON) WHERE id=:id AND env=:env', {
+      r: JSON.stringify(skipped), id: bot.id, env: bot.env,
+    });
+    return skipped;
+  }
   for (const symbolRaw of bot.symbols) {
     const symbol = String(symbolRaw).toUpperCase();
     if (isCryptoSymbol(symbol)) {

@@ -74,6 +74,14 @@ export function twoSidedMid(bid: number | null, ask: number | null): number | nu
   return null;
 }
 
+/** Same moneyness math resolveContract uses. ITM call = 5% below spot, not "no OCC". */
+export function strikeTargetPrice(spot: number, type: 'call' | 'put', strikeTarget: string): number {
+  if (strikeTarget === 'atm' || !spot) return spot;
+  const otm = strikeTarget === 'otm';
+  const up = (type === 'call') === otm;
+  return up ? spot * 1.05 : spot * 0.95;
+}
+
 /**
  * Sizing waterfall for one contract. Buys prefer mid → ask → last → close.
  * A one-sided bid is not a buyable offer. Missing everything fails closed.
@@ -154,9 +162,10 @@ export function lookupByOcc<T>(map: Record<string, T> | null | undefined, symbol
 export type StrikePick<T extends { strike: number }> = T & OptionQuoteFields;
 
 /**
- * Nearest listed strike to the moneyness target. Prefer a contract we can
- * *place* (mid/ask), then one we can *size* (last/close), else the bare nearest
- * so the caller can fail closed with a concrete OCC.
+ * Nearest listed strike to the moneyness target that we can *size*
+ * (mid/ask/last/close). Do not abandon an ITM LEAPS that has a last/close
+ * just because ATM has an ask. If nothing on the expiry is marked, return
+ * the bare nearest so the caller can fail closed with a concrete OCC.
  */
 export function pickNearestContract<T extends { strike: number }>(
   list: T[],
@@ -169,9 +178,8 @@ export function pickNearestContract<T extends { strike: number }>(
     const prem = optionPremium(fieldsOf(c), side);
     return { c, prem, dist: Math.abs(Number(c.strike) - targetStrike) };
   });
-  const placeable = scored.filter((x) => x.prem.placeable);
   const sizeable = scored.filter((x) => x.prem.price != null);
-  const pool = placeable.length ? placeable : (sizeable.length ? sizeable : scored);
+  const pool = sizeable.length ? sizeable : scored;
   return pool.reduce((best, x) => {
     if (x.dist < best.dist) return x;
     if (x.dist === best.dist && x.prem.placeable && !best.prem.placeable) return x;
@@ -214,6 +222,33 @@ export function allowlistSkipReason(assetClass: string, allowed: string[]): stri
   const ac = (assetClass || 'equity').toLowerCase();
   if (allowed.includes(ac)) return null;
   return `'${ac}' not in allowlist [${allowed.join(',')}]`;
+}
+
+function parseMaybeJson(v: any): any {
+  if (v == null) return null;
+  if (typeof v === 'object') return v;
+  if (typeof v === 'string') { try { return JSON.parse(v); } catch { return null; } }
+  return null;
+}
+
+/**
+ * Should this bot emit an order on this desk? Equity ORB (Fri order 8028140,
+ * bot 9) is a real equity template — we STOP emission on an option-only
+ * allowlist rather than convert it to a made-up option or open equity live.
+ * Option-shaped bots (LEAPS bot 31 / order 8028142) are not skipped here.
+ */
+export function botClassSkipReason(
+  bot: { asset_class?: string | null; action?: any },
+  allowed: string[],
+): string | null {
+  const action = parseMaybeJson(bot.action) || {};
+  const ac = inferAssetClass({
+    asset_class: bot.asset_class,
+    option_type: action.option_type,
+    strike_target: action.strike_target,
+    expiration: action.expiration,
+  });
+  return allowlistSkipReason(ac, allowed);
 }
 
 export type DraftNotional = {

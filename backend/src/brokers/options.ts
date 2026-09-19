@@ -6,6 +6,7 @@ import {
   optionPremium,
   pickNearestContract,
   quoteSides,
+  strikeTargetPrice,
   twoSidedMid,
 } from '../risk/optionPrice.js';
 
@@ -183,13 +184,7 @@ export function occToContract(occ: string): { underlying: string; type: 'call' |
 
 export type ResolveContractOpts = Pick<PickExpirationOpts, 'targetDte' | 'allowShortDte' | 'now' | 'name' | 'key'>;
 
-function targetPrice(spot: number, type: 'call' | 'put', strikeTarget: string): number {
-  if (strikeTarget === 'atm' || !spot) return spot;
-  const otm = strikeTarget === 'otm';
-  // OTM call = above spot, OTM put = below; ITM is the inverse.
-  const up = (type === 'call') === otm; // call+otm→up, put+otm→down, call+itm→down, put+itm→up
-  return up ? spot * 1.05 : spot * 0.95;
-}
+const targetPrice = strikeTargetPrice;
 
 const readableExp = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
