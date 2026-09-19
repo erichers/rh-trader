@@ -3,6 +3,7 @@ import { alpacaData } from './alpaca.js';
 import { pickListedExpiration, type PickExpirationOpts } from '../risk/dte.js';
 import {
   lookupByOcc,
+  mergeQuoteFields,
   optionPremium,
   pickNearestContract,
   quoteSides,
@@ -86,9 +87,17 @@ export async function expirations(underlying: string): Promise<string[]> {
   return [...new Set(cs.map((c) => c.expiration))].sort();
 }
 
-/** Latest quotes (bid/ask) for a batch of OCC symbols. */
-export async function latestQuotes(symbols: string[]): Promise<Record<string, { bid: number; ask: number; mid: number }>> {
-  const out: Record<string, { bid: number; ask: number; mid: number }> = {};
+export type LatestQuote = {
+  bid: number | null;
+  ask: number | null;
+  mid: number | null;
+  last: number | null;
+  close: number | null;
+};
+
+/** Latest quotes for a batch of OCC symbols. Missing sides stay null (not 0). */
+export async function latestQuotes(symbols: string[]): Promise<Record<string, LatestQuote>> {
+  const out: Record<string, LatestQuote> = {};
   for (let i = 0; i < symbols.length; i += 100) {
     const batch = symbols.slice(i, i + 100);
     const u = `${DATA()}/options/quotes/latest?symbols=${encodeURIComponent(batch.join(','))}&feed=indicative`;
@@ -96,10 +105,13 @@ export async function latestQuotes(symbols: string[]): Promise<Record<string, { 
       const res = await get(u);
       for (const [sym, q] of Object.entries<any>(res.quotes || {})) {
         const sides = quoteSides(q);
-        const bid = sides.bid ?? 0, ask = sides.ask ?? 0;
-        // Only a true two-sided market yields a real mid; a one-sided quote is not
-        // a tradable mid, so leave mid null rather than overstate it.
-        out[sym] = { bid, ask, mid: twoSidedMid(sides.bid, sides.ask) as any };
+        out[sym] = {
+          bid: sides.bid,
+          ask: sides.ask,
+          mid: twoSidedMid(sides.bid, sides.ask),
+          last: sides.last,
+          close: sides.close,
+        };
       }
     } catch { /* skip batch */ }
   }
@@ -125,15 +137,12 @@ export async function getChain(underlying: string, expiration: string): Promise<
   for (const c of contracts) {
     const s = lookupByOcc(snaps, c.symbol);
     const qq = lookupByOcc(quotes as Record<string, any>, c.symbol);
-    const fromSnap = s ? quoteSides(s) : { bid: null, ask: null, last: null, close: null };
-    const bid = fromSnap.bid ?? qq?.bid ?? null;
-    const ask = fromSnap.ask ?? qq?.ask ?? null;
-    c.bid = bid;
-    c.ask = ask;
-    c.mid = twoSidedMid(bid, ask);
-    c.last = fromSnap.last ?? (s?.latestTrade?.p != null ? Number(s.latestTrade.p) : null);
-    if (c.last != null && !(c.last > 0)) c.last = null;
-    if (fromSnap.close != null) c.close_price = fromSnap.close;
+    const marks = mergeQuoteFields(s ? quoteSides(s) : null, qq);
+    c.bid = marks.bid ?? null;
+    c.ask = marks.ask ?? null;
+    c.mid = marks.mid ?? twoSidedMid(c.bid, c.ask);
+    c.last = marks.last ?? null;
+    if (marks.close != null) c.close_price = marks.close;
     if (s) {
       c.iv = s.impliedVolatility != null ? Number(s.impliedVolatility) : null;
       const g = s.greeks || {};
@@ -156,7 +165,7 @@ export async function contractPrice(symbol: string): Promise<number | null> {
   const q = await latestQuotes([symbol]);
   const hit = lookupByOcc(q, symbol) || q[symbol];
   if (!hit) return null;
-  return optionPremium({ mid: hit.mid, bid: hit.bid, ask: hit.ask }, 'buy').price;
+  return optionPremium({ mid: hit.mid, bid: hit.bid, ask: hit.ask, last: hit.last, close: hit.close }, 'buy').price;
 }
 
 export type ResolvedContract = {

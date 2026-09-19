@@ -9,6 +9,7 @@ import {
   inferAssetClass,
   lookupByOcc,
   looksLikeOptionPlay,
+  mergeQuoteFields,
   occLookupKeys,
   optionPremium,
   pickNearestContract,
@@ -88,6 +89,22 @@ describe('quoteSides + OCC lookup (Alpaca snapshot / contracts mismatch)', () =>
     assert.equal(b.ask, 0.6);
     assert.equal(b.close, 0.55);
     assert.equal(twoSidedMid(1, 2), 1.5);
+    // Fox path: latestQuotes used to store a missing bid as 0, then getChain
+    // wrote mid = (0 + ask) / 2. That is not a two-sided market.
+    assert.equal(twoSidedMid(0, 3.1), null);
+    assert.equal(twoSidedMid(null, 3.1), null);
+  });
+
+  it('merges snapshot + quotes/latest without inventing a mid from a zero bid', () => {
+    const snap = quoteSides({ latestQuote: {}, latestTrade: {}, greeks: { delta: 0.8 } });
+    const fromQuotes = { bid: 0, ask: 3.1, last: 48.2, close: 47.9 };
+    const marks = mergeQuoteFields(snap, fromQuotes);
+    assert.equal(marks.bid, undefined);
+    assert.equal(marks.ask, 3.1);
+    assert.equal(marks.last, 48.2);
+    const prem = optionPremium(marks, 'buy');
+    assert.equal(prem.source, 'ask');
+    assert.equal(prem.price, 3.1);
   });
 
   it('matches space-padded OCC keys to compact contract symbols', () => {
@@ -268,6 +285,19 @@ describe('Fri Sep 18 paper replay (orders 8028142 + 8028140)', () => {
     ];
     const hit = pickNearestContract(chain, tgt, (c) => ({ last: c.last, ask: c.ask, close: c.close }), 'buy');
     assert.equal(hit?.symbol, 'QQQ270319C00685000'); // nearest *priceable* to 5% ITM
+  });
+
+  it('8028142: getChain-style merge (empty snap quote + last on quotes/latest) sizes', () => {
+    // resolveDraftContract → resolveContract → getChain on Fri: snapshot key
+    // existed (greeks) so quotes/latest was skipped; last lived on latestTrade.
+    // Same notional when last arrives from the quotes fallback instead.
+    const snap = quoteSides({ impliedVolatility: 0.22, greeks: { delta: 0.81 }, latestQuote: {} });
+    const marks = mergeQuoteFields(snap, { last: 48.2, close: 47.9 });
+    const draft = { ...FRI_LEAPS_8028142 };
+    applyResolvedPremium(draft, marks);
+    const n = draftNotionalUsd(draft);
+    assert.equal(n.unpriceableOptionBuy, false);
+    assert.equal(n.notional, 4820);
   });
 
   it('8028142: last/close on a far ITM contract is enough to size under the $10k cap', () => {

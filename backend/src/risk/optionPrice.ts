@@ -70,8 +70,29 @@ export function quoteSides(raw: any): { bid: number | null; ask: number | null; 
 }
 
 export function twoSidedMid(bid: number | null, ask: number | null): number | null {
-  if (bid != null && ask != null) return round2((bid + ask) / 2);
+  // A missing side used to be stored as 0 on /quotes/latest (`bid ?? 0`).
+  // (0 + ask) / 2 is not a market — require two positive prices.
+  const b = pos(bid);
+  const a = pos(ask);
+  if (b != null && a != null) return round2((b + a) / 2);
   return null;
+}
+
+const MARK_KEYS = ['mid', 'bid', 'ask', 'last', 'close'] as const;
+
+/** First positive mark wins per field. Used to join snapshot + /quotes/latest. */
+export function mergeQuoteFields(...sources: Array<OptionQuoteFields | null | undefined>): OptionQuoteFields {
+  const out: OptionQuoteFields = {};
+  for (const s of sources) {
+    if (!s) continue;
+    for (const k of MARK_KEYS) {
+      if (out[k] == null) {
+        const n = pos(s[k]);
+        if (n != null) out[k] = n;
+      }
+    }
+  }
+  return out;
 }
 
 /** Same moneyness math resolveContract uses. ITM call = 5% below spot, not "no OCC". */
