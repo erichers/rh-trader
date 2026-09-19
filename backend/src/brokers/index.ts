@@ -67,15 +67,21 @@ export async function placeOrder(draft: {
     const c = (draft as any)._contract;
     if (!c?.occSymbol) throw new Error(`no resolved option contract for ${draft.symbol} — order NOT placed (fail-closed)`);
     // Require a REAL limit price — never silently downgrade to a market order on an
-    // illiquid/wide option (unbounded slippage). mid (two-sided) → side quote → fail.
-    const limit = draft.limit_price ?? c.mid ?? (draft.side === 'buy' ? c.ask : c.bid) ?? null;
-    if (!(Number(limit) > 0)) throw new Error(`no two-sided quote for ${c.readable} — refusing to place an unpriced option order`);
+    // illiquid/wide option (unbounded slippage). mid → side quote → last → close → fail.
+    const { optionPremium } = await import('../risk/optionPrice.js');
+    const prem = optionPremium(
+      { mid: c.mid, ask: c.ask, bid: c.bid, last: c.last, close: c.close },
+      draft.side,
+    );
+    const rawLimit = Number(draft.limit_price ?? prem.price);
+    if (!(rawLimit > 0)) throw new Error(`${prem.reason} for ${c.readable || c.occSymbol} — refusing to place an unpriced option order`);
+    const limit = rawLimit;
     const posEffect: 'open' | 'close' = draft.side === 'buy' ? 'open' : 'close';
 
     if (brokerKind(env) === 'alpaca') {
       if (!alpacaConfigured()) throw new Error('Alpaca keys not configured');
       const raw = await alpacaFor(env).placeOption({ occSymbol: c.occSymbol, qty: draft.qty, side: draft.side, limit_price: limit });
-      await audit('order.option.alpaca', `${draft.side} ${draft.qty}x ${c.readable} @ ${limit ?? 'mkt'}`, { occ: c.occSymbol });
+      await audit('order.option.alpaca', `${draft.side} ${draft.qty}x ${c.readable} @ ${limit}`, { occ: c.occSymbol });
       return { rhOrderId: raw?.id ? String(raw.id) : undefined, raw };
     }
     // Robinhood: resolve the option instrument UUID for this exact contract, then place.
@@ -86,7 +92,7 @@ export async function placeOrder(draft: {
     const optionId = c.instrumentId || await rh.getOptionInstrumentId(draft.symbol, c.expiration, draft.option_type, c.strike);
     if (!optionId) throw new Error(`Robinhood has no tradable instrument for ${c.readable} — order NOT placed`);
     const raw = await rh.placeOptionOrder({ accountNumber: acctNum, optionId, side: draft.side, positionEffect: posEffect, quantity: draft.qty, price: limit });
-    await audit('order.option.rh', `${draft.side} ${draft.qty}x ${c.readable} @ ${limit ?? 'mkt'}`, { optionId });
+    await audit('order.option.rh', `${draft.side} ${draft.qty}x ${c.readable} @ ${limit}`, { optionId });
     const id = raw?.id || raw?.order_id || raw?.orderId;
     return { rhOrderId: id ? String(id) : undefined, raw };
   }
@@ -120,6 +126,25 @@ export async function placeOrder(draft: {
 export async function cancelAllLiveOrders(): Promise<void> {
   const env = await getTradingEnv();
   if (brokerKind(env) === 'alpaca' && alpacaConfigured()) await alpacaFor(env).cancelAll();
+}
+
+/** Fetch one broker order (Alpaca paper). Used by the exit monitor to wait for a fill. */
+export async function getBrokerOrder(brokerOrderId: string, envArg?: TradingEnv): Promise<any | null> {
+  const env = envArg ?? (await getTradingEnv());
+  if (brokerKind(env) !== 'alpaca' || !alpacaConfigured() || !brokerOrderId) return null;
+  try { return await alpacaFor(env).getOrder(brokerOrderId); } catch { return null; }
+}
+
+/** Cancel one stuck working order so qty unlocks and the monitor can retry. */
+export async function cancelBrokerOrder(brokerOrderId: string, envArg?: TradingEnv): Promise<boolean> {
+  const env = envArg ?? (await getTradingEnv());
+  if (brokerKind(env) !== 'alpaca' || !alpacaConfigured() || !brokerOrderId) return false;
+  try {
+    await alpacaFor(env).cancelOrder(brokerOrderId);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Extract the underlying ticker from an OCC option symbol (e.g. NVDA260116C00800000 → NVDA). */

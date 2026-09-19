@@ -106,8 +106,8 @@ export default function Settings({ health, onChange }: { health: any; onChange: 
 }
 
 const LIMITS: { key: string; label: string; suffix: string; info: string; money?: boolean }[] = [
-  { key: 'maxConcentrationPct', label: 'Max concentration', suffix: '% of equity', info: 'The most of your account equity that can sit in ONE symbol. A buy is vetoed if it would push that symbol (including today\'s in-flight buys) over this. Raise it to trade one ticker heavily in Focus mode — higher = more single-name risk.' },
-  { key: 'maxPositionUsd', label: 'Max position size', suffix: '$ per trade', info: 'Hardest dollar cap on a single order (options counted ×100). A bot\'s own max_position_usd can only make this tighter, never looser.', money: true },
+  { key: 'maxConcentrationPct', label: 'Max concentration', suffix: '% of equity', info: 'The most of your account equity that can sit in ONE symbol across every bot. A buy is vetoed if the combined book (held + today\'s in-flight + same-cycle tickets) would push that symbol over this. Default paper desk is 25%.' },
+  { key: 'maxPositionUsd', label: 'Max position size', suffix: '$ per symbol', info: 'Hardest dollar cap on the combined position in one symbol (all bots, options ×100) — not only the ticket in hand. Three META tickets that each sit under the cap still fail if together they would exceed it.', money: true },
   { key: 'maxDailyLossPct', label: 'Daily-loss halt', suffix: '% drawdown', info: 'If the account draws down this % from its start-of-day equity, all new orders are vetoed for the rest of the day. Your circuit breaker.' },
   { key: 'maxOrdersPerDay', label: 'Max buys / day', suffix: 'orders', info: 'Throttle on new BUY orders per day (per env). Sells/exits are never throttled, so you can always close.' },
 ];

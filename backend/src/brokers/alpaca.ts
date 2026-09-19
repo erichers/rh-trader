@@ -15,6 +15,50 @@ export function alpacaConfigured(): boolean {
   return !!config.alpaca.apiKey && !!config.alpaca.secretKey;
 }
 
+export type AlpacaProbe = {
+  ok: boolean;
+  configured: boolean;
+  error?: string;
+  account?: string;
+  status?: string;
+  equity?: number;
+};
+
+let cachedProbe: { at: number; value: AlpacaProbe } | null = null;
+const PROBE_TTL_MS = 15_000;
+
+/** Cheap paper-account ping for /api/health. Never throws. Never returns secrets.
+ *  Cached ~15s so the desk 6s poll does not hammer Alpaca. */
+export async function probeAlpacaPaper(timeoutMs = 2500): Promise<AlpacaProbe> {
+  if (!alpacaConfigured()) {
+    return { ok: false, configured: false, error: 'ALPACA_API_KEY / ALPACA_SECRET_KEY missing' };
+  }
+  const now = Date.now();
+  if (cachedProbe && now - cachedProbe.at < PROBE_TTL_MS) return cachedProbe.value;
+  try {
+    const acct: any = await Promise.race([
+      alpacaPaper.account(),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`alpaca probe timed out (${timeoutMs}ms)`)), timeoutMs);
+      }),
+    ]);
+    const equity = Number(acct?.equity ?? acct?.portfolio_value);
+    const value: AlpacaProbe = {
+      ok: true,
+      configured: true,
+      account: acct?.account_number ? String(acct.account_number) : undefined,
+      status: acct?.status ? String(acct.status) : undefined,
+      equity: Number.isFinite(equity) ? equity : undefined,
+    };
+    cachedProbe = { at: now, value };
+    return value;
+  } catch (e: any) {
+    const value: AlpacaProbe = { ok: false, configured: true, error: e?.message || String(e) };
+    cachedProbe = { at: now, value };
+    return value;
+  }
+}
+
 async function call(base: string, path: string, init?: RequestInit): Promise<any> {
   const r = await fetch(`${base}${path}`, { ...init, headers: headers() });
   const text = await r.text();
@@ -76,6 +120,14 @@ export class AlpacaClient {
     if (opts.limit_price != null && opts.limit_price > 0) { body.type = 'limit'; body.limit_price = opts.limit_price.toFixed(2); }
     else body.type = 'market';
     return call(this.tradeBase, '/orders', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  getOrder(id: string) {
+    return call(this.tradeBase, `/orders/${encodeURIComponent(id)}`);
+  }
+
+  cancelOrder(id: string) {
+    return call(this.tradeBase, `/orders/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
   cancelAll() {

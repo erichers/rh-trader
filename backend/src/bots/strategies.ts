@@ -1,5 +1,7 @@
 import { q, exec } from '../db.js';
 import type { Mode, TradingEnv } from '../config.js';
+import { isObserveOnlyBot, OBSERVE_STUB_KEYS } from '../risk/observe.js';
+import { shortDteAllowlistHit, SHORT_DTE_RAILS } from '../risk/shortdte.js';
 
 export type StrategyTemplate = {
   key: string;
@@ -18,8 +20,14 @@ export type StrategyTemplate = {
     option_type?: 'call' | 'put';
     strike_target?: 'itm' | 'atm' | 'otm';
     expiration?: 'weekly' | 'monthly';
+    allow_0_1_dte?: boolean;
+    _dte?: number;
   };
   default_symbols: string[];
+  /** Optional per-template risk (0–1 allowlist bots carry tight SL/TP + small size). */
+  risk?: Record<string, any>;
+  /** Watch stub: seed disabled + observe, and tag action._observe_only. */
+  observe_only?: boolean;
 };
 
 const SWING = (o: Partial<StrategyTemplate> & Pick<StrategyTemplate, 'key' | 'name' | 'description' | 'rules'>): StrategyTemplate => ({
@@ -172,8 +180,46 @@ export const STRATEGY_LIBRARY: StrategyTemplate[] = [
     category: 'ai',
     asset_class: 'option',
     ai_gate: { enabled: true, min_conviction: 0.7 },
-    education: 'Momentum trigger + high Claude conviction (≥ 0.7) → buy ATM weekly calls.',
-    action: { side: 'buy', qty: 1, order_type: 'market', option_type: 'call', strike_target: 'atm', expiration: 'weekly' },
+    education: 'Momentum trigger + high Claude conviction (≥ 0.7) → the only library option bot allowed to buy 0–1 DTE, and only with tight SL/TP + small size.',
+    action: { side: 'buy', qty: 1, order_type: 'market', option_type: 'call', strike_target: 'atm', expiration: 'weekly', allow_0_1_dte: true, _dte: 1 },
+    risk: { allow_0_1_dte: true, stop_loss_pct: 5, take_profit_pct: 10, trailing_stop_pct: 4, max_position_usd: 400 },
+  },
+
+  // ── Observe-only watch stubs (signal + journal only — never an order row) ──
+  {
+    ...SWING({
+      key: 'mean-revert-watch',
+      name: 'Mean-Revert Watch',
+      description: 'Watch oversold snaps back toward the mean. Observe only — never trades.',
+      rules: { rsi_below: 32, bollinger_lower: true, min_matches: 1, _observe_only: true },
+    }),
+    observe_only: true,
+    education: 'Desk watch stub. Logs mean-reversion signals. The observe-only gate blocks every order path even if this row is enabled.',
+    default_symbols: ['META', 'TSLA', 'SPY', 'QQQ'],
+  },
+  {
+    ...SWING({
+      key: 'quiet-range-scout',
+      name: 'Quiet Range Scout',
+      description: 'Watch tight ranges near a 20-day high. Observe only — never trades.',
+      rules: { near_high20: 2, change_above: 0.3, min_matches: 1, _observe_only: true },
+    }),
+    observe_only: true,
+    category: 'day',
+    timeframe: '5m',
+    education: 'Desk watch stub. Logs quiet-range / coil setups. No place, stage, or draft.',
+    default_symbols: ['SPY', 'QQQ', 'META'],
+  },
+  {
+    ...SWING({
+      key: 'vol-regime-mr',
+      name: 'Vol-Regime MR',
+      description: 'Watch mean-reversion only when the session is already expanded. Observe only.',
+      rules: { rsi_below: 30, vol_expand: 1.4, min_matches: 1, _observe_only: true },
+    }),
+    observe_only: true,
+    education: 'Desk watch stub. Logs vol-regime mean-reversion. The engine must not draft or veto this as a trade.',
+    default_symbols: ['META', 'TSLA', 'NVDA', 'SPY'],
   },
 ];
 
@@ -190,21 +236,100 @@ export async function seedStrategies(env: TradingEnv, opts: { mode?: Mode } = {}
       skipped++;
       continue;
     }
+    const stub = !!s.observe_only || (OBSERVE_STUB_KEYS as readonly string[]).includes(s.key);
+    const seedMode: Mode = stub ? 'observe' : mode;
     await exec(
       `INSERT INTO bots (name, env, enabled, symbols, asset_class, rules, ai_gate, action, risk, mode)
-       VALUES (:name,:env,0,CAST(:symbols AS JSON),:ac,CAST(:rules AS JSON),CAST(:ai AS JSON),CAST(:action AS JSON),CAST('{}' AS JSON),:mode)`,
+       VALUES (:name,:env,0,CAST(:symbols AS JSON),:ac,CAST(:rules AS JSON),CAST(:ai AS JSON),CAST(:action AS JSON),CAST(:risk AS JSON),:mode)`,
       {
         name: s.name,
         env,
-        mode,
+        mode: seedMode,
         symbols: JSON.stringify(s.default_symbols),
         ac: s.asset_class,
         rules: JSON.stringify(s.rules),
         ai: JSON.stringify(s.ai_gate),
-        action: JSON.stringify({ ...s.action, _strategy: s.key, _category: s.category, _timeframe: s.timeframe }),
+        action: JSON.stringify({
+          ...s.action,
+          _strategy: s.key,
+          _category: s.category,
+          _timeframe: s.timeframe,
+          ...(stub ? { _observe_only: true } : {}),
+        }),
+        risk: JSON.stringify(stub ? { _observe_only: true } : (s.risk || {})),
       },
     );
     created++;
   }
+  await hardenObserveOnlyBots(env);
+  await hardenShortDteAllowlist(env);
   return { created, skipped };
+}
+
+function parseJson(v: any): any {
+  if (v == null) return {};
+  if (typeof v === 'object') return v;
+  try { return JSON.parse(v); } catch { return {}; }
+}
+
+/** Stamp allow_0_1_dte + tight exits on allowlisted strategy bots (idempotent). */
+export async function hardenShortDteAllowlist(env?: TradingEnv): Promise<{ tagged: number }> {
+  const rows = env
+    ? await q<any>('SELECT id, name, action, risk, env FROM bots WHERE env=:env', { env })
+    : await q<any>('SELECT id, name, action, risk, env FROM bots');
+  let tagged = 0;
+  for (const row of rows) {
+    const action = parseJson(row.action);
+    const risk = parseJson(row.risk);
+    const hit = shortDteAllowlistHit({
+      key: action._strategy || action._key,
+      name: row.name,
+      keys: [action._strategy, action._key],
+    });
+    if (!hit) continue;
+    const already =
+      action.allow_0_1_dte && risk.allow_0_1_dte
+      && Number(risk.stop_loss_pct) > 0 && Number(risk.stop_loss_pct) <= SHORT_DTE_RAILS.slMax
+      && Number(risk.take_profit_pct) >= SHORT_DTE_RAILS.tpMin && Number(risk.take_profit_pct) <= SHORT_DTE_RAILS.tpMax
+      && Number(risk.max_position_usd) > 0 && Number(risk.max_position_usd) <= SHORT_DTE_RAILS.maxPositionUsd;
+    if (already && (hit.key !== 'ai-catalyst-call' || Number(action._dte) === 1)) continue;
+    action.allow_0_1_dte = true;
+    if (hit.key === 'ai-catalyst-call') action._dte = 1;
+    risk.allow_0_1_dte = true;
+    if (!(Number(risk.stop_loss_pct) > 0) || Number(risk.stop_loss_pct) > SHORT_DTE_RAILS.slMax) risk.stop_loss_pct = SHORT_DTE_RAILS.slMax;
+    if (!(Number(risk.take_profit_pct) >= SHORT_DTE_RAILS.tpMin) || Number(risk.take_profit_pct) > SHORT_DTE_RAILS.tpMax) risk.take_profit_pct = 10;
+    if (!(Number(risk.trailing_stop_pct) > 0) || Number(risk.trailing_stop_pct) > SHORT_DTE_RAILS.trailMax) risk.trailing_stop_pct = 4;
+    if (!(Number(risk.max_position_usd) > 0) || Number(risk.max_position_usd) > SHORT_DTE_RAILS.maxPositionUsd) risk.max_position_usd = SHORT_DTE_RAILS.maxPositionUsd;
+    await exec(
+      `UPDATE bots SET action=CAST(:action AS JSON), risk=CAST(:risk AS JSON) WHERE id=:id AND env=:env`,
+      { action: JSON.stringify(action), risk: JSON.stringify(risk), id: row.id, env: row.env },
+    );
+    tagged++;
+  }
+  return { tagged };
+}
+
+/** Stamp `_observe_only` on desk stubs that already exist (enabled or not). Idempotent. */
+export async function hardenObserveOnlyBots(env?: TradingEnv): Promise<{ tagged: number }> {
+  const rows = env
+    ? await q<any>('SELECT id, name, action, rules, risk, mode, env FROM bots WHERE env=:env', { env })
+    : await q<any>('SELECT id, name, action, rules, risk, mode, env FROM bots');
+  let tagged = 0;
+  for (const row of rows) {
+    if (!isObserveOnlyBot(row)) continue;
+    const action = (typeof row.action === 'string' ? (() => { try { return JSON.parse(row.action); } catch { return {}; } })() : row.action) || {};
+    const risk = (typeof row.risk === 'string' ? (() => { try { return JSON.parse(row.risk); } catch { return {}; } })() : row.risk) || {};
+    const rules = (typeof row.rules === 'string' ? (() => { try { return JSON.parse(row.rules); } catch { return {}; } })() : row.rules) || {};
+    if (action._observe_only && risk._observe_only && rules._observe_only) continue;
+    action._observe_only = true;
+    risk._observe_only = true;
+    rules._observe_only = true;
+    await exec(
+      `UPDATE bots SET action=CAST(:action AS JSON), risk=CAST(:risk AS JSON), rules=CAST(:rules AS JSON), mode='observe'
+       WHERE id=:id AND env=:env`,
+      { action: JSON.stringify(action), risk: JSON.stringify(risk), rules: JSON.stringify(rules), id: row.id, env: row.env },
+    );
+    tagged++;
+  }
+  return { tagged };
 }

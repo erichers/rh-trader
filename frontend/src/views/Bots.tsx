@@ -66,6 +66,9 @@ function issues(bot: any, health: any): { msg: string; cta?: string; href?: stri
   }
   // QuickBots fire from action.plays, not `rules` — the generic "no rules" check doesn't
   // apply (it would falsely flag a working bot). They're managed on the QuickBots page.
+  if (J(bot.action, {})._observe_only || J(bot.rules, {})._observe_only || /Mean-Revert Watch|Quiet Range Scout|Vol-Regime MR/i.test(bot.name || '')) {
+    out.push({ kind: 'blue', msg: 'Watch stub — even while ON it cannot place, stage, or draft an order.' });
+  }
   if (J(bot.action, {})._quickbot) return out;
   const rules = J(bot.rules, {});
   if (!Object.keys(rules).filter((k) => k !== 'require_all' && k !== 'min_matches').length) {
@@ -202,6 +205,9 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
         <div className="row" style={{ gap: 8 }}>
           <span>{open ? '▾' : '▸'}</span>
           <b>{bot.name}</b>
+          {(action._observe_only || rules._observe_only || /watch|scout|vol-regime mr/i.test(bot.name || '')) && (
+            <Badge kind="blue">watch only</Badge>
+          )}
           {action.option_type && <Badge kind={action.option_type === 'call' ? 'green' : 'red'}>{action.option_type}</Badge>}
           {action._category && <span className="pill">{action._category}</span>}
           {probs.length > 0 && <Badge kind={probs.some(p=>p.kind==='red')?'red':'amber'}>{probs.length} issue{probs.length>1?'s':''}</Badge>}

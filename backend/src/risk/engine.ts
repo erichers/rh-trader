@@ -1,8 +1,9 @@
 import { config, HARD_BLOCKED_ASSET_CLASSES, isCryptoSymbol, isLiveEnv, type Mode, type TradingEnv } from '../config.js';
 import { q, exec, getKillSwitch, getSetting, setSetting, getTradingEnv, getRiskLimits } from '../db.js';
-
-/** Options trade in 100-share contracts; quoted premium is per share. */
-const CONTRACT_MULT = 100;
+import { evaluateSymbolCaps, openSymbolExposureUsd, reservedBuyNotional, splitInflightBuys, todayEt, type ExposureOrder } from './exposure.js';
+import { RISK_LAW, applyFullAutoSoftBypass, clampRiskLawDailyLossPct, clampRiskLawPositionUsd } from './law.js';
+import { optionEntryDteCheck, SHORT_DTE_RAILS } from './dte.js';
+import { assignInferredAssetClass, draftNotionalUsd } from './optionPrice.js';
 
 export type OrderDraft = {
   symbol: string;
@@ -23,10 +24,18 @@ export type OrderDraft = {
   // A concrete resolved contract (set by executeDraft before risk so sizing is real).
   // `instrumentId` (when present) is the broker's native contract id (Robinhood) so
   // placement uses the exact resolved contract without re-looking it up.
-  _contract?: { occSymbol: string; type: 'call' | 'put'; strike: number; expiration: string; mid?: number | null; readable?: string; instrumentId?: string };
+  _contract?: {
+    occSymbol: string; type: 'call' | 'put'; strike: number; expiration: string;
+    mid?: number | null; ask?: number | null; bid?: number | null;
+    last?: number | null; close?: number | null;
+    readable?: string; instrumentId?: string;
+  };
   // QuickBot per-play overrides: DTE-scaled exits (monitor) + position cap (risk sizing).
   // `tag` is a stable ASCII contract identity (e.g. "call-7") used for same-day dedup.
-  _play?: { name?: string; tag?: string; dte?: number; tp?: number; sl?: number; trail?: number; maxPositionUsd?: number };
+  _play?: { name?: string; tag?: string; key?: string; dte?: number; tp?: number; sl?: number; trail?: number; maxPositionUsd?: number; allow_0_1_dte?: boolean };
+  // Watch stubs. When true (or the loaded bot is observe-only), executeDraft must
+  // not insert an order row. Re-checked from the bot row so a missing flag cannot bypass.
+  _observe_only?: boolean;
 };
 
 export type RiskResult = {
@@ -69,9 +78,9 @@ export function resolveCaps(botRisk: any, play: OrderDraft['_play'] | undefined,
     // CLAMP the override to safe bounds — a bot must never be able to disable the safety
     // breakers (e.g. set daily-loss to 100% so it never trips, or remove the concentration cap).
     const clamp = (v: any, lo: number, hi: number, fallback: number) => (Number(v) > 0 ? Math.min(hi, Math.max(lo, Number(v))) : fallback);
-    maxPositionUsd = clamp(r.max_position_usd, 50, 1_000_000_000, maxPositionUsd);
+    maxPositionUsd = clampRiskLawPositionUsd(r.max_position_usd, maxPositionUsd);
     maxConcentrationPct = clamp(r.max_concentration_pct, 1, 95, maxConcentrationPct); // never 100% (no cap)
-    maxDailyLossPct = clamp(r.max_daily_loss_pct, 1, 50, maxDailyLossPct);            // breaker must trip before half gone
+    maxDailyLossPct = clampRiskLawDailyLossPct(r.max_daily_loss_pct, maxDailyLossPct);
     maxOrdersPerDay = clamp(r.max_orders_per_day, 1, 1000, maxOrdersPerDay);
   } else if (r && Number(r.max_position_usd) > 0) {
     maxPositionUsd = Math.min(maxPositionUsd, Number(r.max_position_usd));
@@ -85,20 +94,21 @@ export function resolveCaps(botRisk: any, play: OrderDraft['_play'] | undefined,
 /** Pure deterministic risk gate. Crypto and the kill switch are hard blocks.
  *  `env` scopes all account/position lookups to the ACTIVE trading environment so
  *  paper data can never loosen a live-account check (and vice versa).
- *  `mode` (the EFFECTIVE execution mode for this order): in `full_auto` the SOFT sizing
- *  throttles — position size, concentration, orders/day — are bypassed (still computed &
- *  shown, just not vetoed) so a fully-autonomous bot can act freely. The HARD rails always
- *  hold: kill switch, no-crypto, asset allowlist, no-short / no-naked-write, and the
- *  daily-loss circuit breaker (the one protection that stops a runaway from draining it). */
+ *  Hard rails in EVERY mode (including full_auto): kill switch, no-crypto, asset
+ *  allowlist, no-short / no-naked-write, daily-loss breaker (≤50%), per-ticket and
+ *  same-symbol book cap (≤$10k), 25% concentration, and the 2–14 DTE entry window
+ *  (never 0DTE/1DTE except an explicit high-certainty allowlist with tight SL/TP;
+ *  LEAPS waived). full_auto may bypass only the orders/day throttle. Monday paper
+ *  arms `full_auto`; those book rails still bind. */
 export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode): Promise<RiskResult> {
   const checks: RiskResult['checks'] = {};
   const computed: Record<string, number> = {};
   const t = config.trading;
   const lim = await getRiskLimits(); // adjustable from the UI (overrides .env defaults)
+  assignInferredAssetClass(draft);
   const ac = (draft.asset_class || 'equity').toLowerCase();
   if (!env) env = await getTradingEnv();
-  const mult = ac === 'option' ? CONTRACT_MULT : 1; // option premium is per-share; contracts are ×100
-  // Full-auto bypasses the SOFT sizing caps only (never the hard rails / daily-loss breaker).
+  // full_auto is recorded for audit. Soft bypass is orders/day only (see applyFullAutoSoftBypass).
   const fullAuto = mode === 'full_auto';
   computed.full_auto = fullAuto ? 1 : 0;
 
@@ -108,15 +118,20 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
   // concentration, daily-loss, orders/day) that REPLACE the global ones (hard blocks
   // like crypto/kill-switch/no-short still always apply).
   let botRisk: any = null;
+  let botAction: any = null;
+  let botName: string | null = null;
   if (draft.bot_id) {
     // env-scoped: a bot from another account can never relax THIS account's limits
     // (no match => the global, tighter limits stand — fail-closed).
-    const [bot] = await q<{ risk: any }>('SELECT risk FROM bots WHERE id=:id AND env=:env', { id: draft.bot_id, env });
+    const [bot] = await q<{ risk: any; action: any; name: string }>('SELECT risk, action, name FROM bots WHERE id=:id AND env=:env', { id: draft.bot_id, env });
     botRisk = bot?.risk ? (typeof bot.risk === 'string' ? safeParse(bot.risk) : bot.risk) : null;
+    botAction = bot?.action ? (typeof bot.action === 'string' ? safeParse(bot.action) : bot.action) : null;
+    botName = bot?.name || null;
   }
   const caps = resolveCaps(botRisk, draft._play, lim);
-  const { maxConcentrationPct, maxDailyLossPct, maxOrdersPerDay, overrideActive } = caps;
-  const maxPositionUsd = caps.maxPositionUsd;
+  const { maxConcentrationPct, maxOrdersPerDay, overrideActive } = caps;
+  const maxDailyLossPct = clampRiskLawDailyLossPct(caps.maxDailyLossPct, caps.maxDailyLossPct);
+  let maxPositionUsd = clampRiskLawPositionUsd(caps.maxPositionUsd, RISK_LAW.maxTradeUsd);
   computed.override_active = overrideActive ? 1 : 0;
 
   // 1. Kill switch — blocks NEW exposure (buys) but NEVER a close-only SELL. Exits are
@@ -143,28 +158,40 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
     detail: allowed ? ac : `'${ac}' not in allowlist [${t.allowedAssetClasses.join(',')}]`,
   };
 
+  // 3b. Option entry DTE — never 0DTE/1DTE unless the bot is on the high-certainty
+  //     allowlist (tight SL/TP required). Unresolved contract fails closed.
+  //     Play.dte alone cannot pass — the concrete expiration must prove the window.
+  const dteHint = {
+    ...draft,
+    name: draft._play?.name || botName || undefined,
+    key: draft._play?.key || botAction?._strategy || botAction?._key || undefined,
+    allow_0_1_dte: draft._play?.allow_0_1_dte || botAction?.allow_0_1_dte || botRisk?.allow_0_1_dte,
+  };
+  const dteGate = optionEntryDteCheck(dteHint);
+  checks.entry_dte = { pass: dteGate.ok, detail: dteGate.detail };
+  if (dteGate.dte != null) computed.entry_dte = dteGate.dte;
+  if (dteGate.leaps) computed.leaps = 1;
+  if (dteGate.privileged) computed.short_dte_privileged = 1;
+  // Privileged 0–1 tickets also get a hard size clamp (loose SL/TP already vetoed).
+  if (dteGate.privileged && dteGate.dte != null && dteGate.dte <= 1) {
+    maxPositionUsd = Math.min(maxPositionUsd, SHORT_DTE_RAILS.maxPositionUsd);
+  }
+
   // 4. Position size cap (USD). Options are ×100 (contract multiplier) so the
   //    cap actually applies to the real dollar cost, not per-share premium.
-  const price = draft.est_price ?? draft.limit_price ?? 0;
-  const notional = price > 0 ? price * draft.qty * mult : 0;
+  //    Premium comes from resolveDraftContract (mid → ask → last → close).
+  const sized = draftNotionalUsd(draft);
+  const notional = sized.notional;
   computed.notional_usd = Math.round(notional * 100) / 100;
   // An option BUY that couldn't be priced (no contract / no quote) must FAIL the size
   // cap, not pass via notional===0 — otherwise an unpriceable order slips through.
-  const unpriceableOptionBuy = ac === 'option' && draft.side === 'buy' && !(notional > 0);
+  const unpriceableOptionBuy = sized.unpriceableOptionBuy;
   const sizeWithinCap = !unpriceableOptionBuy && (draft.side === 'sell' || notional === 0 || notional <= maxPositionUsd);
   computed.max_position_usd_limit = maxPositionUsd;
-  // An unpriceable option buy ALWAYS fails (can't size what we can't price) even in full-auto.
-  const sizeOk = sizeWithinCap || (fullAuto && !unpriceableOptionBuy);
-  checks.max_position_usd = {
-    pass: sizeOk,
-    detail: sizeWithinCap
-      ? `${computed.notional_usd} <= ${maxPositionUsd}`
-      : unpriceableOptionBuy
-        ? 'option buy not priceable — cannot size'
-        : `${computed.notional_usd} > ${maxPositionUsd}${fullAuto ? ' — bypassed (full-auto)' : ''}`,
-  };
 
-  // 5. Concentration vs portfolio equity (active env only).
+  // 5. Same-symbol book (all bots) + concentration vs equity.
+  //    Per-ticket math is not enough: three META tickets each under the $10k ticket
+  //    cap stacked ~$13.7k. Sum position + in-flight + same-cycle reservations here.
   const [acct] = await q<{ equity: number }>(
     'SELECT equity FROM accounts WHERE env=:env ORDER BY updated_at DESC LIMIT 1', { env },
   );
@@ -173,41 +200,76 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
   let concentrationOk = true;
   let concDetail = 'no equity snapshot — skipped';
   let concFailClosed = false;
-  // FAIL-CLOSED for LIVE money: if we can't read the live account's equity (0 / stale /
-  // not yet synced), we cannot size a BUY safely — veto rather than silently skip the cap.
-  // (Paper always has equity; a SELL is a close-only exit and is never blocked here.)
+  let aggregatePositionOk = sizeWithinCap;
+  let positionDetail = sizeWithinCap
+    ? `${computed.notional_usd} <= ${maxPositionUsd}`
+    : unpriceableOptionBuy
+      ? (sized.reason || 'option buy not priceable — cannot size')
+      : `${computed.notional_usd} > ${maxPositionUsd}`;
+
   if (isLiveEnv(env) && draft.side === 'buy' && !(equity > 0)) {
     concentrationOk = false;
     concFailClosed = true;
     concDetail = 'live account equity unknown/zero — fail-closed (fund + Sync the account first)';
-  } else if (equity > 0 && draft.side === 'buy' && notional > 0) {
+  } else if (draft.side === 'buy' && notional > 0) {
     const [pos] = await q<{ mv: number }>(
       'SELECT COALESCE(market_value,0) mv FROM positions WHERE symbol=:s AND env=:env ORDER BY updated_at DESC LIMIT 1',
       { s: draft.symbol, env },
     );
-    // Include TODAY's in-flight buys on this symbol that may not yet be reflected in
-    // the position snapshot — so several bots firing the same name in one cycle
-    // (common in Focus mode) can't each pass the cap independently.
-    const [pend] = await q<{ pending: number }>(
-      // Fall back to the order's estimated fill price (from the draft) when a market order
-      // has no filled/limit price yet — otherwise today's in-flight bot buys count as $0
-      // and several could each pass the concentration cap.
-      `SELECT COALESCE(SUM(qty * COALESCE(filled_price, limit_price, CAST(raw->>'$.draft.est_price' AS DECIMAL(20,4)), 0) * IF(asset_class='option',100,1)),0) pending
-       FROM orders WHERE symbol=:s AND env=:env AND side='buy' AND status IN ('placed','filled') AND created_at >= CURDATE()`,
+    // Sum in JS — do not rely on MySQL 8 JSON operators (MAMP 5.7 / MariaDB diverge,
+    // and a failed extract used to count in-flight market buys as $0).
+    const inflight = await q<ExposureOrder>(
+      `SELECT qty, filled_price, limit_price, asset_class, status, raw, created_at
+       FROM orders WHERE symbol=:s AND env=:env AND side='buy'
+         AND status IN ('placed','filled','staged')`,
       { s: draft.symbol, env },
     );
-    const newExposure = Number(pos?.mv ?? 0) + Number(pend?.pending ?? 0) + notional;
-    const pct = (newExposure / equity) * 100;
-    computed.concentration_pct = Math.round(pct * 100) / 100;
-    concentrationOk = pct <= maxConcentrationPct;
-    concDetail = `${computed.concentration_pct}% vs cap ${maxConcentrationPct}%${overrideActive ? ' (bot override)' : ''}`;
+    const { pendingUsd, todayFilledUsd } = splitInflightBuys(inflight, todayEt());
+    const reservedUsd = reservedBuyNotional(env, draft.symbol);
+    const openUsd = openSymbolExposureUsd({
+      positionMv: Number(pos?.mv ?? 0),
+      todayFilledUsd,
+      pendingUsd,
+      reservedUsd,
+    });
+    const caps = evaluateSymbolCaps({
+      side: draft.side,
+      ticketNotional: notional,
+      openUsd,
+      equity,
+      maxPositionUsd,
+      maxConcentrationPct,
+    });
+    computed.symbol_open_usd = Math.round(openUsd * 100) / 100;
+    computed.symbol_stacked_usd = caps.stackedUsd;
+    computed.pending_usd = Math.round(pendingUsd * 100) / 100;
+    computed.reserved_usd = Math.round(reservedUsd * 100) / 100;
+    aggregatePositionOk = !unpriceableOptionBuy && caps.ticketOk && caps.positionOk;
+    positionDetail = unpriceableOptionBuy
+      ? (sized.reason || 'option buy not priceable — cannot size')
+      : `${caps.ticketDetail}; ${caps.positionDetail}${overrideActive ? ' (bot override)' : ''}`;
+    if (equity > 0) {
+      computed.concentration_pct = caps.concentrationPct ?? 0;
+      concentrationOk = caps.concentrationOk;
+      concDetail = `${caps.concentrationDetail}${overrideActive ? ' (bot override)' : ''}`;
+    } else {
+      concDetail = 'no equity snapshot — skipped';
+    }
   }
-  // Full-auto: don't let concentration veto (still surfaced in the detail + Portfolio Risk view).
-  // The daily-loss breaker below remains the backstop — incl. its live-equity fail-closed.
-  // EXCEPTION (2026-08-24 audit): the live-equity fail-closed above is a safety veto,
-  // not a sizing preference — full-auto must never bypass it.
-  if (!concentrationOk && fullAuto && !concFailClosed) { concDetail = `${concDetail} — bypassed (full-auto)`; concentrationOk = true; }
-  checks.concentration = { pass: concentrationOk, detail: concDetail };
+  // Soft bypass is orders/day only. Same-symbol book + concentration stay hard in
+  // auto AND full_auto (META 4.5k+4.5k+4.5k must veto). See applyFullAutoSoftBypass.
+  const soft = applyFullAutoSoftBypass({
+    mode,
+    aggregatePositionOk,
+    concentrationOk,
+    concFailClosed,
+    throttleOk: true, // filled below after we know today's count
+  });
+  checks.max_position_usd = {
+    pass: soft.sizeOk,
+    detail: positionDetail,
+  };
+  checks.concentration = { pass: soft.concentrationOk, detail: concDetail };
 
   // 6. No short selling — long-only. A sell may not exceed the held quantity
   //    (equity OR option), scoped to the active env. You can only close a long.
@@ -280,7 +342,17 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
     const placedToday = Number(cnt?.n ?? 0);
     computed.orders_today = placedToday;
     const throttleOk = placedToday < maxOrdersPerDay;
-    checks.orders_per_day = { pass: throttleOk || fullAuto, detail: `${placedToday}/${maxOrdersPerDay} buys today${overrideActive ? ' (bot override)' : ''}${!throttleOk && fullAuto ? ' — bypassed (full-auto)' : ''}` };
+    const th = applyFullAutoSoftBypass({
+      mode,
+      aggregatePositionOk: soft.sizeOk,
+      concentrationOk: soft.concentrationOk,
+      concFailClosed,
+      throttleOk,
+    });
+    checks.orders_per_day = {
+      pass: th.throttleOk,
+      detail: `${placedToday}/${maxOrdersPerDay} buys today${overrideActive ? ' (bot override)' : ''}${th.throttleBypassed ? ' — bypassed (full-auto)' : ''}`,
+    };
   } else {
     checks.orders_per_day = { pass: true, detail: 'sell/exit — not throttled' };
   }

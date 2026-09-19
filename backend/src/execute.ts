@@ -1,7 +1,12 @@
-import { exec, getGlobalMode, audit, getTradingEnv } from './db.js';
+import { exec, getGlobalMode, audit, getTradingEnv, q } from './db.js';
 import type { Mode, TradingEnv } from './config.js';
 import { decideExecution, logRiskEvent, type OrderDraft } from './risk/engine.js';
+import { isShortDtePrivileged, syncPlayDteToContract } from './risk/dte.js';
+import { applyResolvedPremium, assignInferredAssetClass } from './risk/optionPrice.js';
 import { placeOrder as brokerPlace } from './brokers/index.js';
+import { execObserveBlock } from './risk/observe.js';
+import { releaseBuyNotional, reserveBuyNotional } from './risk/exposure.js';
+import { mapBrokerOrderStatus } from './risk/exitlifecycle.js';
 
 export type ExecResult = {
   orderId: number;
@@ -10,6 +15,7 @@ export type ExecResult = {
   reason: string;
   rh_order_id?: string;
   fillPrice?: number | null; // actual broker fill (when reported) — used to record real exit prices
+  filledQty?: number | null;
   risk: Awaited<ReturnType<typeof decideExecution>>['risk'];
 };
 
@@ -19,18 +25,48 @@ export type ExecResult = {
  *  carries `_contract` is left alone, so resolving early (to size a bot order off the real
  *  premium) never causes a second lookup or a different contract at execution time. */
 export async function resolveDraftContract(draft: OrderDraft, env: TradingEnv): Promise<void> {
-  if ((draft.asset_class || '').toLowerCase() !== 'option' || !draft.option_type || draft._contract) return;
+  // Option-shaped plays (option_type / _play.dte / _contract) must not stay
+  // labeled equity — that was the Friday allowlist spray (`equity` vs [option]).
+  assignInferredAssetClass(draft);
+  if ((draft.asset_class || '').toLowerCase() !== 'option' || !draft.option_type) return;
+  // A contract already on the draft still needs a premium. Early sizeDraft
+  // used to set `_contract` and skip the second pass, leaving est_price empty.
+  if (draft._contract) {
+    applyResolvedPremium(draft, {
+      mid: draft._contract.mid,
+      ask: draft._contract.ask,
+      bid: draft._contract.bid,
+      last: draft._contract.last,
+      close: draft._contract.close,
+    });
+    return;
+  }
   try {
     const { resolveContract, resolveContractRH } = await import('./brokers/options.js');
     const { brokerKind } = await import('./brokers/index.js');
     // Live Robinhood → resolve against RH's OWN chain so the contract is guaranteed
     // tradable there (nearest listed strike/expiry). Alpaca/paper → Alpaca chain.
+    const pickOpts = {
+      targetDte: Number.isFinite(Number(draft._play?.dte)) ? Number(draft._play?.dte) : undefined,
+      allowShortDte: isShortDtePrivileged({
+        key: draft._play?.key,
+        name: draft._play?.name,
+        keys: [draft._play?.key, draft._play?.tag],
+      }),
+      name: draft._play?.name,
+      key: draft._play?.key,
+    };
     const c = brokerKind(env) === 'robinhood'
-      ? await resolveContractRH(draft.symbol, draft.option_type, draft.strike_target || 'atm', draft.expiration || 'monthly')
-      : await resolveContract(draft.symbol, draft.option_type, draft.strike_target || 'atm', draft.expiration || 'monthly');
+      ? await resolveContractRH(draft.symbol, draft.option_type, draft.strike_target || 'atm', draft.expiration || 'weekly', pickOpts)
+      : await resolveContract(draft.symbol, draft.option_type, draft.strike_target || 'atm', draft.expiration || 'weekly', pickOpts);
     if (c) {
-      draft._contract = { occSymbol: c.occSymbol, type: c.type, strike: c.strike, expiration: c.expiration, mid: c.mid, readable: c.readable, instrumentId: c.instrumentId };
-      if (!(Number(draft.est_price) > 0) && (c.mid || c.ask)) draft.est_price = Number(c.mid ?? c.ask);
+      draft._contract = {
+        occSymbol: c.occSymbol, type: c.type, strike: c.strike, expiration: c.expiration,
+        mid: c.mid, ask: c.ask, bid: c.bid, last: c.last, close: c.close,
+        readable: c.readable, instrumentId: c.instrumentId,
+      };
+      applyResolvedPremium(draft, { mid: c.mid, ask: c.ask, bid: c.bid, last: c.last, close: c.close });
+      syncPlayDteToContract(draft);
     }
   } catch { /* unresolved → risk vetoes the unpriceable buy / unmatched sell */ }
 }
@@ -56,9 +92,49 @@ export async function executeDraft(
 
   await resolveDraftContract(draft, env);
 
+  // Observe-only stubs never create an order row — even when enabled=1 and mode=auto.
+  // Re-read the bot so a missing draft._observe_only cannot bypass the gate.
+  let botRow: { name?: any; action?: any; rules?: any; risk?: any; mode?: any } | null = null;
+  if (draft.bot_id) {
+    const rows = await q<any>('SELECT name, action, rules, risk, mode FROM bots WHERE id=:id AND env=:env', {
+      id: draft.bot_id, env,
+    });
+    botRow = rows[0] || null;
+  }
+  const og = execObserveBlock(draft, botRow);
+  if (og.blocked) {
+    await audit('order.observe_only', `${draft.side} ${draft.qty} ${draft.symbol} blocked — observe-only stub`, {
+      bot_id: draft.bot_id ?? null, env, reason: og.reason,
+    });
+    return {
+      orderId: 0,
+      action: 'observe',
+      status: 'observe_only',
+      reason: og.reason,
+      risk: {
+        ok: true,
+        reason: og.reason,
+        checks: { observe_only: { pass: true, detail: og.reason } },
+        computed: {},
+      },
+    };
+  }
+
   const decision = await decideExecution(draft, mode, env);
   await logRiskEvent(draft, decision.risk);
 
+  // Reserve only after a passing buy so the next bot in this cycle sees the
+  // notional without double-counting this ticket inside riskCheck.
+  const ac = (draft.asset_class || 'equity').toLowerCase();
+  const px = Number(draft.est_price ?? draft.limit_price) || 0;
+  const reserveUsd = draft.side === 'buy'
+    && (decision.action === 'execute' || decision.action === 'stage')
+    && px > 0
+    ? px * Number(draft.qty || 0) * (ac === 'option' ? 100 : 1)
+    : 0;
+  if (reserveUsd > 0) reserveBuyNotional(env, draft.symbol, reserveUsd);
+
+  try {
   const statusByAction: Record<string, string> = {
     veto: 'vetoed',
     observe: 'draft',
@@ -118,12 +194,12 @@ export async function executeDraft(
       const res = await brokerPlace(draft, env);
       placeRaw = res.raw;
       rhOrderId = res.rhOrderId;
-      status = 'placed';
-      // Capture the actual fill if the broker reported one (Alpaca market orders fill
-      // immediately with filled_avg_price; RH fills async so this may be null at place time).
+      // Persist the BROKER status (new/accepted/filled). Never pretend a working
+      // `new` order is a fill — the monitor must wait for a terminal fill.
+      status = mapBrokerOrderStatus(placeRaw?.status) || 'placed';
       const reportedFill = Number(placeRaw?.filled_avg_price ?? placeRaw?.filled_price ?? placeRaw?.price);
-      if (Number.isFinite(reportedFill) && reportedFill > 0) fillPrice = reportedFill;
       const reportedQty = Number(placeRaw?.filled_qty);
+      if (status === 'filled' && Number.isFinite(reportedFill) && reportedFill > 0) fillPrice = reportedFill;
       await exec('UPDATE orders SET status=:s, rh_order_id=:rid, filled_price=:fp, filled_qty=COALESCE(:fq, filled_qty), raw=CAST(:raw AS JSON) WHERE id=:id', {
         s: status,
         rid: rhOrderId ?? null,
@@ -157,7 +233,15 @@ export async function executeDraft(
     risk: decision.risk.reason,
   });
 
-  return { orderId, action: decision.action, status, reason: decision.risk.reason, rh_order_id: rhOrderId, fillPrice, risk: decision.risk };
+  return {
+    orderId, action: decision.action, status, reason: decision.risk.reason,
+    rh_order_id: rhOrderId, fillPrice,
+    filledQty: Number(placeRaw?.filled_qty) > 0 ? Number(placeRaw.filled_qty) : null,
+    risk: decision.risk,
+  };
+  } finally {
+    if (reserveUsd > 0) releaseBuyNotional(env, draft.symbol, reserveUsd);
+  }
 }
 
 /** Approve a staged order (cautious mode) → execute it now. */

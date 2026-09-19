@@ -1,5 +1,15 @@
 import { config } from '../config.js';
 import { alpacaData } from './alpaca.js';
+import { pickListedExpiration, type PickExpirationOpts } from '../risk/dte.js';
+import {
+  lookupByOcc,
+  mergeQuoteFields,
+  optionPremium,
+  pickNearestContract,
+  quoteSides,
+  strikeTargetPrice,
+  twoSidedMid,
+} from '../risk/optionPrice.js';
 
 // Alpaca options data: real contracts + live quotes (indicative feed).
 // Greeks/IV are not in the free indicative feed; we surface price/bid/ask/OI.
@@ -77,19 +87,31 @@ export async function expirations(underlying: string): Promise<string[]> {
   return [...new Set(cs.map((c) => c.expiration))].sort();
 }
 
-/** Latest quotes (bid/ask) for a batch of OCC symbols. */
-export async function latestQuotes(symbols: string[]): Promise<Record<string, { bid: number; ask: number; mid: number }>> {
-  const out: Record<string, { bid: number; ask: number; mid: number }> = {};
+export type LatestQuote = {
+  bid: number | null;
+  ask: number | null;
+  mid: number | null;
+  last: number | null;
+  close: number | null;
+};
+
+/** Latest quotes for a batch of OCC symbols. Missing sides stay null (not 0). */
+export async function latestQuotes(symbols: string[]): Promise<Record<string, LatestQuote>> {
+  const out: Record<string, LatestQuote> = {};
   for (let i = 0; i < symbols.length; i += 100) {
     const batch = symbols.slice(i, i + 100);
     const u = `${DATA()}/options/quotes/latest?symbols=${encodeURIComponent(batch.join(','))}&feed=indicative`;
     try {
       const res = await get(u);
       for (const [sym, q] of Object.entries<any>(res.quotes || {})) {
-        const bid = Number(q.bp) || 0, ask = Number(q.ap) || 0;
-        // Only a true two-sided market yields a real mid; a one-sided quote is not
-        // a tradable mid, so leave mid null rather than overstate it.
-        out[sym] = { bid, ask, mid: bid > 0 && ask > 0 ? Math.round(((bid + ask) / 2) * 100) / 100 : (null as any) };
+        const sides = quoteSides(q);
+        out[sym] = {
+          bid: sides.bid,
+          ask: sides.ask,
+          mid: twoSidedMid(sides.bid, sides.ask),
+          last: sides.last,
+          close: sides.close,
+        };
       }
     } catch { /* skip batch */ }
   }
@@ -102,23 +124,29 @@ export async function getChain(underlying: string, expiration: string): Promise<
     listContracts(underlying, { expiration, limit: 1000 }),
     snapshots(underlying, expiration).catch(() => ({} as Record<string, any>)),
   ]);
-  // Fall back to plain quotes for any contract the snapshot feed didn't cover.
-  const missing = contracts.filter((c) => !snaps[c.symbol]).map((c) => c.symbol);
-  const quotes = missing.length ? await latestQuotes(missing).catch(() => ({})) : {};
+  // Snapshot-exists ≠ quoted. Indicative snapshots often have greeks/IV and an
+  // empty latestQuote. Fall through to /quotes/latest unless we already have a
+  // mark (bid/ask/last). OCC keys are looked up with and without space-padding.
+  const needQuote = contracts.filter((c) => {
+    const s = lookupByOcc(snaps, c.symbol);
+    if (!s) return true;
+    const sides = quoteSides(s);
+    return sides.bid == null && sides.ask == null && sides.last == null;
+  }).map((c) => c.symbol);
+  const quotes = needQuote.length ? await latestQuotes(needQuote).catch(() => ({})) : {};
   for (const c of contracts) {
-    const s = snaps[c.symbol];
+    const s = lookupByOcc(snaps, c.symbol);
+    const qq = lookupByOcc(quotes as Record<string, any>, c.symbol);
+    const marks = mergeQuoteFields(s ? quoteSides(s) : null, qq);
+    c.bid = marks.bid ?? null;
+    c.ask = marks.ask ?? null;
+    c.mid = marks.mid ?? twoSidedMid(c.bid, c.ask);
+    c.last = marks.last ?? null;
+    if (marks.close != null) c.close_price = marks.close;
     if (s) {
-      const bp = Number(s.latestQuote?.bp) || 0, ap = Number(s.latestQuote?.ap) || 0;
-      c.bid = bp || null; c.ask = ap || null;
-      // Real mid only from a two-sided market; one-sided → null (don't overstate).
-      c.mid = bp > 0 && ap > 0 ? Math.round(((bp + ap) / 2) * 100) / 100 : null;
-      c.last = s.latestTrade?.p != null ? Number(s.latestTrade.p) : null;
       c.iv = s.impliedVolatility != null ? Number(s.impliedVolatility) : null;
       const g = s.greeks || {};
       c.delta = num(g.delta); c.gamma = num(g.gamma); c.theta = num(g.theta); c.vega = num(g.vega); c.rho = num(g.rho);
-    } else if ((quotes as any)[c.symbol]) {
-      const qq = (quotes as any)[c.symbol];
-      c.bid = qq.bid; c.ask = qq.ask; c.mid = qq.mid;
     }
   }
   const calls = contracts.filter((c) => c.type === 'call').sort((a, b) => a.strike - b.strike);
@@ -132,16 +160,18 @@ function num(v: any): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Real current price (mid, else close) for a single contract. */
+/** Real current price (mid → ask → last → close) for a single contract. */
 export async function contractPrice(symbol: string): Promise<number | null> {
   const q = await latestQuotes([symbol]);
-  if (q[symbol]?.mid) return q[symbol].mid;
-  return null;
+  const hit = lookupByOcc(q, symbol) || q[symbol];
+  if (!hit) return null;
+  return optionPremium({ mid: hit.mid, bid: hit.bid, ask: hit.ask, last: hit.last, close: hit.close }, 'buy').price;
 }
 
 export type ResolvedContract = {
   occSymbol: string; type: 'call' | 'put'; strike: number; expiration: string;
   bid: number | null; ask: number | null; mid: number | null; spot: number | null;
+  last?: number | null; close?: number | null;
   readable: string; instrumentId?: string;
 };
 
@@ -161,25 +191,9 @@ export function occToContract(occ: string): { underlying: string; type: 'call' |
   return { underlying, type: cp === 'C' ? 'call' : 'put', strike: Number(strk) / 1000, expiration: `20${yy}-${mm}-${dd}` };
 }
 
-/** Pick a concrete expiration from the real available list for a horizon preference. */
-function pickExpiration2(exps: string[], pref: string): string {
-  const now = Date.now();
-  const dte = (e: string) => (Date.parse(e + 'T00:00:00Z') - now) / 864e5;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(pref)) return exps.find((e) => e >= pref) || exps[exps.length - 1];
-  const future = exps.filter((e) => dte(e) >= 2);
-  if (!future.length) return exps[exps.length - 1];
-  if (pref === 'monthly') return future.reduce((b, e) => (Math.abs(dte(e) - 32) < Math.abs(dte(b) - 32) ? e : b));
-  if (pref === 'leaps') return future.reduce((b, e) => (dte(e) > dte(b) ? e : b)); // furthest
-  return future[0]; // weekly: soonest standard
-}
+export type ResolveContractOpts = Pick<PickExpirationOpts, 'targetDte' | 'allowShortDte' | 'now' | 'name' | 'key'>;
 
-function targetPrice(spot: number, type: 'call' | 'put', strikeTarget: string): number {
-  if (strikeTarget === 'atm' || !spot) return spot;
-  const otm = strikeTarget === 'otm';
-  // OTM call = above spot, OTM put = below; ITM is the inverse.
-  const up = (type === 'call') === otm; // call+otm→up, put+otm→down, call+itm→down, put+itm→up
-  return up ? spot * 1.05 : spot * 0.95;
-}
+const targetPrice = strikeTargetPrice;
 
 const readableExp = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
@@ -190,11 +204,20 @@ const readableExp = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateStr
  */
 export async function resolveContract(
   underlying: string, type: 'call' | 'put', strikeTarget: string, expirationPref: string,
+  opts: ResolveContractOpts = {},
 ): Promise<ResolvedContract | null> {
   underlying = underlying.toUpperCase();
   const exps = await expirations(underlying).catch(() => [] as string[]);
   if (!exps.length) return null;
-  const exp = pickExpiration2(exps, expirationPref || 'monthly');
+  const exp = pickListedExpiration(exps, {
+    pref: expirationPref || 'weekly',
+    targetDte: opts.targetDte,
+    allowShortDte: opts.allowShortDte === true,
+    now: opts.now,
+    name: opts.name,
+    key: opts.key,
+  });
+  if (!exp) return null;
   const spot = (await alpacaData.lastPrice(underlying, { allowStale: true }).catch(() => null)) ?? null; // strike selection only — a stale spot is fine here; the contract itself must still have a live two-sided quote to trade
   // Fail closed if we can't price the underlying — don't silently pick a median
   // strike and then mislabel it as the requested moneyness.
@@ -203,10 +226,13 @@ export async function resolveContract(
   const list = type === 'call' ? calls : puts;
   if (!list.length) return null;
   const tgt = targetPrice(spot, type, strikeTarget || 'atm');
-  const c = list.reduce((best, x) => (Math.abs(x.strike - tgt) < Math.abs(best.strike - tgt) ? x : best));
+  const fieldsOf = (x: OptContract) => ({ mid: x.mid, bid: x.bid, ask: x.ask, last: x.last, close: x.close_price });
+  const c = pickNearestContract(list, tgt, fieldsOf, 'buy');
+  if (!c) return null;
   return {
     occSymbol: c.symbol, type, strike: c.strike, expiration: exp,
     bid: c.bid ?? null, ask: c.ask ?? null, mid: c.mid ?? null, spot,
+    last: c.last ?? null, close: c.close_price ?? null,
     readable: `${underlying} ${readableExp(exp)} $${c.strike} ${type}`,
   };
 }
@@ -218,28 +244,40 @@ export async function resolveContract(
  *  the Alpaca resolver if RH can't resolve — callers still fail closed if neither works. */
 export async function resolveContractRH(
   underlying: string, type: 'call' | 'put', strikeTarget: string, expirationPref: string,
+  opts: ResolveContractOpts = {},
 ): Promise<ResolvedContract | null> {
   underlying = underlying.toUpperCase();
   const spot = (await alpacaData.lastPrice(underlying, { allowStale: true }).catch(() => null)) ?? null; // strike selection only — a stale spot is fine here; the contract itself must still have a live two-sided quote to trade
-  if (!spot) return resolveContract(underlying, type, strikeTarget, expirationPref);
+  if (!spot) return resolveContract(underlying, type, strikeTarget, expirationPref, opts);
   // Target expiration as an explicit date (QuickBots pass a YYYY-MM-DD DTE date).
   const targetExp = /^\d{4}-\d{2}-\d{2}$/.test(expirationPref) ? expirationPref : new Date(Date.now() + 5 * 864e5).toISOString().slice(0, 10);
   const targetStrike = targetPrice(spot, type, strikeTarget || 'atm');
   try {
     const { rh } = await import('../rh/mcpClient.js');
-    if (!rh.isConnected()) return resolveContract(underlying, type, strikeTarget, expirationPref);
+    if (!rh.isConnected()) return resolveContract(underlying, type, strikeTarget, expirationPref, opts);
     const hit = await rh.resolveTradableOption(underlying, type, targetStrike, targetExp);
-    if (!hit) return resolveContract(underlying, type, strikeTarget, expirationPref);
+    if (!hit) return resolveContract(underlying, type, strikeTarget, expirationPref, opts);
+    // RH nearest-listed can land on 0–1 DTE; refuse that unless this bot is privileged.
+    const picked = pickListedExpiration([hit.expiration], {
+      pref: hit.expiration,
+      targetDte: opts.targetDte,
+      allowShortDte: opts.allowShortDte === true,
+      now: opts.now,
+      name: opts.name,
+      key: opts.key,
+    });
+    if (!picked) return resolveContract(underlying, type, strikeTarget, expirationPref, opts);
     const occ = buildOcc(underlying, hit.expiration, type, hit.strike);
     const qq = await latestQuotes([occ]).catch(() => ({}));
-    const mid = (qq as any)[occ]?.mid ?? null;
+    const qhit = lookupByOcc(qq as Record<string, any>, occ) || (qq as any)[occ];
     return {
       occSymbol: occ, type, strike: hit.strike, expiration: hit.expiration,
-      bid: (qq as any)[occ]?.bid ?? null, ask: (qq as any)[occ]?.ask ?? null, mid, spot,
+      bid: qhit?.bid ?? null, ask: qhit?.ask ?? null, mid: qhit?.mid ?? null, spot,
+      last: qhit?.last ?? null, close: qhit?.close ?? null,
       readable: `${underlying} ${readableExp(hit.expiration)} $${hit.strike} ${type}`, instrumentId: hit.instrumentId,
     };
   } catch {
-    return resolveContract(underlying, type, strikeTarget, expirationPref);
+    return resolveContract(underlying, type, strikeTarget, expirationPref, opts);
   }
 }
 

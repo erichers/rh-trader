@@ -1,13 +1,15 @@
 import { q, exec, audit, getTradingEnv } from '../db.js';
-import type { Mode, TradingEnv } from '../config.js';
+import { config, isCryptoSymbol, type Mode, type TradingEnv } from '../config.js';
 import { snapshot } from '../market/indicators.js';
 import { dteToExpiration } from '../market/expirations.js';
+import { isLeapsTrade, isShortDtePrivileged } from '../risk/dte.js';
 import { analyzeSymbol, aiReady } from '../ai/claude.js';
 import { executeDraft } from '../execute.js';
 import type { OrderDraft } from '../risk/engine.js';
-import { isCryptoSymbol } from '../config.js';
 import { refreshBars } from '../brokers/index.js';
 import { sizeDraft } from '../risk/sizing.js';
+import { isObserveOnlyBot, observeOnlySkipWhy } from '../risk/observe.js';
+import { allowlistSkipReason, assignInferredAssetClass, botClassSkipReason, looksLikeOptionPlay } from '../risk/optionPrice.js';
 
 export type Bot = {
   id: number;
@@ -341,6 +343,16 @@ export async function evaluateBot(botRow: any): Promise<any> {
   }
   const bot = parseBot(botRow);
   const results: any[] = [];
+  // Fri 8028140: equity ORB on an option-only desk. Stop emission here — do not
+  // convert to a made-up option, and do not open equity live / insert a veto row.
+  const classSkip = botClassSkipReason(bot, config.trading.allowedAssetClasses);
+  if (classSkip) {
+    const skipped = [{ skipped: classSkip, why: `${classSkip} — not submitted.` }];
+    await exec('UPDATE bots SET last_evaluated_at=NOW(), last_result=CAST(:r AS JSON) WHERE id=:id AND env=:env', {
+      r: JSON.stringify(skipped), id: bot.id, env: bot.env,
+    });
+    return skipped;
+  }
   for (const symbolRaw of bot.symbols) {
     const symbol = String(symbolRaw).toUpperCase();
     if (isCryptoSymbol(symbol)) {
@@ -377,6 +389,15 @@ export async function evaluateBot(botRow: any): Promise<any> {
     );
 
     if (ev.fired && aiOk) {
+      // Hard stop before sizing / executeDraft. enabled=1 and mode=auto must not
+      // turn a watch stub into a trading bot (drafts and vetoes included).
+      if (isObserveOnlyBot(bot)) {
+        results.push({
+          symbol, fired: true, observe_only: true, action: 'observe', status: 'observe_only',
+          checks: ev.checks, why: observeOnlySkipWhy(ev.why),
+        });
+        continue;
+      }
       const side = (bot.action?.side as 'buy' | 'sell') || ev.side;
       // RE-ENTRY POLICY: the worker re-evaluates every 120s on DAILY bars and a fired daily
       // signal holds all session — so allow a few entries/day SPACED by a cooldown (a persistent
@@ -393,11 +414,16 @@ export async function evaluateBot(botRow: any): Promise<any> {
           results.push({ symbol, fired: true, checks: ev.checks, why: `${ev.why} ${skip}` });
           continue;
         }
-        const isOption = (bot.asset_class || 'equity').toLowerCase() === 'option';
+        const isOption = looksLikeOptionPlay({
+          asset_class: bot.asset_class,
+          option_type: bot.action?.option_type,
+          strike_target: bot.action?.strike_target,
+          expiration: bot.action?.expiration,
+        });
         const draft: OrderDraft = {
           env: bot.env,
           symbol,
-          asset_class: bot.asset_class || 'equity',
+          asset_class: isOption ? 'option' : (bot.asset_class || 'equity'),
           side,
           qty: Number(bot.action?.qty ?? 1),
           order_type: bot.action?.order_type || 'market',
@@ -405,6 +431,7 @@ export async function evaluateBot(botRow: any): Promise<any> {
           source: 'bot',
           bot_id: bot.id,
         };
+        if (isObserveOnlyBot(bot) || bot.action?._observe_only) draft._observe_only = true;
         if (isOption) {
           // Option bots MUST carry the contract spec so executeDraft resolves a REAL contract
           // and sizes off its PREMIUM. Two bugs lived here: (1) these fields were dropped, so the
@@ -413,13 +440,42 @@ export async function evaluateBot(botRow: any): Promise<any> {
           // vetoing every order). Pass the spec; leave est_price for the resolved contract's mid.
           draft.option_type = (bot.action?.option_type === 'put' ? 'put' : 'call');
           draft.strike_target = bot.action?.strike_target || 'atm';
+          const key = String(bot.action?._strategy || bot.action?._key || '');
+          const privileged = isShortDtePrivileged({ key, name: bot.name, keys: [bot.action?._strategy, bot.action?._key] });
+          const leaps = isLeapsTrade({ expiration: bot.action?.expiration, name: bot.name, key });
+          const rawDte = Number(bot.action?._dte);
+          const targetDte = Number.isFinite(rawDte)
+            ? ((!privileged && rawDte < 2) ? 2 : rawDte)
+            : (bot.action?.expiration === 'monthly' ? 14 : 7);
           // Resolve DTE → expiration date at EVAL time (never bake a date at bot creation).
-          draft.expiration = Number.isFinite(Number(bot.action?._dte))
-            ? dteToExpiration(Number(bot.action._dte))
-            : (bot.action?.expiration || 'weekly');
+          // LEAPS keep their explicit far date. Everyone else gets a calendar target; the
+          // contract picker then snaps to a listed expiry in the allowed window (2–14, or
+          // 0–1 only if this bot is on the high-certainty allowlist).
+          draft.expiration = leaps && bot.action?.expiration
+            ? bot.action.expiration
+            : (Number.isFinite(rawDte) || !/^\d{4}-\d{2}-\d{2}$/.test(String(bot.action?.expiration || ''))
+              ? dteToExpiration(targetDte)
+              : bot.action.expiration);
+          draft._play = {
+            name: bot.name,
+            key,
+            dte: targetDte,
+            tp: Number(bot.risk?.take_profit_pct) || undefined,
+            sl: Number(bot.risk?.stop_loss_pct) || undefined,
+            trail: Number(bot.risk?.trailing_stop_pct) || undefined,
+            maxPositionUsd: Number(bot.risk?.max_position_usd) || undefined,
+            allow_0_1_dte: !!(bot.action?.allow_0_1_dte || bot.risk?.allow_0_1_dte || privileged),
+          };
           if (Number(bot.action?.est_price) > 0) draft.est_price = Number(bot.action.est_price);
         } else {
           draft.est_price = snap.last ?? bot.action?.est_price;
+        }
+        assignInferredAssetClass(draft);
+        const classSkip = allowlistSkipReason(draft.asset_class || 'equity', config.trading.allowedAssetClasses);
+        if (classSkip) {
+          // Do not insert a veto row for a class the desk does not trade.
+          results.push({ symbol, fired: true, skipped: classSkip, checks: ev.checks, why: `${ev.why} ${classSkip} — not submitted.` });
+          continue;
         }
         // SIZING: turn the effective dollar amount per trade (bot override, else the global
         // trade default) into whole shares/contracts. A bot that deliberately pins its own
