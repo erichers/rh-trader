@@ -298,6 +298,23 @@ describe('contract selection prefers 2–14 DTE and matches play vs expiration',
     assert.equal(pickListedExpiration(CHAIN, { pref: '2027-03-19', name: 'MU LEAPS core', now: thursday }), '2027-03-19');
   });
 
+  it('unlisted 2029-01-19 LEAPS pref falls back to furthest listed (TSLA 2028-12-15)', () => {
+    const chain = [...CHAIN, '2028-12-15']; // 2029-01-19 not listed
+    assert.ok(isLeapsTrade({ expiration: '2029-01-19', now: thursday }));
+    assert.equal(
+      pickListedExpiration(chain, { pref: '2029-01-19', name: 'TSLA LEAPS momentum', now: thursday }),
+      '2028-12-15',
+    );
+    const resolved = optionEntryDteCheck({
+      asset_class: 'option',
+      side: 'buy',
+      name: 'TSLA LEAPS momentum',
+      _contract: { expiration: '2028-12-15' },
+    }, thursday);
+    assert.equal(resolved.ok, true);
+    assert.equal(resolved.leaps, true);
+  });
+
   it('syncPlayDteToContract rewrites play.dte to the selected expiration', () => {
     const draft = {
       expiration: '2026-09-20',
