@@ -57,10 +57,20 @@ function uniqueIds(values: unknown[]): number[] {
   return out;
 }
 
+function normOcc(v: unknown): string {
+  return String(v || '').replace(/\s+/g, '').trim();
+}
+
+function fromOrder(o: MonitorOrderCandidate): MonitorBotMatch {
+  return { bot_id: positiveId(o.bot_id), order_id: positiveId(o.id), via: 'order' };
+}
+
 /**
- * Safe match. Draft bot_id always wins (the fill that opened the position).
- * Otherwise one distinct bot on matching buys, else one distinct fired signal.
- * Two different bots → ambiguous, leave NULL (do not guess).
+ * Draft bot_id always wins (the fill that opened the position).
+ * Otherwise the latest matching buy: exact OCC first (from raw.draft._contract.occSymbol),
+ * then a buy that has no OCC stored (orders have no occ_symbol column).
+ * A buy for a different contract is never used. No buy → one fired signal, else none.
+ * AI opens stay null because they have no draft bot_id and no bot buy.
  */
 export function matchMonitorBot(input: {
   symbol: string;
@@ -75,22 +85,26 @@ export function matchMonitorBot(input: {
     return { bot_id: draft, order_id: positiveId(input.draftOrderId), via: 'draft' };
   }
   const sym = String(input.symbol || '').toUpperCase();
-  const occ = String(input.occ || '').replace(/\s+/g, '').trim();
-  const orders = (input.orders || []).filter((o) => {
-    if (String(o.side || 'buy').toLowerCase() !== 'buy') return false;
-    if (String(o.symbol || '').toUpperCase() !== sym) return false;
-    if (!positiveId(o.bot_id)) return false;
-    if (occ) {
-      const oocc = String(o.occ || '').replace(/\s+/g, '').trim();
-      if (oocc && oocc !== occ) return false;
-    }
-    return true;
-  });
-  const orderBots = uniqueIds(orders.map((o) => o.bot_id));
-  if (orderBots.length > 1) return { bot_id: null, order_id: null, via: 'ambiguous' };
-  if (orderBots.length === 1) {
-    const hit = orders.find((o) => positiveId(o.bot_id) === orderBots[0]);
-    return { bot_id: orderBots[0], order_id: positiveId(hit?.id), via: 'order' };
+  const occ = normOcc(input.occ);
+  const buys = (input.orders || [])
+    .filter((o) => {
+      if (String(o.side || 'buy').toLowerCase() !== 'buy') return false;
+      if (String(o.symbol || '').toUpperCase() !== sym) return false;
+      return !!positiveId(o.bot_id);
+    })
+    .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
+  if (occ) {
+    const exact = buys.find((o) => normOcc(o.occ) === occ);
+    if (exact) return fromOrder(exact);
+    const otherContract = buys.some((o) => {
+      const oocc = normOcc(o.occ);
+      return !!oocc && oocc !== occ;
+    });
+    const bare = buys.find((o) => !normOcc(o.occ));
+    if (bare && !otherContract) return fromOrder(bare);
+  } else {
+    const hit = buys[0];
+    if (hit) return fromOrder(hit);
   }
   const sigs = (input.signals || []).filter((s) => {
     if (s.fired === 0 || s.fired === false) return false;

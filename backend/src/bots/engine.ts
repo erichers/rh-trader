@@ -12,6 +12,7 @@ import { isObserveOnlyBot, observeOnlySkipWhy } from '../risk/observe.js';
 import { allowlistSkipReason, assignInferredAssetClass, botClassSkipReason, looksLikeOptionPlay } from '../risk/optionPrice.js';
 import { callsOnlyBuyCheck, convertEquityDraftToCall, shouldConvertEquityBot } from '../risk/callsonly.js';
 import { botEvalTimeframe, signalTimeframe } from './timeframe.js';
+import { evalSymbols } from './indexUniverse.js';
 
 export type Bot = {
   id: number;
@@ -570,7 +571,7 @@ export async function evaluateAllEnabledBots(): Promise<any[]> {
   const out: any[] = [];
   for (let b of bots) {
     try {
-      if (focus.enabled) b = { ...b, symbols: JSON.stringify([focus.symbol]) };
+      if (focus.enabled) b = { ...b, symbols: evalSymbols(b, focus) };
       out.push({ bot: b.name, results: await evaluateBot(b), focused: focus.enabled ? focus.symbol : undefined });
     } catch (e: any) {
       out.push({ bot: b.name, error: e?.message || String(e) });

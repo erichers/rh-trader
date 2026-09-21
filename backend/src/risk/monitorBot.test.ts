@@ -26,6 +26,20 @@ describe('monitor bot_id persistence', () => {
     assert.equal(plan.order_id, 12);
   });
 
+  it('leaves an AI open with null bot_id alone', () => {
+    const plan = planMonitorOpen({
+      draftBotId: null,
+      orderId: 4,
+      hasExisting: true,
+      existingBotId: null,
+    });
+    assert.equal(plan.action, 'skip');
+    assert.equal(plan.bot_id, null);
+    const fresh = planMonitorOpen({ draftBotId: null, orderId: 4, hasExisting: false });
+    assert.equal(fresh.action, 'insert');
+    assert.equal(fresh.bot_id, null);
+  });
+
   it('does not overwrite a monitor that already has a bot', () => {
     const plan = planMonitorOpen({
       draftBotId: 39,
@@ -37,31 +51,39 @@ describe('monitor bot_id persistence', () => {
     assert.equal(plan.bot_id, 88);
   });
 
-  it('matches a unique buy order and refuses two different bots', () => {
+  it('uses the latest buy, preferring exact OCC over a different contract', () => {
     const occ = 'NVDA260116C00180000';
-    const one = matchMonitorBot({
-      symbol: 'NVDA',
-      occ,
-      orders: [
-        { id: 10, bot_id: 39, symbol: 'NVDA', occ, side: 'buy' },
-        { id: 9, bot_id: 39, symbol: 'NVDA', occ, side: 'buy' },
-        { id: 8, bot_id: 4, symbol: 'SPY', occ: 'SPY260116C00500000', side: 'buy' },
-      ],
-    });
-    assert.equal(one.via, 'order');
-    assert.equal(one.bot_id, 39);
-    assert.equal(one.order_id, 10);
-
-    const mixed = matchMonitorBot({
+    const latest = matchMonitorBot({
       symbol: 'NVDA',
       occ,
       orders: [
         { id: 10, bot_id: 39, symbol: 'NVDA', occ, side: 'buy' },
         { id: 11, bot_id: 88, symbol: 'NVDA', occ, side: 'buy' },
+        { id: 12, bot_id: 4, symbol: 'NVDA', occ: 'NVDA260116C00190000', side: 'buy' },
       ],
     });
-    assert.equal(mixed.via, 'ambiguous');
-    assert.equal(mixed.bot_id, null);
+    assert.equal(latest.via, 'order');
+    assert.equal(latest.bot_id, 88);
+    assert.equal(latest.order_id, 11);
+
+    const bare = matchMonitorBot({
+      symbol: 'NVDA',
+      occ,
+      orders: [
+        { id: 3, bot_id: 39, symbol: 'NVDA', side: 'buy' },
+        { id: 7, bot_id: 88, symbol: 'NVDA', occ: '', side: 'buy' },
+      ],
+    });
+    assert.equal(bare.bot_id, 88);
+    assert.equal(bare.order_id, 7);
+
+    const wrongContract = matchMonitorBot({
+      symbol: 'NVDA',
+      occ,
+      orders: [{ id: 9, bot_id: 4, symbol: 'NVDA', occ: 'NVDA260116C00190000', side: 'buy' }],
+    });
+    assert.equal(wrongContract.via, 'none');
+    assert.equal(wrongContract.bot_id, null);
   });
 
   it('falls back to a unique fired signal and ignores unfired rows', () => {
