@@ -16,6 +16,8 @@ import { recordEquitySnapshot } from './market/pnl.js';
 import { ensureFleet } from './fleet.js';
 import { embedPending } from './rag.js';
 import { learningTick } from './learning.js';
+import { config } from './config.js';
+import { runMuseWatchCycle } from './muse/watch.js';
 
 let timers: NodeJS.Timeout[] = [];
 
@@ -110,7 +112,10 @@ export function startWorker() {
   // Re-verify every provider's live model ids (model ids get retired without notice).
   const models = loop('models', 6 * 3_600_000, async () => { await probeProviders(); });
 
-  timers = [sync, bots, news, monitors, campaign, newsAi, review, focusLearn, alerts, models, embed, learning];
+  // Muse observe-only watcher: open positions + armed bots. Never places.
+  const watch = loop('muse.watch', config.watch.intervalMs, async () => { await runMuseWatchCycle(); });
+
+  timers = [sync, bots, news, monitors, campaign, newsAi, review, focusLearn, alerts, models, embed, learning, watch];
   void (async () => {
     await probeProviders().catch(() => {}); // non-blocking at boot, before the first AI call
     if (await brokerReady()) await syncAll().catch(() => {});
@@ -121,6 +126,7 @@ export function startWorker() {
       dailyReview().catch(() => {});
       newsMonitor().catch(() => {});
       getFocus().then((f) => { if (f.enabled) learnTicker(f.symbol).catch(() => {}); }).catch(() => {});
+      runMuseWatchCycle().catch(() => {});
     }, 20_000);
   })();
 }

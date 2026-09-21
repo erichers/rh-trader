@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   JEV_CHOICE_CONF_MIN,
@@ -18,6 +18,7 @@ import {
   type JevClient,
   type JevPanelAnswers,
 } from './jev.js';
+import { resetJevBudgetForTests } from './jevBudget.js';
 
 function panel(over: Partial<JevPanelAnswers> = {}): JevPanelAnswers {
   return {
@@ -42,6 +43,7 @@ function mockClient(answers: Record<string, unknown>): JevClient {
 }
 
 describe('Jev / TypeSafe entry panel', () => {
+  beforeEach(() => resetJevBudgetForTests());
   it('parses enter | skip | size_down and exposes the four questions', () => {
     assert.equal(parseJevPick('enter'), 'enter');
     assert.equal(parseJevPick('SKIP'), 'skip');

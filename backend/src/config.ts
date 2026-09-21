@@ -88,6 +88,18 @@ export const config = {
     model: process.env.TYPESAFE_MODEL || 'jev-latest',
     entryMode: (process.env.JEV_ENTRY_MODE || 'shadow').toLowerCase() === 'active' ? 'active' : 'shadow',
     logPath: process.env.JEV_LOG_PATH || path.join(root, 'data', 'jev-entry.jsonl'),
+    spendPath: process.env.JEV_SPEND_PATH || path.join(root, 'data', 'jev-spend.json'),
+    budgetUsd: num(process.env.JEV_BUDGET_USD, 5),
+    reserveUsd: num(process.env.JEV_BUDGET_RESERVE_USD, 0.50),
+    spentUsdSeed: num(process.env.JEV_SPENT_USD, 0),
+  },
+  muse: {
+    apiKey: process.env.META_MUSE_API_KEY || process.env.MUSE_API_KEY || process.env.MODEL_API_KEY || '',
+    baseUrl: process.env.META_MUSE_BASE_URL || process.env.MUSE_BASE_URL || 'https://api.meta.ai/v1',
+    model: process.env.META_MUSE_MODEL || process.env.MUSE_MODEL || 'muse-spark-1.3',
+  },
+  watch: {
+    intervalMs: num(process.env.WATCH_INTERVAL_MS, 15 * 60_000),
   },
   alpaca: {
     apiKey: process.env.ALPACA_API_KEY || '',

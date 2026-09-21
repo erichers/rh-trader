@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { healthVerdict } from './health.js';
 import { SWING_LAW } from './exitpolicy.js';
+import { museWatchLamp } from '../muse/watch.js';
 
 describe('healthVerdict', () => {
   it('is ready only when db + alpaca_paper + alpaca reachable', () => {
@@ -69,5 +70,16 @@ describe('SWING_LAW /api/health snapshot', () => {
       entryDteMax: 14,
       leapsEligible: true,
     });
+  });
+});
+
+describe('health.watch lamp', () => {
+  it('Muse down is unknown, not green', () => {
+    const lamp = museWatchLamp({
+      configured: false, running: true, lastCycle: 'x', lastError: null,
+    });
+    assert.equal(lamp.ok, false);
+    assert.equal(lamp.available, false);
+    assert.equal(lamp.observeOnly, true);
   });
 });

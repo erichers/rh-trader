@@ -15,6 +15,13 @@ import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { config } from '../config.js';
 import { choice, type ChoiceAnswer } from './decide.js';
+import {
+  canCallJevApi,
+  loadJevSpend,
+  recordJevUsage,
+  type JevBudgetIo,
+} from './jevBudget.js';
+import { fallbackJevGate } from './jevFallback.js';
 
 export const JEV_MODEL_DEFAULT = 'jev-latest';
 export const JEV_ENTRY_MODE_DEFAULT = 'shadow' as const;
@@ -394,12 +401,40 @@ export async function jevEntryGate(input: JevEntryState & {
   model?: string | null;
   log?: (file: string, line: string) => Promise<void>;
   logPath?: string;
+  budgetIo?: JevBudgetIo;
+  llmReview?: (system: string, user: string) => Promise<{ go?: boolean; because?: string }>;
 } = {}): Promise<JevGate> {
   const side = String(input.side || 'buy').toLowerCase();
   const source = String(input.source || 'bot').toLowerCase();
   const mode = jevEntryMode(deps.mode);
   if (side !== 'buy') return failOpenGate('jev not asked — exit/flatten stays deterministic', false, mode);
   if (source !== 'bot' && source !== 'ai') return failOpenGate('jev not asked — not a bot/ai entry', false, mode);
+
+  const spend = await loadJevSpend(deps.budgetIo);
+  if (!canCallJevApi(spend)) {
+    const fb = await fallbackJevGate(input, mode, { llmReview: deps.llmReview });
+    const gate = failOpenGate(fb.because, false, mode);
+    const out: JevGate = {
+      ...gate,
+      pick: mode === 'shadow' ? 'enter' : fb.pick,
+      failOpen: fb.failOpen,
+      because: fb.because,
+      panel: fb.panel,
+    };
+    await appendJevJsonl({
+      ts: new Date().toISOString(),
+      event: 'jev.fallback',
+      mode,
+      degraded: true,
+      reason: spend.reason,
+      pick: out.pick,
+      failOpen: out.failOpen,
+      because: out.because,
+      via: fb.via,
+      state: buildJevState(input),
+    }, deps.logPath, deps.log);
+    return out;
+  }
 
   const resolved = await resolveClient(deps);
   if (!resolved.client) {
@@ -425,6 +460,7 @@ export async function jevEntryGate(input: JevEntryState & {
       questions,
       model: jevModel(deps.model),
     });
+    await recordJevUsage({ inputTokens: res?.usage?.input_tokens ?? 800, io: deps.budgetIo });
     const panel = parseJevPanel(res?.answers);
     const composed = composeJevEntry(panel, mode);
     const actionConf = panel.action?.confidence;
@@ -471,6 +507,9 @@ export async function jevEntryGate(input: JevEntryState & {
     return gate;
   } catch (e: any) {
     const msg = e?.message || String(e);
+    const statusMatch = String(msg).match(/\b(401|402|429)\b/);
+    const status = statusMatch ? Number(statusMatch[1]) : undefined;
+    await recordJevUsage({ error: msg, status, io: deps.budgetIo });
     const because = `jev error — fail-open: ${msg}`.slice(0, 240);
     const gate = failOpenGate(because, true, mode);
     await appendJevJsonl({

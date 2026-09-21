@@ -3,6 +3,8 @@ import { ping, getGlobalMode, getKillSwitch, getTradingEnv, getRiskLimits } from
 import { alpacaConfigured, probeAlpacaPaper, type AlpacaProbe } from '../brokers/alpaca.js';
 import { RISK_LAW } from './law.js';
 import { SWING_LAW } from './exitpolicy.js';
+import { museWatchStatus, type MuseWatchLamp } from '../muse/watch.js';
+import { jevHealth, type JevHealth } from './jevBudget.js';
 
 export type HealthFailure =
   | 'db_down'
@@ -29,6 +31,8 @@ export type PaperHealth = {
   riskLaw: { maxTradeUsd: number; maxDailyDrawdownPct: number };
   swingLaw: typeof SWING_LAW;
   limits: { maxPositionUsd: number; maxConcentrationPct: number; maxDailyLossPct: number; maxOrdersPerDay: number } | null;
+  watch?: MuseWatchLamp;
+  jev?: JevHealth;
 };
 
 /** Pure verdict used by /api/health and tests. Never throws. */
@@ -101,6 +105,11 @@ export async function collectPaperHealth(): Promise<PaperHealth> {
   const verdict = healthVerdict({ db, env: String(env), live, alpaca });
   const failures = [...new Set([...extraFailures, ...verdict.failures])];
 
+  let watch: MuseWatchLamp | undefined;
+  try { watch = museWatchStatus(); } catch { /* lamp stays omitted */ }
+  let jev: JevHealth | undefined;
+  try { jev = await jevHealth(); } catch { /* optional */ }
+
   return {
     ok: db, // process answered; db is the minimum "API can persist"
     ready: verdict.ready,
@@ -113,6 +122,8 @@ export async function collectPaperHealth(): Promise<PaperHealth> {
     alpaca,
     failures,
     limits,
+    watch,
+    jev,
     ...base,
   };
 }

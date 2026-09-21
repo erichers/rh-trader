@@ -76,14 +76,6 @@ export async function registerRoutes(app: FastifyInstance) {
   // killSwitch/paper/listen) stay so a running Mac desk is unchanged. Extra:
   // ready, failures[], alpaca, riskLaw.
   app.get('/api/health', async () => {
-    const watch = {
-      available: false,
-      observeOnly: true,
-      running: false,
-      lastCycle: null as string | null,
-      lastError: null as string | null,
-      note: 'Muse watcher is optional. If this API is down, treat watch as unknown — never green.',
-    };
     try {
       const paper = await collectPaperHealth();
       let broker: any = { ready: paper.alpaca.ok, kind: 'alpaca', alpacaConfigured: paper.alpaca.configured };
@@ -98,7 +90,8 @@ export async function registerRoutes(app: FastifyInstance) {
         rh: { status: rh.status, tools: rh.listToolsCached().length, authUrl: rh.authUrl },
         broker,
         model: aiS,
-        watch,
+        watch: paper.watch,
+        jev: paper.jev,
       };
     } catch (e: any) {
       // Fall back to the old shape if the collector throws — do not 500 the desk.
@@ -116,7 +109,15 @@ export async function registerRoutes(app: FastifyInstance) {
         killSwitch: await getKillSwitch().catch(() => false),
         listen: `127.0.0.1:${config.server.port}`,
         failures: ['db_down'],
-        watch,
+        watch: {
+          available: false,
+          observeOnly: true,
+          running: false,
+          lastCycle: null,
+          lastError: e?.message || 'health collector failed',
+          ok: false,
+          note: 'Muse watcher is optional. If this API is down, treat watch as unknown — never green.',
+        },
         error: e?.message || 'health collector failed',
       };
     }

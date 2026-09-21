@@ -49,7 +49,11 @@ console.log(`ok=${d.ok} db=${d.db} env=${d.env} live=${d.live} mode=${d.mode} ki
 if (alpaca.configured != null || alpaca.ok != null) {
   console.log(`alpaca configured=${alpaca.configured} ok=${alpaca.ok}${alpaca.error ? ' error=' + alpaca.error : ''}`);
 }
-console.log(`watch available=${watch.available} running=${watch.running} observeOnly=${watch.observeOnly}`);
+console.log(`watch available=${watch.available} running=${watch.running} observeOnly=${watch.observeOnly} ok=${watch.ok} lastError=${watch.lastError || ''}`);
+if (d.jev) {
+  const j = d.jev;
+  console.log(`jev ok=${j.ok} mode=${j.mode} spent=${j.spentUsd} budget=${j.budgetUsd} degraded=${j.degraded}${j.reason ? ' reason=' + j.reason : ''}`);
+}
 if (d.swingLaw) {
   const s = d.swingLaw;
   console.log(`swingLaw hard=${s.hardStopPct} arm=${s.gainLockArmPct} floor=${s.gainLockFloorPct} tp=${s.softTakeProfitPct} trail=${s.trailPct} dte=${s.entryDteMin}-${s.entryDteMax} leaps=${s.leapsEligible}`);
