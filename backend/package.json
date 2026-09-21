@@ -8,7 +8,7 @@
     "start": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/risk/observe.test.ts src/risk/exposure.test.ts src/risk/law.test.ts src/risk/health.test.ts src/risk/exitpolicy.test.ts src/risk/decide.test.ts src/risk/dte.test.ts src/risk/exitlifecycle.test.ts src/risk/optionPrice.test.ts src/risk/callsonly.test.ts src/risk/optionsonly.test.ts src/risk/jev.test.ts src/risk/jevBudget.test.ts src/risk/jevSettings.test.ts src/risk/jevScope.test.ts src/risk/monitorBot.test.ts src/risk/monitorList.test.ts src/paperArm.test.ts src/bots/timeframe.test.ts src/muse/watch.test.ts src/muse/improve.test.ts src/bots/autofix.test.ts src/bots/indexUniverse.test.ts ../frontend/src/sidebarPref.test.ts",
+    "test": "tsx --test src/risk/observe.test.ts src/risk/exposure.test.ts src/risk/law.test.ts src/risk/health.test.ts src/risk/exitpolicy.test.ts src/risk/decide.test.ts src/risk/dte.test.ts src/risk/exitlifecycle.test.ts src/risk/optionPrice.test.ts src/risk/callsonly.test.ts src/risk/optionsonly.test.ts src/risk/jev.test.ts src/risk/jevBudget.test.ts src/risk/jevSettings.test.ts src/risk/jevScope.test.ts src/risk/monitorBot.test.ts src/risk/monitorList.test.ts src/paperArm.test.ts src/bots/timeframe.test.ts src/muse/watch.test.ts src/muse/improve.test.ts src/bots/autofix.test.ts src/bots/indexUniverse.test.ts ../frontend/src/sidebarPref.test.ts ../frontend/src/modelCopy.test.ts",
     "rh:auth": "tsx src/rh/authCli.ts",
     "seed:playbooks": "tsx src/seed/playbooks.ts",
     "seed:research": "tsx src/seed/research.ts",

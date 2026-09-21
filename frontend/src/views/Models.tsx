@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useParams } from 'react-router-dom';
 import { AiModels, GetJev, GetMuse, SetBotJev, SetJev, SetMuse } from '../api/client';
-import { jevLastText, museTuneText } from '../modelCopy';
+import { JEV_CADENCE_FALLBACK, jevLastText, jevSkipLabel, museTuneText } from '../modelCopy';
 import { Badge, Card, fmtDateTime } from '../components/ui';
 
 export type ModelId = 'jev' | 'muse' | 'ai';
@@ -123,7 +123,8 @@ function HubCard({ to, title, role, dot, status, body }: { to: string; title: st
 function JevDetail({ health, onChange }: { health: any; onChange: () => void }) {
   const [live, setLive] = useState<any>(null);
   const [err, setErr] = useState('');
-  const reload = () => GetJev().then((row) => { setLive(row); setErr(''); }).catch(() => setLive(null));
+  const [status, setStatus] = useState<'loading' | 'ok' | 'down'>('loading');
+  const reload = () => GetJev().then((row) => { setLive(row); setErr(''); setStatus('ok'); }).catch(() => { setLive(null); setStatus('down'); });
   useEffect(() => { reload(); }, [health?.jev]);
   const j = live || health?.jev || {};
   const cur = jevModeOf({ jev: j });
@@ -131,11 +132,7 @@ function JevDetail({ health, onChange }: { health: any; onChange: () => void }) 
   const exit = j.lastExit || null;
   const bots = Array.isArray(j.bots) ? j.bots : [];
   const decisions = Array.isArray(j.decisions) ? j.decisions : [];
-  const cadence = Array.isArray(j.cadence) && j.cadence.length ? j.cadence : [
-    { band: 'short', dte: '0 to 3', every: '5 min' },
-    { band: 'medium', dte: '4 to 14', every: '20 min' },
-    { band: 'leaps', dte: '180 and out', every: '4 hr' },
-  ];
+  const cadence = Array.isArray(j.cadence) && j.cadence.length ? j.cadence : JEV_CADENCE_FALLBACK;
 
   const setMode = async (m: 'off' | 'shadow' | 'active') => {
     await SetJev(m === 'off' ? { enabled: false, mode: 'off' } : { enabled: true, mode: m });
@@ -169,16 +166,13 @@ function JevDetail({ health, onChange }: { health: any; onChange: () => void }) 
         <div className="model-brief">
           <span className="model-tape">TypeSafe · entry and exit</span>
           <p>
-            Jev is a lightning panel. It can advise a new long call (enter, skip, or size down) and,
-            when that bot's exit scope is on, an open paper option (hold, exit, or tighten).
-            It is not a price predictor.
+            Jev advises a new long call (enter, skip, or size down) and, when that bot's exit scope is on,
+            an open paper option (hold, exit, or tighten). It is not a price predictor.
           </p>
           <p>
-            Hard rails stay above it: kill switch, options-only, calls-only, RTH entry rails,
-            the hard stop, the gain-lock floor (+1.5%), and the trail. A Jev exit never turns the hard stop off.
-            Global mode is off, shadow, or active. Each bot defaults off. Jev acts only on Alpaca paper,
-            and only when global mode is active and that bot's entry or exit switch is on.
-            Otherwise the desk logs the decision and does not act.
+            The hard stop and the +1.5% gain-lock always win. Global mode is off, shadow, or active.
+            Each bot defaults off. Jev acts only on Alpaca paper, and only when global mode is active
+            and that scope is on. Off still logs a shadow decision and does not call TypeSafe.
           </p>
         </div>
       </Card>
@@ -223,7 +217,9 @@ function JevDetail({ health, onChange }: { health: any; onChange: () => void }) 
       <Card title="Per bot" right={<span className="muted" style={{ fontSize: 12 }}>Default off</span>}>
         <p className="muted jev-help">Off still logs a shadow decision on cadence and does not call TypeSafe. On can spend the $5 budget when a check is due. Entry and exit are separate.</p>
         {err && <div className="amber" style={{ marginBottom: 8 }}>{err}</div>}
-        {!bots.length && <div className="muted">No bots on this account yet.</div>}
+        {!bots.length && status === 'loading' && <div className="muted">Loading bots…</div>}
+        {!bots.length && status === 'down' && <div className="muted">API is down, so bot switches are not loaded. They stay off until the desk answers.</div>}
+        {!bots.length && status === 'ok' && <div className="muted">No bots on this account yet. Add one on Bots, then turn a scope on here.</div>}
         {!!bots.length && (
           <table className="jev-bots">
             <thead>
@@ -233,7 +229,7 @@ function JevDetail({ health, onChange }: { health: any; onChange: () => void }) 
               {bots.map((b: any) => (
                 <tr key={b.id}>
                   <td>
-                    <b>{b.name}</b>
+                    <b><Link to={`/bots?bot=${b.id}`}>{b.name}</Link></b>
                     {!b.enabled && <span className="muted"> · bot off</span>}
                   </td>
                   <td className="muted">{(b.symbols || []).slice(0, 4).join(', ') || 'any'}</td>
@@ -248,7 +244,8 @@ function JevDetail({ health, onChange }: { health: any; onChange: () => void }) 
 
       <Card title="Decision log">
         <p className="muted jev-help">Every check is kept, including ones skipped because that bot is off. Applied means global active, the scope was on, and the desk is on Alpaca paper.</p>
-        {!decisions.length && <div className="muted">No decisions yet.</div>}
+        {!decisions.length && status === 'down' && <div className="muted">Decision log needs the API.</div>}
+        {!decisions.length && status !== 'down' && <div className="muted">No decisions yet.</div>}
         {!!decisions.length && (
           <table className="jev-log">
             <thead>
@@ -262,7 +259,7 @@ function JevDetail({ health, onChange }: { health: any; onChange: () => void }) 
                   <td><b>{d.pick || 'none'}</b></td>
                   <td>{d.symbol || ''}</td>
                   <td className="muted">{d.bot || ''}</td>
-                  <td>{d.applied ? <span className="green">yes</span> : <span className="muted">{d.skipped || 'logged'}</span>}</td>
+                  <td>{d.applied ? <span className="green">yes</span> : <span className="muted">{jevSkipLabel(d.skipped)}</span>}</td>
                 </tr>
               ))}
             </tbody>
@@ -279,7 +276,7 @@ function PickCard({ label, last, empty }: { label: string; last: any; empty: str
     <div className="jev-pick">
       <div className="muted jev-kicker">{label}</div>
       {text ? <div className="jev-pick-body">{text}</div> : <div className="muted">{empty}</div>}
-      {last?.applied === false && <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>Logged, not applied.</div>}
+      {last?.applied === false && <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>Logged, not applied{last?.skipped ? ` (${jevSkipLabel(last.skipped)})` : ''}.</div>}
       {last?.at && <div className="muted" style={{ marginTop: 6, fontSize: 11 }}>{fmtDateTime(last.at)}</div>}
     </div>
   );
@@ -287,8 +284,9 @@ function PickCard({ label, last, empty }: { label: string; last: any; empty: str
 
 function ScopeToggle({ on, label, onClick }: { on: boolean; label: string; onClick: () => void }) {
   return (
-    <button type="button" className={on ? 'primary' : ''} aria-pressed={on} onClick={onClick}>
-      {label} {on ? 'on' : 'off'}
+    <button type="button" className={`jev-switch${on ? ' on' : ''}`} aria-pressed={on} aria-label={`${label} ${on ? 'on' : 'off'}`} onClick={onClick}>
+      <span>{label}</span>
+      <span className="jev-switch-v">{on ? 'on' : 'off'}</span>
     </button>
   );
 }

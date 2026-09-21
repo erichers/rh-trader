@@ -128,6 +128,21 @@ describe('muse improve local path', () => {
     assert.equal(formatMuseTune(res.lastTune), 'last tune: bot missing');
     assert.equal(formatMuseTune({ at: 't', botId: 39, name: 'NVDA Momentum' }), 'last tune NVDA Momentum');
   });
+
+  it('keeps per-bot Jev flags when it clamps exits', () => {
+    const p = proposeMuseImprove({
+      id: 41,
+      name: 'NVDA call',
+      mode: 'full_auto',
+      enabled: 1,
+      action: { option_type: 'call' },
+      risk: { stop_loss_pct: 18, take_profit_pct: 40, trailing_stop_pct: 25, jev: { entry: true, exit: false } },
+      rules: {},
+    });
+    assert.ok(p);
+    assert.deepEqual(p!.next.risk.jev, { entry: true, exit: false });
+    assert.equal(p!.next.risk.stop_loss_pct, 10);
+  });
 });
 
 describe('museWatchLamp improve vs observe', () => {

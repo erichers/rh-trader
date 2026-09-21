@@ -290,8 +290,18 @@ a.model-hub-card:hover { border-color: var(--border-strong); color: inherit; }
 .jev-bands { display: flex; gap: 8px; flex-wrap: wrap; }
 .jev-band { flex: 1 1 88px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; }
 .jev-band b { display: block; margin-top: 2px; font-size: 15px; }
-.jev-bots button, .jev-log { font-size: 12px; }
+.jev-log { font-size: 12px; }
 .jev-bots td, .jev-log td { vertical-align: middle; }
+.jev-switch {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 2px 2px 8px; font-size: 11px; font-weight: 600;
+}
+.jev-switch-v {
+  min-width: 32px; text-align: center; padding: 3px 7px; border-radius: 999px;
+  background: var(--panel2); color: var(--muted); font-weight: 700;
+}
+.jev-switch.on { border-color: var(--green-line); }
+.jev-switch.on .jev-switch-v { background: var(--green); color: #06210a; }
 
 @media (min-width: 761px) {
   .app.nav-collapsed { grid-template-columns: 68px 1fr; }

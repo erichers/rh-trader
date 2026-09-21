@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Bots, SetBotEnabled, SetBotMode, EvalBot, BacktestBot, Health, api } from '../api/client';
 import { Card, Badge, FleetBadge, useAsync, Sym } from '../components/ui';
 import { Icon } from '../components/icons';
 import { optionLabelFromAction } from '../lib/options';
+import { jevScopeFlags, jevScopeLabel } from '../modelCopy';
 import BotWizard, { type BotPreset } from '../components/BotWizard';
 import { PromotionModal } from '../components/quanttools';
 import { RiskCell } from '../components/risksizing';
@@ -142,6 +143,7 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
   };
 
   const symbols = J(bot.symbols, []);
+  const jev = jevScopeFlags(bot.risk);
   const action = J(bot.action, {});
   const rules = J(bot.rules, {});
   const aiGate = J(bot.ai_gate, { enabled: false });
@@ -221,6 +223,9 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
           {action.option_type && <Badge kind={action.option_type === 'call' ? 'green' : 'red'}>{action.option_type}</Badge>}
           {action._category && <span className="pill">{action._category}</span>}
           {probs.length > 0 && <Badge kind={probs.some(p=>p.kind==='red')?'red':'amber'}>{probs.length} issue{probs.length>1?'s':''}</Badge>}
+          <Link to="/models/jev" className={`pill${jev.entry || jev.exit ? ' on' : ''}`} title="Per-bot Jev. Default off." onClick={(e) => e.stopPropagation()}>
+            Jev {jevScopeLabel(jev)}
+          </Link>
         </div>
         <div className="row" onClick={(e) => e.stopPropagation()}>
           <span className="muted" style={{ fontSize: 11 }}>{symbols.join(', ')}</span>
@@ -242,6 +247,11 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
       {open && (
         <div style={{ marginTop: 12 }}>
           <div style={{ marginBottom: 10 }}><b className="muted">How it works:</b> {explain(rules, action, aiGate)}</div>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Jev is {jev.entry ? 'on for entries' : 'off for entries'} and {jev.exit ? 'on for exits' : 'off for exits'}.{' '}
+            <Link to="/models/jev">Change it on Models → Jev</Link>.
+            Off still logs a shadow decision and does not call TypeSafe. The hard stop and +1.5% gain-lock still run.
+          </p>
 
           {action._quickbot && (
             <div className="row" style={{ justifyContent: 'space-between', padding: '8px 10px', borderRadius: 7, marginBottom: 10, background: 'rgba(0,208,156,.08)', border: '1px solid rgba(0,208,156,.25)' }}>
@@ -396,6 +406,7 @@ export default function BotsView() {
     <Card title={<span className="row" style={{ gap: 8 }}>Bots ({bots.length}) <FleetBadge env={env} /></span>} right={<span className="row" style={{ gap: 8 }}><button className="primary" onClick={() => setWizard({})}>+ New bot (wizard)</button><a href="#/quickbots" className="icon-btn"><Icon name="bolt" size={14} /> QuickBots</a><a href="#/strategies">Strategy Library</a></span>}>
       <div className="muted" style={{ marginBottom: 10 }}>
         Click a bot to expand: see how it works, edit every setting, run/backtest it, and enable it.
+        Jev stays off until you turn a scope on under Models → Jev.
         {broken > 0 && <span className="red"> {broken} bot(s) have issues that need fixing.</span>}
         {health.data && !health.data.broker?.alpacaConfigured && <span className="amber"> Alpaca market data is not configured — options bots can't get prices.</span>}
       </div>
