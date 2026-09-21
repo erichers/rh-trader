@@ -159,13 +159,13 @@ export async function checkMonitors(opts?: { reconcileOnly?: boolean }): Promise
     const slPct = Number(m.sl_pct) || 0;
     const tpPct = Number(m.tp_pct) || 0;
     let trailPct = Number(m.trail_pct) || 0;
-    // Rails first. Jev is consulted only when they say hold, and only on paper options.
+    // Rails first. Jev still logs on the health cadence when a rail already owns the sell.
     let reason = exitReason(fav, peakFav, { tp: tpPct, sl: slPct, trail: trailPct }) || '';
     if (!reason && nearClose) {
       reason = await flattenReasonFor(m, env, { nearClose, longGap }) || '';
     }
     let jevAdvice: { pick: 'hold' | 'exit' | 'tighten' | 'partial'; applied: boolean } | null = null;
-    if (!reason && env === 'alpaca_paper' && isOption && m.occ_symbol) {
+    if (env === 'alpaca_paper' && isOption && m.occ_symbol) {
       try {
         const bot = botById.get(Number(m.bot_id));
         const exp = occToContract(m.occ_symbol)?.expiration || '';
@@ -197,6 +197,7 @@ export async function checkMonitors(opts?: { reconcileOnly?: boolean }): Promise
           paper: true,
           botFlags: flags,
           rth: marketOpen,
+          railReason: reason || null,
           minutesToClose: marketOpen && Number.isFinite(minsToClose) ? minsToClose : null,
         });
         jevAdvice = { pick: gate.pick, applied: gate.applied };

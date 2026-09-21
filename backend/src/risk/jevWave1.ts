@@ -8,7 +8,10 @@
 export const JEV_EXIT_WAVE1_CANDIDATES = [89, 12, 86, 25, 21, 39, 91, 92] as const;
 export const JEV_EXIT_WAVE1_DEFER_IDS = [84, 38] as const;
 
-/** RTH exit cadence. Entry cadence is unchanged. */
+/**
+ * Earlier exit windows kept for wave-1 notes. The live gate and health
+ * cadence use jevCadenceWindowMs: 5 min, 20 min, 60 min, 4 hr.
+ */
 export const JEV_EXIT_CADENCE_EXPIRY_MS = 2 * 60 * 1000;
 export const JEV_EXIT_CADENCE_SHORT_MS = 3 * 60 * 1000;
 export const JEV_EXIT_CADENCE_MEDIUM_MS = 12 * 60 * 1000;

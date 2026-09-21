@@ -30,13 +30,12 @@ export function jevLastShort(last: { pick?: string | null; symbol?: string | nul
   return `last ${last.pick}${sym}${bot}`;
 }
 
-/** Exit cadence the API sends. Used when /api/jev has not answered yet. */
+/** Same bands /api/jev sends. Used when health has not answered yet. */
 export const JEV_CADENCE_FALLBACK = [
-  { band: 'expiry', dte: '0 DTE, last 90 min', every: '2 min' },
-  { band: 'short', dte: '0 to 3', every: '3 min' },
-  { band: 'medium', dte: '4 to 14', every: '12 min' },
-  { band: 'between', dte: '15 to 89', every: '60 min' },
-  { band: 'leaps', dte: '90 and out', every: '3 hr' },
+  { band: 'short', dte: '0 to 3', every: '5 min' },
+  { band: 'medium', dte: '4 to 14', every: '20 min' },
+  { band: 'between', dte: '15 to 179', every: '60 min' },
+  { band: 'leaps', dte: '180 and out', every: '4 hr' },
 ];
 
 const JEV_SKIP_LABELS: Record<string, string> = {
@@ -46,6 +45,7 @@ const JEV_SKIP_LABELS: Record<string, string> = {
   paper_only: 'paper only',
   cadence: 'still fresh',
   rth_closed: 'market closed',
+  rail: 'hard rail',
   budget: 'budget spent',
   no_key: 'no key',
   error: 'error',

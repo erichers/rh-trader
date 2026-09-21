@@ -204,7 +204,7 @@ function JevDetail({ health, onChange }: { health: any; onChange: () => void }) 
           </div>
         </Card>
         <Card title="Check cadence">
-          <p className="muted jev-help">Exit checks during regular hours. A fresh decision inside the window skips the next TypeSafe call. The hard stop still runs on the monitor loop.</p>
+          <p className="muted jev-help">Entry and exit share these bands. A fresh decision inside the window skips the next TypeSafe call. The hard stop still runs on the monitor loop.</p>
           <div className="jev-bands">
             {cadence.map((b: any) => (
               <div key={b.band} className="jev-band">

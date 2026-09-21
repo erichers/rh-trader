@@ -227,7 +227,7 @@ describe('per-bot Jev scope', () => {
     assert.equal(called, 1);
   });
 
-  it('uses the 2 minute exit window on expiry day inside the last 90 minutes', async () => {
+  it('uses the 5 minute exit window for 0 to 3 DTE', async () => {
     let called = 0;
     const client: JevClient = {
       async systemOne() {
@@ -256,12 +256,212 @@ describe('per-bot Jev scope', () => {
     };
     const t0 = 1_920_000_000_000;
     await jevExitGate(base, { ...deps, now: t0 });
-    const inside = await jevExitGate(base, { ...deps, now: t0 + 90_000 });
-    const after = await jevExitGate(base, { ...deps, now: t0 + 150_000 });
+    const inside = await jevExitGate(base, { ...deps, now: t0 + 150_000 });
+    const after = await jevExitGate(base, { ...deps, now: t0 + JEV_CADENCE_SHORT_MS });
     assert.equal(inside.skipped, 'cadence');
     assert.equal(inside.called, false);
     assert.equal(after.called, true);
     assert.equal(called, 2);
+    assert.equal(jevCadenceWindowMs(0), JEV_CADENCE_SHORT_MS);
+  });
+
+  it('uses the 4 hour exit window for 180 DTE and out', async () => {
+    let called = 0;
+    const client: JevClient = {
+      async systemOne() {
+        called++;
+        return exitClient('hold').systemOne({ state: {}, questions: {} });
+      },
+    };
+    const base = {
+      symbol: 'SPY',
+      bot_id: 12,
+      monitor_id: 1202,
+      occ: 'SPY280116C00500000',
+      dte: 200,
+      fav: 2,
+      peak: 3,
+    };
+    const deps = {
+      mode: 'active' as const,
+      paper: true,
+      botFlags: { entry: true, exit: true },
+      client,
+      log: async () => {},
+      budgetIo: { read: async () => null, write: async () => {}, log: () => {} },
+    };
+    const t0 = 1_940_000_000_000;
+    await jevExitGate(base, { ...deps, now: t0 });
+    const inside = await jevExitGate(base, { ...deps, now: t0 + 3 * 60 * 60 * 1000 });
+    assert.equal(inside.skipped, 'cadence');
+    assert.equal(inside.called, false);
+    assert.equal(called, 1);
+    assert.equal(jevCadenceWindowMs(200), JEV_CADENCE_LEAPS_MS);
+  });
+
+  it('logs exit advice when the bot is not armed and does not sell', async () => {
+    let called = 0;
+    const logs: string[] = [];
+    const gate = await jevExitGate({
+      symbol: 'SPY',
+      bot_id: 89,
+      bot_name: 'wave',
+      monitor_id: 8902,
+      occ: 'SPY260930C00500000',
+      dte: 9,
+      fav: -9,
+      peak: 1,
+      qty: 2,
+    }, {
+      mode: 'active',
+      paper: true,
+      railReason: 'stop-loss',
+      botFlags: { entry: true, exit: false },
+      now: 1_950_000_000_000,
+      client: { async systemOne() { called++; throw new Error('503 typesafe down'); } },
+      log: async (_f, line) => { logs.push(line); },
+      budgetIo: { read: async () => null, write: async () => {}, log: () => {} },
+    });
+    assert.equal(called, 0);
+    assert.equal(gate.pick, 'hold');
+    assert.equal(gate.applied, false);
+    assert.equal(gate.skipped, 'per_bot_off');
+    const rec = JSON.parse(logs[0]);
+    assert.equal(rec.kind, 'exit');
+    assert.equal(rec.event, 'jev.exit');
+    assert.equal(rec.applied, false);
+    assert.equal(rec.acted, 'hold');
+    assert.equal(rec.pick, 'exit');
+  });
+
+  it('logs a hard rail and does not call TypeSafe', async () => {
+    let called = 0;
+    const logs: string[] = [];
+    const gate = await jevExitGate({
+      symbol: 'SPY',
+      bot_id: 89,
+      bot_name: 'wave',
+      monitor_id: 8903,
+      occ: 'SPY260930C00500000',
+      dte: 9,
+      fav: 1.4,
+      peak: 12,
+      qty: 2,
+    }, {
+      mode: 'active',
+      paper: true,
+      railReason: 'gain-lock',
+      botFlags: { entry: true, exit: true },
+      now: 1_960_000_000_000,
+      client: { async systemOne() { called++; return { answers: { action: { choice: 'size_down', confidence: 0.95 } } }; } },
+      log: async (_f, line) => { logs.push(line); },
+      budgetIo: { read: async () => null, write: async () => {}, log: () => {} },
+    });
+    assert.equal(called, 0);
+    assert.equal(gate.pick, 'hold');
+    assert.equal(gate.applied, false);
+    assert.equal(gate.skipped, 'rail');
+    assert.match(gate.because, /gain-lock/);
+    const rec = JSON.parse(logs[0]);
+    assert.equal(rec.kind, 'exit');
+    assert.equal(rec.applied, false);
+    assert.equal(rec.skipped, 'rail');
+  });
+
+  it('fails closed when TypeSafe returns 503 and does not sell', async () => {
+    let called = 0;
+    const logs: string[] = [];
+    const gate = await jevExitGate({
+      symbol: 'SPY',
+      bot_id: 89,
+      bot_name: 'wave',
+      monitor_id: 8904,
+      occ: 'SPY260930C00500000',
+      dte: 9,
+      fav: 4,
+      peak: 6,
+      qty: 2,
+    }, {
+      mode: 'active',
+      paper: true,
+      botFlags: { entry: true, exit: true },
+      now: 1_970_000_000_000,
+      client: { async systemOne() { called++; throw new Error('503 typesafe down'); } },
+      log: async (_f, line) => { logs.push(line); },
+      budgetIo: { read: async () => null, write: async () => {}, log: () => {} },
+    });
+    assert.equal(called, 1);
+    assert.equal(gate.pick, 'hold');
+    assert.equal(gate.applied, false);
+    assert.equal(gate.skipped, 'error');
+    assert.match(gate.because, /503/);
+    const rec = JSON.parse(logs[0]);
+    assert.equal(rec.kind, 'exit');
+    assert.equal(rec.applied, false);
+    assert.equal(rec.acted, 'hold');
+    const locked = resolveMonitorExit({
+      railReason: 'gain-lock',
+      jev: { pick: gate.pick, applied: gate.applied },
+      trailPct: 10,
+      slPct: 10,
+      tpPct: 20,
+      fav: 1.4,
+      peak: 12,
+    });
+    assert.equal(locked.reason, 'gain-lock');
+    assert.equal(locked.slPct, 10);
+    assert.equal(exitReason(1.4, 12, { tp: 20, sl: locked.slPct, trail: locked.trailPct }), 'gain-lock');
+  });
+
+  it('maps size_down to tighten and still loses to the gain-lock floor', async () => {
+    const gate = await jevExitGate({
+      symbol: 'IWM',
+      bot_id: 25,
+      monitor_id: 2502,
+      occ: 'IWM261016C00200000',
+      dte: 9,
+      fav: 1.4,
+      peak: 12,
+      trail_pct: 10,
+      sl_pct: 10,
+      qty: 2,
+    }, {
+      mode: 'active',
+      paper: true,
+      botFlags: { entry: true, exit: true },
+      now: 1_980_000_000_000,
+      client: exitClient('size_down'),
+      log: async () => {},
+      budgetIo: { read: async () => null, write: async () => {}, log: () => {} },
+    });
+    assert.equal(gate.opinion, 'tighten');
+    assert.equal(gate.pick, 'tighten');
+    assert.equal(gate.applied, true);
+    const locked = resolveMonitorExit({
+      railReason: 'gain-lock',
+      jev: { pick: gate.pick, applied: true },
+      trailPct: 10,
+      slPct: 10,
+      tpPct: 20,
+      fav: 1.4,
+      peak: 12,
+    });
+    assert.equal(locked.reason, 'gain-lock');
+    assert.equal(locked.slPct, 10);
+    assert.equal(locked.trailPct, 10);
+    const held = resolveMonitorExit({
+      railReason: 'stop-loss',
+      jev: { pick: 'hold', applied: true },
+      trailPct: 10,
+      slPct: 10,
+      tpPct: 20,
+      fav: -10,
+      peak: 0,
+    });
+    assert.equal(held.reason, 'stop-loss');
+    assert.equal(held.slPct, 10);
+    assert.equal(exitReason(1.4, 12, { tp: 20, sl: 10, trail: 10 }), 'gain-lock');
+    assert.equal(exitReason(-10, 0, { tp: 20, sl: 10, trail: 10 }), 'stop-loss');
   });
 
   it('exit advice cannot clear a hard stop or loosen the stop', () => {

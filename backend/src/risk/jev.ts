@@ -31,11 +31,11 @@ import {
   jevEffective,
   parseJevBotFlags,
   parseJevDte,
+  JEV_CADENCE_BANDS,
   rememberCadence,
   takeFreshCadence,
   type JevBotFlags,
 } from './jevScope.js';
-import { JEV_EXIT_CADENCE_BANDS } from './jevWave1.js';
 import {
   effectiveJevMode,
   loadJevSettings,
@@ -78,7 +78,7 @@ export type JevPublic = JevHealth & {
   lastEntry: JevLast | null;
   lastExit: JevLast | null;
   decisions: JevDecision[];
-  cadence: typeof JEV_EXIT_CADENCE_BANDS;
+  cadence: typeof JEV_CADENCE_BANDS;
   configured: boolean;
 };
 
@@ -298,7 +298,7 @@ export async function jevPublicStatus(): Promise<JevPublic> {
     lastEntry: entryDec ? decisionToLast(entryDec) : (last && last.kind !== 'exit' ? last : null),
     lastExit: exitDec ? decisionToLast(exitDec) : null,
     decisions,
-    cadence: JEV_EXIT_CADENCE_BANDS,
+    cadence: JEV_CADENCE_BANDS,
     configured: typesafeConfigured(),
   };
 }

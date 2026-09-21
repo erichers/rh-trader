@@ -7,6 +7,8 @@ describe('Jev desk copy', () => {
     assert.equal(jevSkipLabel('per_bot_off'), 'scope off');
     assert.equal(jevSkipLabel('cadence'), 'still fresh');
     assert.equal(jevSkipLabel('rth_closed'), 'market closed');
+    assert.equal(jevSkipLabel('rail'), 'hard rail');
+    assert.equal(jevSkipLabel('error'), 'error');
     assert.equal(jevSkipLabel('budget'), 'budget spent');
     assert.equal(jevSkipLabel('paper_only'), 'paper only');
     assert.equal(jevSkipLabel(''), 'logged');
@@ -26,11 +28,8 @@ describe('Jev desk copy', () => {
     assert.equal(JEV_EMPTY_PICK.includes('—'), false);
   });
 
-  it('falls back to the exit cadence bands', () => {
-    assert.deepEqual(JEV_CADENCE_FALLBACK.map((b) => b.dte), ['0 DTE, last 90 min', '0 to 3', '4 to 14', '15 to 89', '90 and out']);
-    assert.equal(JEV_CADENCE_FALLBACK[1].every, '3 min');
-    assert.equal(JEV_CADENCE_FALLBACK[2].every, '12 min');
-    assert.equal(JEV_CADENCE_FALLBACK[3].every, '60 min');
-    assert.equal(JEV_CADENCE_FALLBACK[4].every, '3 hr');
+  it('falls back to the health cadence bands', () => {
+    assert.deepEqual(JEV_CADENCE_FALLBACK.map((b) => b.dte), ['0 to 3', '4 to 14', '15 to 179', '180 and out']);
+    assert.deepEqual(JEV_CADENCE_FALLBACK.map((b) => b.every), ['5 min', '20 min', '60 min', '4 hr']);
   });
 });

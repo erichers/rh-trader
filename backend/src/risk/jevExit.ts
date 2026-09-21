@@ -20,6 +20,7 @@ import {
 } from './jev.js';
 import {
   jevCadenceKey,
+  jevCadenceWindowMs,
   jevEffective,
   parseJevDte,
   rememberCadence,
@@ -29,7 +30,6 @@ import {
   type JevExitAction,
 } from './jevScope.js';
 import { effectiveJevMode, loadJevSettings, parseJevUiMode, type JevUiMode } from './jevSettings.js';
-import { jevExitCadenceWindowMs } from './jevWave1.js';
 
 export const JEV_EXIT_OPTIONS = ['hold', 'exit', 'partial', 'tighten'] as const;
 export type JevExitPick = JevExitAction;
@@ -234,6 +234,8 @@ export async function jevExitGate(input: JevExitInput, deps: {
   botFlags?: JevBotFlags;
   /** Regular-hours gate. Undefined does not block (unit tests). False skips TypeSafe and sell replays. */
   rth?: boolean;
+  /** When set, the rail already owns the sell. Log the decision. Do not call TypeSafe and do not apply. */
+  railReason?: string | null;
   minutesToClose?: number | null;
   now?: number;
   log?: (file: string, line: string) => Promise<void>;
@@ -264,10 +266,11 @@ export async function jevExitGate(input: JevExitInput, deps: {
     monitorId: input.monitor_id,
   });
   const now = deps.now ?? Date.now();
-  const windowMs = jevExitCadenceWindowMs({ dte: dteNum, leaps, minutesToClose: deps.minutesToClose });
+  const windowMs = jevCadenceWindowMs(dteNum, leaps);
+  const rail = String(deps.railReason || '').trim();
   const fresh = takeFreshCadence<ExitReplay>(key, now, windowMs);
   if (fresh && eff.reason !== 'global_off') {
-    const replaySell = fresh.appliedExit && eff.apply && deps.rth !== false;
+    const replaySell = !rail && fresh.appliedExit && eff.apply && deps.rth !== false;
     if (replaySell) {
       const pick: JevExitPick = fresh.appliedPick === 'partial' ? 'partial' : 'exit';
       const because = `cadence: replay ${pick} without a new TypeSafe call (${Math.round(windowMs / 60000)} min)`;
@@ -336,6 +339,10 @@ export async function jevExitGate(input: JevExitInput, deps: {
 
   if (deps.rth === false) {
     return logLocal('rth_closed', 'Jev exit checks run in regular hours. Rails stay on.');
+  }
+
+  if (rail) {
+    return logLocal('rail', `Hard rail ${rail} owns this exit. Jev logged, not applied.`);
   }
 
   const spend = await loadJevSpend(deps.budgetIo);
@@ -411,7 +418,7 @@ export async function jevExitGate(input: JevExitInput, deps: {
     return gate;
   } catch (e: any) {
     const msg = e?.message || String(e);
-    const statusMatch = String(msg).match(/\b(401|402|429)\b/);
+    const statusMatch = String(msg).match(/\b(401|402|429|503)\b/);
     const status = statusMatch ? Number(statusMatch[1]) : undefined;
     await recordJevUsage({ error: msg, status, io: deps.budgetIo });
     return logLocal('error', `Jev exit API error, rails kept: ${msg}`.slice(0, 240));
