@@ -3,6 +3,11 @@ import { ping, getGlobalMode, getKillSwitch, getTradingEnv, getRiskLimits } from
 import { alpacaConfigured, probeAlpacaPaper, type AlpacaProbe } from '../brokers/alpaca.js';
 import { RISK_LAW } from './law.js';
 import { SWING_LAW } from './exitpolicy.js';
+import { museWatchStatus, type MuseWatchLamp } from '../muse/watch.js';
+import { loadMuseSettings } from '../muse/settings.js';
+import { loadJevSettings } from './jevSettings.js';
+import { jevPublicStatus, type JevPublic } from './jev.js';
+import { autofixHealth, type AutofixHealth } from '../bots/autofix.js';
 
 export type HealthFailure =
   | 'db_down'
@@ -29,6 +34,10 @@ export type PaperHealth = {
   riskLaw: { maxTradeUsd: number; maxDailyDrawdownPct: number };
   swingLaw: typeof SWING_LAW;
   limits: { maxPositionUsd: number; maxConcentrationPct: number; maxDailyLossPct: number; maxOrdersPerDay: number } | null;
+  watch?: MuseWatchLamp;
+  jev?: JevPublic;
+  autofix?: AutofixHealth;
+  allowedAssetClasses: string[];
 };
 
 /** Pure verdict used by /api/health and tests. Never throws. */
@@ -62,6 +71,7 @@ export async function collectPaperHealth(): Promise<PaperHealth> {
     uptime_s: Math.round(process.uptime()),
     riskLaw: { maxTradeUsd: RISK_LAW.maxTradeUsd, maxDailyDrawdownPct: RISK_LAW.maxDailyDrawdownPct },
     swingLaw: SWING_LAW,
+    allowedAssetClasses: config.trading.allowedAssetClasses,
   };
 
   let db = false;
@@ -101,6 +111,19 @@ export async function collectPaperHealth(): Promise<PaperHealth> {
   const verdict = healthVerdict({ db, env: String(env), live, alpaca });
   const failures = [...new Set([...extraFailures, ...verdict.failures])];
 
+  let watch: MuseWatchLamp | undefined;
+  try {
+    await loadMuseSettings();
+    watch = museWatchStatus();
+  } catch { try { watch = museWatchStatus(); } catch { /* lamp stays omitted */ } }
+  let jev: JevPublic | undefined;
+  try {
+    await loadJevSettings();
+    jev = await jevPublicStatus();
+  } catch { /* optional */ }
+  let autofix: AutofixHealth | undefined;
+  try { autofix = autofixHealth(); } catch { /* optional */ }
+
   return {
     ok: db, // process answered; db is the minimum "API can persist"
     ready: verdict.ready,
@@ -113,6 +136,9 @@ export async function collectPaperHealth(): Promise<PaperHealth> {
     alpaca,
     failures,
     limits,
+    watch,
+    jev,
+    autofix,
     ...base,
   };
 }

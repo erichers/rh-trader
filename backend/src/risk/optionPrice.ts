@@ -253,10 +253,9 @@ function parseMaybeJson(v: any): any {
 }
 
 /**
- * Should this bot emit an order on this desk? Equity ORB (Fri order 8028140,
- * bot 9) is a real equity template — we STOP emission on an option-only
- * allowlist rather than convert it to a made-up option or open equity live.
- * Option-shaped bots (LEAPS bot 31 / order 8028142) are not skipped here.
+ * Should this bot emit on the allowlist? Equity ORB (Fri 8028140) is skipped
+ * on an options-only desk. Autofix DELETES leftover equity rows — it does not
+ * convert them to calls or park them.
  */
 export function botClassSkipReason(
   bot: { asset_class?: string | null; action?: any },

@@ -106,7 +106,7 @@ export function riskLimitDefaults(): RiskLimits {
 /** The global sizing + exit defaults every bot inherits when it does not pin its own.
  *  `amount_usd` is the TARGET notional per trade (shares × price, or contracts × premium
  *  × 100); `min_usd`/`max_usd` bracket what is actually allowed. Soft take-profit
- *  defaults to ~25%; a stored 0 still means "no cap, ride the trail". Hard stop is −10%. */
+ *  defaults to ~20%; a stored 0 still means "no cap, ride the trail". Hard stop is −10%. */
 export type TradeDefaults = {
   amount_usd: number | null;
   min_usd: number;
@@ -126,7 +126,7 @@ export async function tradeDefaultsFactory(): Promise<TradeDefaults> {
     amount_usd: null,
     min_usd: Math.max(25, Math.round(max * 0.05)),
     max_usd: max,
-    take_profit_pct: SOFT_TAKE_PROFIT_PCT, // soft ~25% goal; trail rides past it
+    take_profit_pct: SOFT_TAKE_PROFIT_PCT, // soft ~20% goal; trail rides past it
     stop_loss_pct: HARD_STOP_PCT,
     trailing_stop_pct: SWING_TRAIL_PCT,
   };

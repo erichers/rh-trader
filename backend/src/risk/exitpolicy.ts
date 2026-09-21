@@ -5,22 +5,23 @@
 // Eric's locked SWING LAW (Monday paper / full_auto):
 //   1. HARD STOP −10% from entry — cut losers fast. A wider bot sl cannot loosen this.
 //   2. GAIN-LOCK arms at +10% with floor 0 (breakeven). A trade that was up ≥10%
-//      may never close negative.
-//   3. Soft take-profit goal ~25%: close when hit IF there is no trail to ride;
-//      otherwise the trail keeps riding winners past 25%.
-//   4. Ratcheting trail — wide early, tighter as the win grows.
+//      may never close negative. The trailing stop also stays dormant until this peak.
+//   3. Soft take-profit goal ~20%: close when hit IF there is no trail to ride;
+//      otherwise the trail keeps riding winners past 20%.
+//   4. Ratcheting trail — base width 10%, tighter as the win grows.
 
 export type ExitBand = { tp: number; sl: number; trail: number };
 
 export const HARD_STOP_PCT = 10;
 export const GAIN_LOCK_ARM_PCT = 10;
 export const GAIN_LOCK_FLOOR_PCT = 0;
-export const SOFT_TAKE_PROFIT_PCT = 25;
-export const SWING_TRAIL_PCT = 12;
+export const SOFT_TAKE_PROFIT_PCT = 20;
+export const SWING_TRAIL_PCT = 10;
 export const ENTRY_DTE_MIN = 2;
 export const ENTRY_DTE_MAX = 14;
 
-/** Desk-facing snapshot of the locked swing law (health + tests). */
+/** Desk-facing snapshot of the locked swing law (health + tests).
+ *  2–14 DTE is the non-LEAPS entry window. Long-call LEAPS (≥180 DTE) stay eligible. */
 export const SWING_LAW = {
   hardStopPct: HARD_STOP_PCT,
   gainLockArmPct: GAIN_LOCK_ARM_PCT,
@@ -29,6 +30,7 @@ export const SWING_LAW = {
   trailPct: SWING_TRAIL_PCT,
   entryDteMin: ENTRY_DTE_MIN,
   entryDteMax: ENTRY_DTE_MAX,
+  leapsEligible: true,
 } as const;
 
 /** Default band the monitor / factory inherit when a bot does not pin exits. */
@@ -65,12 +67,14 @@ export function exitReason(fav: number, peak: number, band: ExitBand): string | 
   const sl = effectiveHardStop(band.sl);
   if (fav <= -sl) return 'stop-loss';
   if (peak >= GAIN_LOCK_ARM_PCT && fav <= GAIN_LOCK_FLOOR_PCT) return 'gain-lock';
-  // Soft TP: book the ~25% goal when there is no trail. A live trail keeps riding.
+  // Soft TP: book the ~20% goal when there is no trail. A live trail keeps riding.
   const tp = Number(band.tp) > 0 ? Number(band.tp) : 0;
   const trailActive = Number(band.trail) > 0;
   if (tp > 0 && fav >= tp && !trailActive) return 'take-profit';
   const t = effectiveTrail(peak, band.trail);
-  if (t > 0 && peak > 0 && fav <= peak - t) return 'trailing-stop';
+  // Trail does not fire until the gain-lock arm (+10% peak). Before that the
+  // hard stop is the only giveback rule — a +6% fade is still a hold.
+  if (t > 0 && peak >= GAIN_LOCK_ARM_PCT && fav <= peak - t) return 'trailing-stop';
   return null;
 }
 

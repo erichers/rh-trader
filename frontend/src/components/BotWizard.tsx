@@ -35,7 +35,7 @@ export default function BotWizard({ preset, onClose, onCreated }: { preset?: Bot
   const presetStrat = STRATEGIES.find((s) => s.key === stratKey);
   const [name, setName] = useState(preset?.name || '');
   const [symbols, setSymbols] = useState((preset?.symbols || ['AAPL']).join(', '));
-  const [assetClass, setAssetClass] = useState<'equity' | 'etf' | 'option'>(preset?.asset_class || 'equity');
+  const [assetClass] = useState<'option'>('option');
   const [optionType, setOptionType] = useState(preset?.action?.option_type || 'call');
   const [strike, setStrike] = useState(preset?.action?.strike_target || 'atm');
   const [expiration, setExpiration] = useState(preset?.action?.expiration || 'weekly');
@@ -98,10 +98,8 @@ export default function BotWizard({ preset, onClose, onCreated }: { preset?: Bot
             <Field label="Ticker(s)" hint="Comma-separated. No crypto (blocked by policy).">
               <input value={symbols} onChange={(e) => setSymbols(e.target.value.toUpperCase())} style={{ width: '100%' }} />
             </Field>
-            <Field label="Trade type">
-              <select value={assetClass} onChange={(e) => setAssetClass(e.target.value as any)} style={{ width: '100%' }}>
-                <option value="equity">Equity (shares)</option>
-                <option value="etf">ETF (shares)</option>
+            <Field label="Trade type" hint="This desk is options only. Equity / ETF bots are refused.">
+              <select value={assetClass} disabled style={{ width: '100%' }}>
                 <option value="option">Options (long call / put — defined risk)</option>
               </select>
             </Field>

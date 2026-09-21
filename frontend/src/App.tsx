@@ -1,7 +1,7 @@
 import { HashRouter, NavLink, Route, Routes } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { Icon, type IconName } from './components/icons';
-import { Health, SetMode, SetKill, RhConnect, RhSync, SetEnv, RhAuthStart, Focus as FocusApi, SetFocus } from './api/client';
+import { Health, SetMode, SetKill, RhConnect, RhSync, SetEnv, RhAuthStart, Focus as FocusApi, SetFocus, SetJev } from './api/client';
 import MarketClock from './components/MarketClock';
 import AccountStrip from './components/AccountStrip';
 import Dashboard from './views/Dashboard';
@@ -28,6 +28,7 @@ import JournalView from './views/Journal';
 import AlertsView from './views/Alerts';
 import QuantLab from './views/QuantLab';
 import LearningView from './views/Learning';
+import ModelsView from './views/Models';
 
 type NavItem = { to: string; label: string; icon: IconName; end?: boolean };
 const NAV: { label?: string; items: NavItem[] }[] = [
@@ -64,6 +65,7 @@ const NAV: { label?: string; items: NavItem[] }[] = [
   ] },
   { label: 'System', items: [
     { to: '/activity', label: 'Activity & Risk', icon: 'activity' },
+    { to: '/models', label: 'Models', icon: 'chat' },
     { to: '/settings', label: 'Settings', icon: 'settings' },
   ] },
 ];
@@ -95,8 +97,10 @@ const ENV_LABELS: Record<string, string> = {
 function museWatchDot(apiDown: boolean, health: any): string {
   if (apiDown || !health || health._unreachable) return 'gray';
   const w = health.watch;
-  if (!w || !w.available) return 'gray';
+  if (!w) return 'gray';
   if (w.lastError) return 'amber';
+  if (w.mode === 'improve' && (w.ok || w.running || w.lastCycle)) return w.running ? 'green' : 'amber';
+  if (!w.available) return 'gray';
   if (w.running) return 'green';
   return 'gray';
 }
@@ -105,10 +109,50 @@ function museWatchLabel(apiDown: boolean, health: any): string {
   if (apiDown || health?._unreachable) return 'unknown (API down)';
   const w = health?.watch;
   if (!w) return 'unknown';
-  if (!w.available) return 'n/a · observe-only';
-  if (w.lastError) return 'error';
-  if (w.running) return 'running · observe-only';
-  return 'idle · observe-only';
+  const mode = w.mode === 'improve' ? 'improve' : 'observe';
+  const via = w.via === 'local' ? 'local' : '';
+  const tune = w.lastTune?.name ? `last tune ${w.lastTune.name}` : '';
+  if (!w.available && mode !== 'improve') return 'n/a · observe-only';
+  if (w.lastError) return `${mode} · error`;
+  const bits = [mode, via, w.running ? 'running' : (w.lastCycle ? 'idle' : 'waiting'), tune].filter(Boolean);
+  return bits.join(' · ');
+}
+
+function jevDot(apiDown: boolean, health: any): string {
+  if (apiDown || !health || health._unreachable) return 'gray';
+  const j = health.jev;
+  if (!j || !j.enabled || j.mode === 'off') return 'gray';
+  if (j.degraded) return 'red';
+  if (j.mode === 'active' && j.ok) return 'green';
+  if (j.mode === 'shadow' || j.mode === 'active') return 'amber';
+  return 'gray';
+}
+
+function jevLabel(apiDown: boolean, health: any): string {
+  if (apiDown || health?._unreachable) return 'unknown';
+  const j = health?.jev;
+  if (!j || !j.enabled || j.mode === 'off') return 'off';
+  const spent = Number(j.spentUsd) || 0;
+  const budget = Number(j.budgetUsd) || 5;
+  const last = j.last;
+  const lastBit = last?.pick && last?.symbol ? `last ${last.pick} ${last.symbol}` : (last?.pick ? `last ${last.pick}` : '');
+  const money = `$${spent.toFixed(2)}/$${budget}`;
+  if (j.degraded) return `${j.mode} · budget · ${money}`;
+  return [j.mode, money, lastBit].filter(Boolean).join(' · ');
+}
+
+function jevTitle(health: any): string {
+  const j = health?.jev;
+  if (!j) return 'Jev post-signal panel. off = never call TypeSafe.';
+  const last = j.last;
+  const bits = [
+    `mode=${j.mode}`,
+    `spent=$${Number(j.spentUsd || 0).toFixed(4)} / $${j.budgetUsd ?? 5}`,
+    j.degraded ? `degraded: ${j.reason || 'yes'}` : 'ok',
+    last?.because ? `last: ${last.because}` : '',
+    last?.bot ? `bot=${last.bot}` : '',
+  ].filter(Boolean);
+  return bits.join(' · ');
 }
 
 export default function App() {
@@ -199,14 +243,34 @@ export default function App() {
             <div className="row" style={{ marginTop: 4 }}>
               <span className={`dot ${rhDot}`} /> Robinhood: {apiDown ? 'unknown' : rhStatus}
             </div>
-            <div className="row" style={{ marginTop: 4 }}>
-              <span className={`dot ${apiDown ? 'gray' : (health?.ai ? 'green' : 'gray')}`} /> AI: {apiDown ? 'unknown' : (health?.ai ? (health?.aiShort || 'ready') : 'no key')}
-            </div>
+            <NavLink to="/models/ai" className="status-link" title={health?.aiLabel || 'AI research + chat'}>
+              <span className={`dot ${apiDown ? 'gray' : (health?.ai ? 'green' : 'gray')}`} />
+              <span className="status-text">AI: {apiDown ? 'unknown' : (health?.ai ? (health?.aiShort || 'ready') : 'no key')}</span>
+            </NavLink>
             <div className="row" style={{ marginTop: 4 }}>
               <span className={`dot ${apiDown ? 'red' : (health?.db ? 'green' : 'red')}`} /> DB: {apiDown ? 'unknown' : (health?.db ? 'up' : 'down')}
             </div>
-            <div className="row" style={{ marginTop: 4 }} title={health?.watch?.note || 'Muse watch is observe-only. Never green when the API is down.'}>
-              <span className={`dot ${museWatchDot(apiDown, health)}`} /> Muse watch: {museWatchLabel(apiDown, health)}
+            <NavLink to="/models/muse" className="status-link" title={health?.watch?.note || 'Muse never places orders.'}>
+              <span className={`dot ${museWatchDot(apiDown, health)}`} />
+              <span className="status-text">Muse: {museWatchLabel(apiDown, health)}</span>
+            </NavLink>
+            <div className="row status-link" style={{ marginTop: 4, gap: 6 }}>
+              <NavLink to="/models/jev" className="status-link" style={{ marginTop: 0, flex: 1 }} title={jevTitle(health)}>
+                <span className={`dot ${jevDot(apiDown, health)}`} />
+                <span className="status-text">Jev: {jevLabel(apiDown, health)}</span>
+              </NavLink>
+              <button
+                style={{ fontSize: 10, padding: '1px 6px', marginLeft: 'auto' }}
+                disabled={apiDown}
+                title={health?.jev?.enabled && health?.jev?.mode !== 'off' ? 'Turn Jev off (fail-open, no TypeSafe calls)' : 'Enable Jev in shadow (log, never block)'}
+                onClick={async (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const on = !!(health?.jev?.enabled && health?.jev?.mode !== 'off');
+                  await SetJev(on ? { enabled: false, mode: 'off' } : { enabled: true, mode: 'shadow' });
+                  refresh();
+                }}
+              >{health?.jev?.enabled && health?.jev?.mode !== 'off' ? 'on' : 'off'}</button>
             </div>
           </div>
         </aside>
@@ -238,7 +302,7 @@ export default function App() {
               <option value="alpaca_paper">Paper (Alpaca)</option>
               <option value="robinhood_live">Live — Robinhood</option>
             </select>
-            <span className="pill" title={health?.aiLabel}>{health?.aiShort || 'AI'}</span>
+            <NavLink to="/models/ai" className="pill" title={health?.aiLabel}>{health?.aiShort || 'AI'}</NavLink>
             <button className={health?.killSwitch ? 'primary' : 'danger'} onClick={toggleKill}>
               {health?.killSwitch ? '● KILL ENGAGED — release' : 'KILL SWITCH'}
             </button>
@@ -286,6 +350,8 @@ export default function App() {
               <Route path="/news" element={<NewsView />} />
               <Route path="/chat" element={<ChatView />} />
               <Route path="/activity" element={<Activity />} />
+              <Route path="/models" element={<ModelsView health={health} onChange={refresh} />} />
+              <Route path="/models/:which" element={<ModelsView health={health} onChange={refresh} />} />
               <Route path="/settings" element={<Settings health={health} onChange={refresh} />} />
             </Routes>
           </div>

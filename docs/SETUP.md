@@ -88,7 +88,7 @@ BASE_PATH=/grokbot/grokbot-rh-trader   # optional Apache mapping (Mac: /Users/er
 # Safety (leave these alone until you have watched it run)
 DEFAULT_MODE=observe
 KILL_SWITCH=false
-ALLOWED_ASSET_CLASSES=equity,etf,option
+ALLOWED_ASSET_CLASSES=option
 MAX_POSITION_USD=2000
 MAX_PORTFOLIO_CONCENTRATION_PCT=25
 MAX_DAILY_LOSS_PCT=3

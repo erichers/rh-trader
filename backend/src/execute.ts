@@ -5,6 +5,11 @@ import { isShortDtePrivileged, syncPlayDteToContract } from './risk/dte.js';
 import { applyResolvedPremium, assignInferredAssetClass } from './risk/optionPrice.js';
 import { placeOrder as brokerPlace } from './brokers/index.js';
 import { execObserveBlock } from './risk/observe.js';
+import { applyJevSizeDown, jevEntryGate } from './risk/jev.js';
+import { cachedJevEffective } from './risk/jevSettings.js';
+import { museAuditAfterFire } from './muse/auditor.js';
+import { cachedMuseMode } from './muse/settings.js';
+import { applyMuseImprove } from './muse/improve.js';
 import { releaseBuyNotional, reserveBuyNotional } from './risk/exposure.js';
 import { mapBrokerOrderStatus } from './risk/exitlifecycle.js';
 
@@ -121,6 +126,119 @@ export async function executeDraft(
   }
 
   const decision = await decideExecution(draft, mode, env);
+  let jevPick: string | null = null;
+  let jevFailOpen = false;
+
+  // Optional Jev post-signal panel on fired bot/AI entries only. Exits stay
+  // deterministic. Default shadow mode logs and never blocks. Active may skip
+  // / size_down. No key / API error → fail-open. Hard rails already ran.
+  if (decision.action === 'execute' && draft.side === 'buy' && (draft.source === 'bot' || draft.source === 'ai')) {
+    const paper = env === 'alpaca_paper';
+    let openPositions = 0;
+    try {
+      const [row] = await q<{ n: number }>(
+        'SELECT COUNT(*) n FROM positions WHERE env=:env AND ABS(qty) > 0',
+        { env },
+      );
+      openPositions = Number(row?.n ?? 0);
+    } catch { /* state field is optional */ }
+    const leaps = decision.risk.computed.leaps === 1;
+    const dte = decision.risk.computed.entry_dte ?? draft._play?.dte ?? null;
+    const gate = await jevEntryGate({
+      symbol: draft.symbol,
+      bot_id: draft.bot_id,
+      bot_name: botRow?.name,
+      bot: botRow?.name,
+      asset_class: draft.asset_class,
+      option_type: draft.option_type,
+      expiration: draft._contract?.expiration || draft.expiration,
+      strike_target: draft.strike_target,
+      dte_or_leaps: leaps ? (dte != null ? `leaps:${dte}` : 'leaps') : dte,
+      dte,
+      signal_why: opts.rationale,
+      why: opts.rationale,
+      checks: {
+        entry_dte: decision.risk.checks.entry_dte?.detail,
+        calls_only: decision.risk.checks.calls_only?.detail,
+        puts_blocked: decision.risk.checks.puts_blocked?.detail,
+      },
+      est_premium: draft.est_price,
+      premium: draft.est_price,
+      equity: decision.risk.computed.portfolio_equity,
+      open_positions_count: openPositions,
+      mode,
+      side: draft.side,
+      source: draft.source,
+    }, {
+      paper,
+      llmReview: async (system, user) => {
+        try {
+          const { llmJSON, providerFor } = await import('./ai/llm.js');
+          if (!providerFor('review')) return {};
+          return await llmJSON(system, user, 'review');
+        } catch { return {}; }
+      },
+    });
+    jevPick = gate.pick;
+    jevFailOpen = gate.failOpen;
+    decision.risk.checks.jev_entry = {
+      pass: gate.pick !== 'skip' || gate.failOpen,
+      detail: gate.because,
+    };
+    decision.risk.computed.jev_fail_open = gate.failOpen ? 1 : 0;
+    await audit('jev.entry', `${draft.symbol} ${gate.pick}${gate.failOpen ? ' (fail-open)' : ''}`, {
+      bot_id: draft.bot_id ?? null,
+      env,
+      pick: gate.pick,
+      because: gate.because,
+      called: gate.called,
+    });
+    if (gate.pick === 'skip' && !gate.failOpen) {
+      decision.action = 'veto';
+      decision.risk.ok = false;
+      decision.risk.reason = `jev: skip — ${gate.because}`;
+    } else if (gate.pick === 'size_down' && !gate.failOpen) {
+      const before = Number(draft.qty || 1);
+      draft.qty = applyJevSizeDown(before);
+      decision.risk.computed.jev_size_down_from = before;
+      decision.risk.computed.jev_size_down_to = draft.qty;
+      decision.risk.checks.jev_entry.detail = `${gate.because}; qty ${before}→${draft.qty}`;
+    }
+  }
+
+  // Muse auditor: review the packet, never submit. soft_block is a recommendation
+  // honored only in Jev active mode after hard rails already passed.
+  if (draft.source === 'bot' || draft.source === 'ai') {
+    try {
+      const muse = await museAuditAfterFire({
+        symbol: draft.symbol,
+        bot: botRow?.name,
+        why: opts.rationale,
+        checks: decision.risk.checks,
+        riskOk: decision.risk.ok,
+        jevPick,
+        jevFailOpen,
+        side: draft.side,
+        source: draft.source,
+      });
+      decision.risk.checks.muse_audit = { pass: muse.flag !== 'soft_block', detail: muse.because };
+      decision.risk.computed.muse_soft_block = muse.flag === 'soft_block' ? 1 : 0;
+      if (
+        muse.flag === 'soft_block'
+        && cachedJevEffective() === 'active'
+        && decision.action === 'execute'
+        && draft.side === 'buy'
+      ) {
+        decision.action = 'veto';
+        decision.risk.ok = false;
+        decision.risk.reason = `muse soft_block — ${muse.because}`;
+      }
+    } catch { /* auditor must never crash submit */ }
+    if (cachedMuseMode() === 'improve' && botRow && env === 'alpaca_paper') {
+      await applyMuseImprove([botRow], { env, limit: 1 }).catch(() => {});
+    }
+  }
+
   await logRiskEvent(draft, decision.risk);
 
   // Reserve only after a passing buy so the next bot in this cycle sees the

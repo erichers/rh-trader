@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { optionOnlyAllowlist } from './risk/optionsonly.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..'); // backend/
@@ -80,6 +81,30 @@ export const config = {
     port: num(process.env.PORT, 8011),
     basePath: process.env.BASE_PATH || '/grokbot/grokbot-rh-trader',
   },
+  typesafe: {
+    // Optional Jev / System One panel. Unset key → paper entries fail-open.
+    // entryMode shadow (default) logs and never blocks; active applies composition.
+    apiKey: process.env.TYPESAFE_API_KEY || '',
+    baseUrl: process.env.TYPESAFE_BASE_URL || 'https://api.typesafe.ai',
+    model: process.env.TYPESAFE_MODEL || 'jev-latest',
+    entryMode: (process.env.JEV_ENTRY_MODE || 'shadow').toLowerCase() === 'active' ? 'active' : 'shadow',
+    logPath: process.env.JEV_LOG_PATH || path.join(root, 'data', 'jev-entry.jsonl'),
+    spendPath: process.env.JEV_SPEND_PATH || path.join(root, 'data', 'jev-spend.json'),
+    budgetUsd: num(process.env.JEV_BUDGET_USD, 5),
+    reserveUsd: num(process.env.JEV_BUDGET_RESERVE_USD, 0.50),
+    spentUsdSeed: num(process.env.JEV_SPENT_USD, 0),
+  },
+  muse: {
+    apiKey: process.env.META_MUSE_API_KEY || process.env.MUSE_API_KEY || process.env.MODEL_API_KEY || '',
+    baseUrl: process.env.META_MUSE_BASE_URL || process.env.MUSE_BASE_URL || 'https://api.meta.ai/v1',
+    model: process.env.META_MUSE_MODEL || process.env.MUSE_MODEL || 'muse-spark-1.3',
+  },
+  watch: {
+    intervalMs: num(process.env.WATCH_INTERVAL_MS, 15 * 60_000),
+  },
+  autofix: {
+    intervalMs: num(process.env.AUTOFIX_INTERVAL_MS, 20 * 60_000),
+  },
   alpaca: {
     apiKey: process.env.ALPACA_API_KEY || '',
     secretKey: process.env.ALPACA_SECRET_KEY || '',
@@ -91,10 +116,8 @@ export const config = {
     defaultEnv: (process.env.TRADING_ENV || 'alpaca_paper') as TradingEnv,
     defaultMode: (process.env.DEFAULT_MODE || 'observe') as Mode,
     killSwitch: (process.env.KILL_SWITCH || 'false') === 'true',
-    allowedAssetClasses: (process.env.ALLOWED_ASSET_CLASSES || 'equity,etf,option')
-      .split(',')
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean),
+    // Standing law: option only. Env values that still list equity/etf are dropped.
+    allowedAssetClasses: optionOnlyAllowlist(process.env.ALLOWED_ASSET_CLASSES),
     maxPositionUsd: num(process.env.MAX_POSITION_USD, 10_000),
     maxConcentrationPct: num(process.env.MAX_PORTFOLIO_CONCENTRATION_PCT, 25),
     maxDailyLossPct: num(process.env.MAX_DAILY_LOSS_PCT, 3),

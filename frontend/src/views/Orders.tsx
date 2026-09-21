@@ -142,7 +142,7 @@ export default function OrdersView() {
         <div className="row">
           <input placeholder="Symbol" style={{ width: 90 }} value={draft.symbol} onChange={(e) => set('symbol', e.target.value.toUpperCase())} />
           <select value={draft.asset_class} onChange={(e) => set('asset_class', e.target.value)}>
-            <option value="equity">equity</option><option value="etf">etf</option><option value="option">option</option>
+            <option value="option">option</option>
           </select>
           <select value={draft.side} onChange={(e) => set('side', e.target.value)}>
             <option value="buy">buy</option><option value="sell">sell</option>

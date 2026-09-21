@@ -22,14 +22,14 @@ function recommend(symbol: string, s: any): Rec[] {
   if (rsi != null && rsi > 68) recs.push({ label: 'Overbought Fade — Long Put', tag: 'put', kind: 'red', why: `RSI ${rsi.toFixed(0)} is overbought — fade setup.`, bot: base({ name: `${symbol} Overbought Fade — Long Put`, asset_class: 'option', rules: { rsi_above: 68, bollinger_upper: true, min_matches: 1 }, action: opt('put', 'otm', 'monthly') }) });
   if (trend === 'up') {
     recs.push({ label: vol > 40 ? 'Trend-Pullback — Long Call (high vol)' : 'Breakout — Long Call', tag: 'call', kind: 'green', why: `Uptrend (${s.period_return_pct}% 3-mo). ${vol > 40 ? 'High vol favors leveraged calls on pullbacks.' : 'Buy strength on breakouts.'}`, bot: base({ name: `${symbol} ${vol > 40 ? 'Trend-Pullback' : 'Breakout'} — Long Call`, asset_class: 'option', rules: vol > 40 ? { ema_cross: true, price_above_sma20: true, min_matches: 1 } : { breakout_high: true }, action: opt('call', vol > 40 ? 'otm' : 'otm', 'monthly') }) });
-    recs.push({ label: 'Trend Follower — Equity', tag: 'equity', kind: 'blue', why: 'Stay long while trend + momentum agree.', bot: base({ name: `${symbol} Trend Follower`, asset_class: 'equity', rules: { price_above_sma20: true, macd_positive: true, require_all: true }, action: { side: 'buy', qty: 1, order_type: 'market' } }) });
+    recs.push({ label: 'Trend Follower — Long Call', tag: 'call', kind: 'green', why: 'Stay long while trend + momentum agree (options-only desk).', bot: base({ name: `${symbol} Trend Follower — Long Call`, asset_class: 'option', rules: { price_above_sma20: true, macd_positive: true, require_all: true }, action: opt('call', 'atm', 'weekly') }) });
   }
   if (trend === 'down') recs.push({ label: 'Downtrend Continuation — Long Put', tag: 'put', kind: 'red', why: `Downtrend (${s.period_return_pct}% 3-mo). Fade bounces into resistance.`, bot: base({ name: `${symbol} Downtrend — Long Put`, asset_class: 'option', rules: { bollinger_upper: true, rsi_above: 50, min_matches: 1 }, action: opt('put', 'otm', 'monthly') }) });
   if (trend === 'sideways' && vol > 30) {
     recs.push({ label: 'Range Fade — Long Put', tag: 'put', kind: 'red', why: `Range-bound + high vol (${vol}%). Fade the top of the range.`, bot: base({ name: `${symbol} Range Fade — Long Put`, asset_class: 'option', rules: { bollinger_upper: true, rsi_above: 60, min_matches: 1 }, action: opt('put', 'atm', 'weekly') }) });
     recs.push({ label: 'Range Reclaim — Long Call', tag: 'call', kind: 'green', why: 'Buy reclaims off the bottom of the range.', bot: base({ name: `${symbol} Range Reclaim — Long Call`, asset_class: 'option', rules: { bollinger_lower: true }, action: opt('call', 'atm', 'weekly', '5m') }) });
   }
-  recs.push({ label: 'RSI Bounce — Equity', tag: 'equity', kind: 'blue', why: 'Conservative equity dip-buy in an uptrend.', bot: base({ name: `${symbol} RSI Bounce`, asset_class: 'equity', rules: { rsi_below: 35, price_above_sma20: true, min_matches: 1 }, action: { side: 'buy', qty: 1, order_type: 'market' } }) });
+  recs.push({ label: 'RSI Bounce — Long Call', tag: 'call', kind: 'green', why: 'Dip-buy in an uptrend as a long call (options-only desk).', bot: base({ name: `${symbol} RSI Bounce — Long Call`, asset_class: 'option', rules: { rsi_below: 35, price_above_sma20: true, min_matches: 1 }, action: opt('call', 'atm', 'weekly') }) });
   return recs;
 }
 

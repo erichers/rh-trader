@@ -30,7 +30,7 @@ export default function TickerDetail() {
   // Crypto is TRACKED as a macro indicator only — never traded. Hide all trade/bot
   // actions for crypto symbols so the page can't contradict the no-crypto guardrail.
   const isCrypto = /^(BTC|ETH|SOL|DOGE|XRP|ADA|BNB)(-?USD)?$/.test(sym);
-  const newBot = () => setWizard({ name: `${sym} bot`, symbols: [sym], asset_class: 'equity', mode: 'observe' });
+  const newBot = () => setWizard({ name: `${sym} bot`, symbols: [sym], asset_class: 'option', action: { option_type: 'call', strike_target: 'atm', expiration: 'weekly' }, mode: 'observe' });
   const newOptBot = (type: 'call' | 'put') => setWizard({ name: `${sym} ${type} bot`, symbols: [sym], asset_class: 'option', action: { option_type: type, strike_target: 'atm', expiration: 'monthly' }, mode: 'observe' });
 
   return (

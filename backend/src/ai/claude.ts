@@ -2,6 +2,7 @@ import { pool, exec, getGlobalMode, getTradingEnv } from '../db.js';
 import { rh, isOrderWriteTool } from '../rh/mcpClient.js';
 import { executeDraft } from '../execute.js';
 import type { OrderDraft } from '../risk/engine.js';
+import { refuseEquityBuy } from '../risk/optionsonly.js';
 import { llmJSON, llmAgent, aiReady as _aiReady, aiProvider, aiLabel, aiShort, modelFor, type Tool } from './llm.js';
 
 export function aiReady(): boolean { return _aiReady(); }
@@ -12,7 +13,7 @@ export const SYSTEM_RULES = `You are the trading brain for a private, local Robi
 NON-NEGOTIABLE RULES (violating these is a critical failure):
 - ABSOLUTELY NO CRYPTOCURRENCY. Never propose, analyze for buying, or place any crypto order. Crypto is permanently banned and the risk engine will hard-veto it.
 - LONG ONLY. Never short. A sell may only close an existing long position and never exceed the held quantity.
-- Equities, ETFs, and long options only (calls = bullish, puts = bearish).
+- OPTIONS ONLY. Long calls and long puts. Never propose equity or ETF share buys. Sells may flatten leftover shares.
 - You PROPOSE; deterministic code DISPOSES. Every order you propose passes through a risk engine (size, concentration, daily loss, throttle, kill switch) and the active execution mode. You cannot bypass it.
 - Execution modes: observe (log only), cautious (staged for approval), auto (auto-execute within guardrails), full_auto (auto + may open new positions).
 - Be concise, specific, quantitative. State conviction and key risks. Never fabricate prices/fills — use the tools/data.`;
@@ -109,11 +110,11 @@ export async function assistantChat(message: string): Promise<{ answer: string }
 const PROPOSE_ORDER_TOOL: Tool = {
   name: 'propose_order',
   description:
-    'Propose a LONG equity/ETF/option order. Routed through the deterministic risk engine + active mode (logged, staged, or executed). NEVER crypto. Sells only close existing longs.',
+    'Propose a LONG option order (call or put). Routed through the deterministic risk engine + active mode. NEVER equity/ETF share buys, NEVER crypto. Sells only close existing longs.',
   parameters: {
     type: 'object', additionalProperties: false,
     properties: {
-      symbol: { type: 'string' }, asset_class: { type: 'string', enum: ['equity', 'etf', 'option'] },
+      symbol: { type: 'string' }, asset_class: { type: 'string', enum: ['option'] },
       side: { type: 'string', enum: ['buy', 'sell'] }, qty: { type: 'number' },
       order_type: { type: 'string', enum: ['market', 'limit', 'stop', 'stop_limit'] },
       limit_price: { type: 'number' }, est_price: { type: 'number' },
@@ -148,11 +149,16 @@ export async function agentTradeTurn(userPrompt: string, opts: { allowOpenNew?: 
         const draft: OrderDraft = {
           env: envAtStart,
           symbol: args.symbol,
-          asset_class: args.option_type ? 'option' : (args.asset_class || 'equity'),
+          asset_class: 'option',
           side: args.side,
           qty: args.qty, order_type: args.order_type || 'market', limit_price: args.limit_price,
           est_price: args.est_price, option_type: args.option_type, source: 'ai',
         };
+        if (refuseEquityBuy({ ...draft, asset_class: args.asset_class || draft.asset_class })) {
+          const r = { action: 'veto', status: 'vetoed', reason: 'equity_refused — options-only desk (do not convert/park)' };
+          actions.push(r);
+          return r;
+        }
         const r = await executeDraft(draft, { rationale: args.rationale });
         actions.push(r);
         return { action: r.action, status: r.status, reason: r.reason };

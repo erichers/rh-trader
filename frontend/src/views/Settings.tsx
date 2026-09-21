@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { RhStatus, RhAuthStart, RhSync, SetMode, SetKill, RiskLimits, SetRiskLimits, TradeDefaults, SetTradeDefaults } from '../api/client';
+import { RhStatus, RhAuthStart, RhSync, SetMode, SetKill, RiskLimits, SetRiskLimits, TradeDefaults, SetTradeDefaults, SetJev, SetMuse } from '../api/client';
 import { RISK_FIELDS, fmtField, sizingLine } from '../components/risksizing';
 import { Card, Badge, useAsync, Info, money } from '../components/ui';
 import { Icon } from '../components/icons';
@@ -97,6 +97,62 @@ export default function Settings({ health, onChange }: { health: any; onChange: 
             <li>Trades occur only in the isolated Robinhood Agentic account.</li>
           </ul>
         </div>
+      </Card>
+
+      <Card title="Jev — post-signal override" right={<a href="#/models/jev">Open Jev page →</a>}>
+        <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+          Lightning panel after a bot fires. Hard rails (kill, DTE, puts, max $) always win.
+          <b> off</b> never calls TypeSafe (fail-open). <b> shadow</b> logs and never blocks.
+          <b> active</b> may skip / size_down. $5 prepaid budget degrades to local decide.
+        </div>
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          {(['off', 'shadow', 'active'] as const).map((m) => {
+            const cur = !health?.jev?.enabled || health?.jev?.mode === 'off' ? 'off' : health?.jev?.mode;
+            return (
+              <button key={m} className={cur === m ? 'primary' : ''} onClick={async () => {
+                await SetJev(m === 'off' ? { enabled: false, mode: 'off' } : { enabled: true, mode: m });
+                onChange();
+              }}>{m}</button>
+            );
+          })}
+        </div>
+        <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
+          spent ${Number(health?.jev?.spentUsd || 0).toFixed(4)} / ${health?.jev?.budgetUsd ?? 5}
+          {health?.jev?.degraded ? ` · degraded: ${health?.jev?.reason || 'yes'}` : ''}
+          {health?.jev?.last?.pick ? ` · last ${health.jev.last.pick} ${health.jev.last.symbol || ''}` : ''}
+        </div>
+        {health?.jev?.last?.because && <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{health.jev.last.because}</div>}
+      </Card>
+
+      <Card title="Muse — auditor + improver" right={<a href="#/models/muse">Open Muse page →</a>}>
+        <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+          Muse never places orders. <b>observe</b> watches only.
+          <b> improve</b> (paper default) clamps SL≤10 / TP toward 20 / trail 8–15 and may nudge min_matches / cooldown.
+          No Muse key → local heuristic still runs in improve (not stuck on n/a).
+        </div>
+        <div className="row" style={{ gap: 8 }}>
+          {(['observe', 'improve'] as const).map((m) => (
+            <button key={m} className={(health?.watch?.mode || 'improve') === m ? 'primary' : ''} onClick={async () => {
+              await SetMuse({ mode: m });
+              onChange();
+            }}>{m}</button>
+          ))}
+          <span className="muted" style={{ fontSize: 12 }}>
+            configured: {health?.watch?.via === 'muse' && health?.watch?.available ? 'yes' : 'no (local)'}
+          </span>
+        </div>
+        <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
+          {health?.watch?.note || 'Muse never places.'}
+          {health?.watch?.lastTune?.name ? ` · last tune ${health.watch.lastTune.name}` : ''}
+        </div>
+      </Card>
+
+      <Card title="AI research + chat" right={<a href="#/models/ai">Open AI page →</a>}>
+        <div className="muted" style={{ fontSize: 12 }}>
+          Sidebar label: <b>{health?.aiShort || 'no key'}</b>. Research vs chat comes from the live
+          provider chain (usually Kimi + Groq). Keys stay in <code>.env</code> — this page never shows them.
+        </div>
+        <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>{health?.aiLabel || 'AI label unavailable until the API is up.'}</div>
       </Card>
 
       <TradeSizingCard />

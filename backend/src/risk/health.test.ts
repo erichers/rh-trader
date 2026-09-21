@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { healthVerdict } from './health.js';
+import { SWING_LAW } from './exitpolicy.js';
+import { museWatchLamp } from '../muse/watch.js';
+import { autofixHealth, resetAutofixForTests } from '../bots/autofix.js';
+import { config } from '../config.js';
 
 describe('healthVerdict', () => {
   it('is ready only when db + alpaca_paper + alpaca reachable', () => {
@@ -53,5 +57,47 @@ describe('healthVerdict', () => {
     assert.equal(v.ready, false);
     assert.ok(v.failures.includes('live_env'));
     assert.ok(v.failures.includes('not_paper'));
+  });
+});
+
+describe('SWING_LAW /api/health snapshot', () => {
+  it('is 10 / 10 / 0 / 20 / 10 / dte 2–14', () => {
+    assert.deepEqual(SWING_LAW, {
+      hardStopPct: 10,
+      gainLockArmPct: 10,
+      gainLockFloorPct: 0,
+      softTakeProfitPct: 20,
+      trailPct: 10,
+      entryDteMin: 2,
+      entryDteMax: 14,
+      leapsEligible: true,
+    });
+  });
+});
+
+describe('health.allowedAssetClasses', () => {
+  it('is option only', () => {
+    assert.deepEqual(config.trading.allowedAssetClasses, ['option']);
+  });
+});
+
+describe('health.autofix snapshot', () => {
+  it('exposes lastRun / lastFixedCount / lastError', () => {
+    resetAutofixForTests();
+    const a = autofixHealth();
+    assert.equal(a.lastRun, null);
+    assert.equal(a.lastFixedCount, 0);
+    assert.equal(a.lastError, null);
+  });
+});
+
+describe('health.watch lamp', () => {
+  it('Muse down is unknown, not green', () => {
+    const lamp = museWatchLamp({
+      configured: false, running: true, lastCycle: 'x', lastError: null,
+    });
+    assert.equal(lamp.ok, false);
+    assert.equal(lamp.available, false);
+    assert.equal(lamp.observeOnly, true);
   });
 });
