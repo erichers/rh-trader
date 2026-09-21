@@ -23,7 +23,7 @@ export default function StrategiesView() {
         </button>
       }>
         {msg && <div className="muted">Seeded: {msg}</div>}
-        <div className="muted">Prebuilt strategies across swings, day trades, long calls, long puts, and AI-driven setups. Seeding creates each as a disabled bot in Observe mode — enable + set a mode per bot on the Bots page.</div>
+        <div className="muted">Prebuilt option strategies (long calls / long puts). Equity leftovers are never seeded. Seeding creates each as a disabled bot in Observe mode — enable + set a mode per bot on the Bots page.</div>
       </Card>
 
       {cats.map((cat) => (

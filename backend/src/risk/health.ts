@@ -37,6 +37,7 @@ export type PaperHealth = {
   watch?: MuseWatchLamp;
   jev?: JevPublic;
   autofix?: AutofixHealth;
+  allowedAssetClasses: string[];
 };
 
 /** Pure verdict used by /api/health and tests. Never throws. */
@@ -70,6 +71,7 @@ export async function collectPaperHealth(): Promise<PaperHealth> {
     uptime_s: Math.round(process.uptime()),
     riskLaw: { maxTradeUsd: RISK_LAW.maxTradeUsd, maxDailyDrawdownPct: RISK_LAW.maxDailyDrawdownPct },
     swingLaw: SWING_LAW,
+    allowedAssetClasses: config.trading.allowedAssetClasses,
   };
 
   let db = false;

@@ -253,10 +253,9 @@ function parseMaybeJson(v: any): any {
 }
 
 /**
- * Should this bot emit on the allowlist? Equity ORB (Fri 8028140) is still
- * skipped here when `option` is not allowed. Monday full_auto paper converts
- * equity templates to 2–14 DTE calls in `callsonly` / `evaluateBot` *before*
- * this skip when option is on the desk — it does not open shares.
+ * Should this bot emit on the allowlist? Equity ORB (Fri 8028140) is skipped
+ * on an options-only desk. Autofix DELETES leftover equity rows — it does not
+ * convert them to calls or park them.
  */
 export function botClassSkipReason(
   bot: { asset_class?: string | null; action?: any },

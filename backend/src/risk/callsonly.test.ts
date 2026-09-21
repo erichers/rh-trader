@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { STRATEGY_LIBRARY } from '../bots/strategies.js';
+import { STRATEGY_LIBRARY, shouldSeedStrategy } from '../bots/strategies.js';
 import {
   CALLS_ONLY_REASON,
   PUTS_BLOCKED_REASON,
@@ -53,14 +53,14 @@ describe('callsOnlyBuyCheck — full_auto paper', () => {
     assert.equal(v.reason, PUTS_BLOCKED_REASON);
   });
 
-  it('flags an equity buy for convert / veto', () => {
+  it('refuses an equity buy — never convert', () => {
     const v = callsOnlyBuyCheck({
       side: 'buy', asset_class: 'equity', qty: 13, est_price: 721.36,
     }, paperAuto);
     assert.equal(v.pass, false);
     assert.equal(v.reason, CALLS_ONLY_REASON);
-    assert.equal(v.convertToCall, true);
-    assert.match(v.detail, /calls_only/);
+    assert.equal(v.convertToCall, false);
+    assert.match(v.detail, /refused/);
   });
 
   it('does not bind sells or non-full_auto modes', () => {
@@ -77,20 +77,16 @@ describe('callsOnlyBuyCheck — full_auto paper', () => {
 });
 
 describe('convertEquityDraftToCall', () => {
-  it('turns a Friday-style ORB equity lot into a 1-lot ATM weekly call', () => {
+  it('refuses to rewrite a Friday-style ORB equity lot into a call', () => {
     const d = convertEquityDraftToCall({
       side: 'buy',
       asset_class: 'equity',
       qty: 13,
       est_price: 721.36,
     } as CallsOnlyHint);
-    assert.equal(d.asset_class, 'option');
-    assert.equal(d.option_type, 'call');
-    assert.equal(d.strike_target, 'atm');
-    assert.equal(d.expiration, 'weekly');
-    assert.equal(d.qty, 1);
-    assert.equal(d.est_price, undefined);
-    assert.equal(d._play?.dte, 7);
+    assert.equal(d.asset_class, 'equity');
+    assert.equal(d.option_type, undefined);
+    assert.equal(d.qty, 13);
   });
 
   it('does not clamp a LEAPS draft into 2–14 DTE', () => {
@@ -116,13 +112,13 @@ describe('convertEquityDraftToCall', () => {
 });
 
 describe('shouldConvertEquityBot', () => {
-  it('converts an option-only-desk equity skip under full_auto paper', () => {
+  it('never converts leftover equity — autofix deletes instead', () => {
     assert.equal(shouldConvertEquityBot({
       classSkip: `'equity' not in allowlist [option]`,
       optionAllowed: true,
       mode: 'full_auto',
       env: 'alpaca_paper',
-    }), true);
+    }), false);
     assert.equal(shouldConvertEquityBot({
       classSkip: `'equity' not in allowlist [option]`,
       optionAllowed: true,
@@ -140,6 +136,10 @@ describe('STRATEGY_LIBRARY — prefer call, keep puts in the catalog', () => {
     assert.equal(rsi?.action.option_type, 'call');
     const orb = STRATEGY_LIBRARY.find((s) => s.key === 'opening-breakout');
     assert.equal(orb?.action.option_type, 'call');
+    assert.equal(shouldSeedStrategy(rsi!), true);
+    assert.equal(shouldSeedStrategy(orb!), false);
+    assert.equal(shouldSeedStrategy(STRATEGY_LIBRARY.find((s) => s.key === 'donchian-breakout')!), false);
+    assert.equal(shouldSeedStrategy(STRATEGY_LIBRARY.find((s) => s.key === 'ai-conviction-swing')!), false);
   });
 
   it('library LEAPS template is a far-dated long call, not a 14 DTE monthly', () => {

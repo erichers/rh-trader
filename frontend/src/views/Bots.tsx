@@ -46,7 +46,7 @@ function explain(rules: any, action: any, aiGate: any): string {
   const joiner = rules.require_all ? ' AND ' : (rules.min_matches > 1 ? ` (any ${rules.min_matches}) ` : ' or ');
   let s = `Fires when ${parts.join(joiner)}.`;
   if (action?.option_type) s += ` Then buys a ${action.strike_target || 'ATM'} ${action.expiration || 'weekly'} ${action.option_type} (long, defined risk).`;
-  else s += ` Then ${action?.side || 'buys'} ${action?.qty || 1} share(s).`;
+  else s += ` Then buys a call (options-only desk — leftover equity rows are deleted).`;
   if (aiGate?.enabled) s += ` Claude must also confirm (conviction ≥ ${aiGate.min_conviction ?? 0.5}).`;
   return s;
 }
@@ -63,6 +63,9 @@ function issues(bot: any, health: any): { msg: string; cta?: string; href?: stri
     for (const e of errs) out.push({ kind: 'red', msg: `${e.symbol || ''}: ${e.error || e.skipped}` });
   }
 
+  if (bot.asset_class === 'equity' || bot.asset_class === 'etf') {
+    out.push({ kind: 'red', msg: 'Equity bot — options-only desk will DELETE this row (not convert/park).' });
+  }
   if (bot.asset_class === 'option' && health && !health.broker?.alpacaConfigured) {
     out.push({ kind: 'amber', msg: 'Options need market data — Alpaca not configured.', cta: 'Open Settings', href: '#/settings' });
   }
@@ -148,7 +151,7 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
   const startEdit = () => setEdit({
     name: bot.name,
     symbols: symbols.join(', '),
-    asset_class: bot.asset_class,
+    asset_class: 'option',
     mode: bot.mode,
     qty: action.qty ?? 1,
     side: action.side ?? 'buy',
@@ -181,12 +184,14 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
     try {
       const newRules = JSON.parse(edit.rules);
       const newAction: any = { ...action, side: edit.side, qty: Number(edit.qty), order_type: action.order_type || 'market' };
-      if (edit.asset_class === 'option') { newAction.option_type = edit.option_type || 'call'; newAction.strike_target = edit.strike_target; newAction.expiration = edit.expiration; }
+      newAction.option_type = edit.option_type || 'call';
+      newAction.strike_target = edit.strike_target;
+      newAction.expiration = edit.expiration;
       await api.put(`/bots/${bot.id}`, {
         name: edit.name,
         enabled: bot.enabled,
         symbols: edit.symbols.split(',').map((s: string) => s.trim().toUpperCase()).filter(Boolean),
-        asset_class: edit.asset_class,
+        asset_class: 'option',
         rules: newRules,
         ai_gate: { enabled: edit.ai_enabled, min_conviction: Number(edit.min_conviction) },
         action: newAction,
@@ -269,8 +274,8 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
               <label className="muted">Name<input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} style={{ width: '100%' }} /></label>
               <label className="muted">Symbols (comma)<input value={edit.symbols} onChange={(e) => setEdit({ ...edit, symbols: e.target.value })} style={{ width: '100%' }} /></label>
               <label className="muted">Asset class
-                <select value={edit.asset_class} onChange={(e) => setEdit({ ...edit, asset_class: e.target.value })} style={{ width: '100%' }}>
-                  <option value="equity">equity</option><option value="etf">etf</option><option value="option">option</option>
+                <select value="option" disabled style={{ width: '100%' }}>
+                  <option value="option">option (calls / puts only)</option>
                 </select>
               </label>
               <label className="muted">Mode
@@ -280,7 +285,7 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
                 <select value={edit.side} onChange={(e) => setEdit({ ...edit, side: e.target.value })} style={{ width: '100%' }}><option>buy</option><option>sell</option></select>
               </label>
               <label className="muted">Qty<input value={edit.qty} onChange={(e) => setEdit({ ...edit, qty: e.target.value })} style={{ width: '100%' }} /></label>
-              {edit.asset_class === 'option' && (
+              {(
                 <>
                   <label className="muted">Option
                     <select value={edit.option_type} onChange={(e) => setEdit({ ...edit, option_type: e.target.value })} style={{ width: '100%' }}><option value="call">call</option><option value="put">put</option></select>

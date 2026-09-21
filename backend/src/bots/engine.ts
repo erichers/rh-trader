@@ -45,7 +45,7 @@ function parseBot(row: any): Bot {
     env: (row.env || 'alpaca_paper') as TradingEnv,
     enabled: row.enabled,
     symbols: j(row.symbols, []),
-    asset_class: row.asset_class || 'equity',
+    asset_class: row.asset_class || 'option',
     rules: j(row.rules, {}),
     ai_gate: j(row.ai_gate, { enabled: false }),
     action: j(row.action, { side: 'buy', qty: 1, order_type: 'market' }),
@@ -437,7 +437,7 @@ export async function evaluateBot(botRow: any): Promise<any> {
         const draft: OrderDraft = {
           env: bot.env,
           symbol,
-          asset_class: isOption ? 'option' : (bot.asset_class || 'equity'),
+          asset_class: isOption ? 'option' : (bot.asset_class || 'option'),
           side,
           qty: Number(bot.action?.qty ?? 1),
           order_type: bot.action?.order_type || 'market',

@@ -51,7 +51,7 @@ columns and indexes, so a partially old schema is fine.
 STEP 4: .env
 Run `cp .env.example .env`. Set DB_HOST, DB_PORT, DB_USER, DB_PASSWORD and DB_NAME to the MySQL
 you just used. Leave the safety block exactly as it ships: DEFAULT_MODE=observe,
-KILL_SWITCH=false, ALLOWED_ASSET_CLASSES=equity,etf,option, and the four numeric caps.
+KILL_SWITCH=false, ALLOWED_ASSET_CLASSES=option, and the four numeric caps.
 .env.example does not yet carry the broker environment keys, so append these lines:
   TRADING_ENV=alpaca_paper
   ALPACA_API_KEY=

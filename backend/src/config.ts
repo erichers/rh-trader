@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { optionOnlyAllowlist } from './risk/optionsonly.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..'); // backend/
@@ -115,10 +116,8 @@ export const config = {
     defaultEnv: (process.env.TRADING_ENV || 'alpaca_paper') as TradingEnv,
     defaultMode: (process.env.DEFAULT_MODE || 'observe') as Mode,
     killSwitch: (process.env.KILL_SWITCH || 'false') === 'true',
-    allowedAssetClasses: (process.env.ALLOWED_ASSET_CLASSES || 'equity,etf,option')
-      .split(',')
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean),
+    // Standing law: option only. Env values that still list equity/etf are dropped.
+    allowedAssetClasses: optionOnlyAllowlist(process.env.ALLOWED_ASSET_CLASSES),
     maxPositionUsd: num(process.env.MAX_POSITION_USD, 10_000),
     maxConcentrationPct: num(process.env.MAX_PORTFOLIO_CONCENTRATION_PCT, 25),
     maxDailyLossPct: num(process.env.MAX_DAILY_LOSS_PCT, 3),

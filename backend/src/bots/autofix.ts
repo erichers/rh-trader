@@ -1,6 +1,7 @@
 /**
  * Standing paper-desk autofix: park issue bots as observe (watch only) and
- * clamp new-entry exits to Monday swing law. Never widens live open-position
+ * clamp new-entry exits to Monday swing law. Leftover equity rows are DELETED
+ * (never converted to calls, never parked). Never widens live open-position
  * stops — only bot config used for future entries. Muse/Jev do not place.
  */
 
@@ -14,6 +15,7 @@ import {
 } from '../risk/exitpolicy.js';
 import { OBSERVE_STUB_KEYS, OBSERVE_STUB_NAMES, parseJsonish } from '../risk/observe.js';
 import { isShortDtePrivileged, SHORT_DTE_BAND, SHORT_DTE_RAILS } from '../risk/shortdte.js';
+import { isDeletedLeftoverEquity, isEquityAssetClass } from '../risk/optionsonly.js';
 
 export const AUTOFIX_TRAIL_MIN = 8;
 export const AUTOFIX_TRAIL_MAX = 15;
@@ -25,6 +27,8 @@ export type AutofixProposal = {
   name: string;
   reason: string;
   changes: AutofixChange[];
+  /** Equity leftovers are deleted, not parked or converted. */
+  delete?: boolean;
   next: {
     mode: Mode;
     enabled: number;
@@ -43,6 +47,7 @@ export type AutofixResult = {
   env: string;
   refused?: boolean;
   fixed: AutofixProposal[];
+  deleted: AutofixProposal[];
   skipped: AutofixSkip[];
   summary: string;
 };
@@ -148,7 +153,12 @@ export function classifyBotForAutofix(bot: any): AutofixClass {
   });
   if (leaps) return 'leaps';
   if (String(action?.option_type || '').toLowerCase() === 'call') return 'long_call';
-  if (!action?.option_type) return 'equity';
+  // Share lot, unlabeled leftover, or a Mac-deleted equity name without a call spec.
+  if (
+    isEquityAssetClass(bot?.asset_class)
+    || !action?.option_type
+    || isDeletedLeftoverEquity({ name, key, action })
+  ) return 'equity';
   return 'ok';
 }
 
@@ -225,7 +235,7 @@ function clampPlayLists(action: Record<string, any>): void {
 const CLASS_REASON: Record<AutofixClass, string> = {
   observe_stub: 'observe-only stub — stay watch, never promote',
   put: 'put → observe + disabled (clear last_result)',
-  equity: 'equity (no option_type) → observe + disabled (clear last_result)',
+  equity: 'equity → DELETE (options-only desk; do not convert/park)',
   sell: 'covered-call / option sell → observe + disabled (clear last_result)',
   short_dte: 'explicit 0–1 DTE (not on allowlist) → observe + disabled (clear last_result)',
   leaps: 'long-call LEAPS → full_auto call buy',
@@ -245,11 +255,21 @@ export function proposeBotAutofix(bot: any): AutofixProposal | null {
   const privileged = isShortDtePrivileged({ key, name, keys: [action?._play?.key] });
 
   let mode = String(bot?.mode || 'observe') as Mode;
-  let asset_class = String(bot?.asset_class || 'equity');
+  let asset_class = String(bot?.asset_class || 'option');
   const wasEnabled = bot?.enabled === true || bot?.enabled === 1 || bot?.enabled === '1';
   let enabled = wasEnabled ? 1 : 0;
   let clearLastResult = false;
-  const offRails = klass === 'put' || klass === 'equity' || klass === 'sell' || klass === 'short_dte';
+  if (klass === 'equity') {
+    return {
+      id: bot?.id != null ? Number(bot.id) : null,
+      name,
+      reason: CLASS_REASON.equity,
+      delete: true,
+      changes: [{ field: 'row', from: 'present', to: 'deleted' }],
+      next: { mode: 'observe', enabled: 0, asset_class: 'equity', action, risk, clearLastResult: true },
+    };
+  }
+  const offRails = klass === 'put' || klass === 'sell' || klass === 'short_dte';
 
   if (klass === 'observe_stub' || offRails) {
     mode = 'observe';
@@ -303,6 +323,7 @@ export async function runBotsAutofix(opts: {
   dryRun?: boolean;
   loadBots?: (env: string) => Promise<any[]>;
   saveBot?: (row: AutofixProposal, env: string) => Promise<void>;
+  deleteBot?: (row: AutofixProposal, env: string) => Promise<void>;
   log?: typeof audit;
   now?: () => string;
 } = {}): Promise<AutofixResult> {
@@ -321,6 +342,7 @@ export async function runBotsAutofix(opts: {
         env,
         refused: true,
         fixed: [],
+        deleted: [],
         skipped: [],
         summary: lastError,
       };
@@ -328,7 +350,7 @@ export async function runBotsAutofix(opts: {
     if (!dryRun && !opts.loadBots && await getKillSwitch()) {
       lastRun = at;
       lastError = 'kill switch on — autofix skipped';
-      return { ok: true, dry_run: false, env, fixed: [], skipped: [], summary: lastError };
+      return { ok: true, dry_run: false, env, fixed: [], deleted: [], skipped: [], summary: lastError };
     }
 
     const bots = opts.loadBots
@@ -336,6 +358,7 @@ export async function runBotsAutofix(opts: {
       : await q<any>('SELECT * FROM bots WHERE env=:env ORDER BY id ASC', { env });
 
     const fixed: AutofixProposal[] = [];
+    const deleted: AutofixProposal[] = [];
     const skipped: AutofixSkip[] = [];
     for (const bot of bots || []) {
       const proposal = proposeBotAutofix(bot);
@@ -343,9 +366,18 @@ export async function runBotsAutofix(opts: {
         skipped.push({ id: bot.id ?? null, name: String(bot.name || ''), reason: 'already compliant' });
         continue;
       }
-      fixed.push(proposal);
+      if (proposal.delete) deleted.push(proposal);
+      else fixed.push(proposal);
       if (!dryRun) {
-        if (opts.saveBot) {
+        if (proposal.delete) {
+          if (opts.deleteBot) {
+            await opts.deleteBot(proposal, env);
+          } else if (opts.saveBot) {
+            await opts.saveBot(proposal, env);
+          } else if (proposal.id != null) {
+            await exec('DELETE FROM bots WHERE id=:id AND env=:env', { id: proposal.id, env });
+          }
+        } else if (opts.saveBot) {
           await opts.saveBot(proposal, env);
         } else if (proposal.id != null) {
           await exec(
@@ -364,33 +396,38 @@ export async function runBotsAutofix(opts: {
           );
         }
         await write(
-          'bot.autofix',
+          proposal.delete ? 'bot.autofix.delete' : 'bot.autofix',
           `${proposal.name}: ${proposal.reason} [${proposal.changes.map((c) => c.field).join(',')}]`.slice(0, 240),
           {
             id: proposal.id,
             env,
             reason: proposal.reason,
             changes: proposal.changes.map((c) => c.field),
+            deleted: !!proposal.delete,
           },
         ).catch(() => {});
       }
     }
 
     lastRun = at;
-    lastFixedCount = dryRun ? lastFixedCount : fixed.length;
+    lastFixedCount = dryRun ? lastFixedCount : fixed.length + deleted.length;
     lastError = null;
     const summary = dryRun
-      ? `dry-run: ${fixed.length} would fix, ${skipped.length} already compliant`
-      : `fixed ${fixed.length}, skipped ${skipped.length}`;
-    if (!dryRun && fixed.length) {
-      await write('bot.autofix.summary', summary, { env, fixed: fixed.map((f) => f.id) }).catch(() => {});
+      ? `dry-run: ${deleted.length} would delete, ${fixed.length} would fix, ${skipped.length} already compliant`
+      : `deleted ${deleted.length} equity, fixed ${fixed.length}, skipped ${skipped.length}`;
+    if (!dryRun && (fixed.length || deleted.length)) {
+      await write('bot.autofix.summary', summary, {
+        env,
+        fixed: fixed.map((f) => f.id),
+        deleted: deleted.map((d) => d.id),
+      }).catch(() => {});
     }
-    return { ok: true, dry_run: dryRun, env, fixed, skipped, summary };
+    return { ok: true, dry_run: dryRun, env, fixed, deleted, skipped, summary };
   } catch (e: any) {
     const msg = String(e?.message || e).slice(0, 240);
     lastRun = at;
     lastError = msg;
     await write('bot.autofix.error', msg, { env }).catch(() => {});
-    return { ok: false, dry_run: dryRun, env, fixed: [], skipped: [], summary: msg };
+    return { ok: false, dry_run: dryRun, env, fixed: [], deleted: [], skipped: [], summary: msg };
   }
 }

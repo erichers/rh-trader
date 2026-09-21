@@ -43,6 +43,7 @@ import { saveJevSettings } from '../risk/jevSettings.js';
 import { loadMuseSettings, saveMuseSettings } from '../muse/settings.js';
 import { museConfigured, museWatchStatus } from '../muse/watch.js';
 import { museLastTune } from '../muse/improve.js';
+import { refuseEquityBot, refuseEquityBuy } from '../risk/optionsonly.js';
 
 /** Attach each bot's EFFECTIVE risk (bot value, else the global trade default, with the
  *  source of every field) to a bot list. Additive — no existing field changes. */
@@ -67,6 +68,8 @@ function validateDraft(b: any): string | null {
   if (b.order_type && !['market', 'limit', 'stop', 'stop_limit'].includes(b.order_type)) return 'invalid order_type';
   if (b.asset_class && !['equity', 'etf', 'option'].includes(String(b.asset_class).toLowerCase())) return 'invalid asset_class';
   if (String(b.asset_class).toLowerCase() === 'option' && b.option_type && !['call', 'put'].includes(b.option_type)) return 'invalid option_type';
+  const equityBuy = refuseEquityBuy(b);
+  if (equityBuy) return equityBuy;
   return null;
 }
 
@@ -115,6 +118,7 @@ export async function registerRoutes(app: FastifyInstance) {
         mode: await getGlobalMode().catch(() => 'unknown'),
         killSwitch: await getKillSwitch().catch(() => false),
         listen: `127.0.0.1:${config.server.port}`,
+        allowedAssetClasses: config.trading.allowedAssetClasses,
         failures: ['db_down'],
         watch: {
           available: false,
@@ -659,8 +663,11 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post('/api/bots', async (req, reply) => {
     const b = req.body as any;
     if (!b?.name || typeof b.name !== 'string') return reply.code(400).send({ error: 'bot name required' });
+    const equity = refuseEquityBot(b);
+    if (equity) return reply.code(400).send({ error: equity });
     const symbols = Array.isArray(b.symbols) ? b.symbols.map((s: any) => String(s).toUpperCase()) : [];
-    const ac = ['equity', 'etf', 'option'].includes(String(b.asset_class).toLowerCase()) ? String(b.asset_class).toLowerCase() : 'equity';
+    const ac = String(b.asset_class || 'option').toLowerCase() === 'option' ? 'option' : null;
+    if (!ac) return reply.code(400).send({ error: refuseEquityBot({ ...b, asset_class: b.asset_class || 'equity' }) });
     const mode = MODES.includes(b.mode) ? b.mode : 'observe';
     const res = await exec(
       `INSERT INTO bots (name, env, enabled, symbols, asset_class, rules, ai_gate, action, risk, mode)
@@ -683,6 +690,10 @@ export async function registerRoutes(app: FastifyInstance) {
   app.put('/api/bots/:id', async (req, reply) => {
     const id = intId(req); if (id == null) return reply.code(400).send({ error: 'invalid id' });
     const b = req.body as any;
+    const equity = refuseEquityBot(b);
+    if (equity) return reply.code(400).send({ error: equity });
+    const ac = String(b.asset_class ?? 'option').toLowerCase() === 'option' ? 'option' : null;
+    if (!ac) return reply.code(400).send({ error: refuseEquityBot({ ...b, asset_class: b.asset_class || 'equity' }) });
     const r = await exec(
       `UPDATE bots SET name=:name, enabled=:enabled, symbols=CAST(:symbols AS JSON), asset_class=:ac,
         rules=CAST(:rules AS JSON), ai_gate=CAST(:ai AS JSON), action=CAST(:action AS JSON),
@@ -693,7 +704,7 @@ export async function registerRoutes(app: FastifyInstance) {
         name: b.name,
         enabled: b.enabled ? 1 : 0,
         symbols: JSON.stringify(b.symbols ?? []),
-        ac: b.asset_class ?? 'equity',
+        ac,
         rules: JSON.stringify(b.rules ?? {}),
         ai: JSON.stringify(b.ai_gate ?? { enabled: false }),
         action: JSON.stringify(b.action ?? {}),

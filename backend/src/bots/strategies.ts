@@ -2,6 +2,7 @@ import { q, exec } from '../db.js';
 import type { Mode, TradingEnv } from '../config.js';
 import { isObserveOnlyBot, OBSERVE_STUB_KEYS } from '../risk/observe.js';
 import { shortDteAllowlistHit, SHORT_DTE_RAILS } from '../risk/shortdte.js';
+import { isDeletedLeftoverEquity, isEquityAssetClass } from '../risk/optionsonly.js';
 
 export type StrategyTemplate = {
   key: string;
@@ -43,7 +44,7 @@ const SWING = (o: Partial<StrategyTemplate> & Pick<StrategyTemplate, 'key' | 'na
 });
 
 export const STRATEGY_LIBRARY: StrategyTemplate[] = [
-  // ── Swing (equity, long) ──────────────────────────────────────────────────
+  // ── Swing (long calls). Leftover equity names are never re-seeded. ────────
   SWING({
     key: 'rsi-bounce',
     name: 'RSI Bounce',
@@ -94,7 +95,7 @@ export const STRATEGY_LIBRARY: StrategyTemplate[] = [
     rules: { price_above_sma20: true, macd_positive: true, require_all: true },
   }),
 
-  // ── Day trades (equity, intraday) ─────────────────────────────────────────
+  // ── Day trades (long calls, intraday signals). Not share lots. ─────────────
   {
     ...SWING({ key: 'momentum-day', name: 'Momentum Day Trade', description: 'Intraday momentum burst.', rules: { change_above: 1.5, macd_positive: true, min_matches: 1 } }),
     category: 'day',
@@ -227,11 +228,22 @@ export const STRATEGY_LIBRARY: StrategyTemplate[] = [
 /** Insert every template as a DISABLED bot for one account (env) if not already present.
  *  `mode` defaults to observe (the historical behaviour of the Strategy Library seed);
  *  a freshly seeded fleet passes 'cautious' so an enabled bot stages for approval. */
+/** Options-only seed gate. Leftover equity names/keys are never inserted. */
+export function shouldSeedStrategy(s: Pick<StrategyTemplate, 'name' | 'key' | 'asset_class' | 'action'>): boolean {
+  if (isEquityAssetClass(s.asset_class)) return false;
+  if (isDeletedLeftoverEquity({ name: s.name, key: s.key, action: s.action })) return false;
+  return true;
+}
+
 export async function seedStrategies(env: TradingEnv, opts: { mode?: Mode } = {}): Promise<{ created: number; skipped: number }> {
   const mode: Mode = opts.mode ?? 'observe';
   let created = 0;
   let skipped = 0;
   for (const s of STRATEGY_LIBRARY) {
+    if (!shouldSeedStrategy(s)) {
+      skipped++;
+      continue;
+    }
     const existing = await q<{ id: number }>('SELECT id FROM bots WHERE env=:env AND name=:n LIMIT 1', { env, n: s.name });
     if (existing.length) {
       skipped++;

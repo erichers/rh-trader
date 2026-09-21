@@ -32,7 +32,7 @@ describe('proposeBotAutofix', () => {
     assert.match(p!.reason, /put/);
   });
 
-  it('equity (no option_type) → observe + disabled, clears allowlist skip', () => {
+  it('equity (no option_type) → DELETE, never park or convert', () => {
     const p = proposeBotAutofix({
       id: 12,
       name: 'Donchian Breakout',
@@ -47,10 +47,11 @@ describe('proposeBotAutofix', () => {
     assert.equal(classifyBotForAutofix({
       name: 'Donchian Breakout', action: { side: 'buy' }, asset_class: 'equity',
     }), 'equity');
+    assert.equal(p!.delete, true);
     assert.equal(p!.next.mode, 'observe');
     assert.equal(p!.next.enabled, 0);
-    assert.equal(p!.next.clearLastResult, true);
-    assert.equal(p!.next.action._observe_only, true);
+    assert.match(p!.reason, /DELETE/);
+    assert.ok(!p!.next.action.option_type);
   });
 
   it('clamps sl>10, sets tp 20, trail default 10', () => {
@@ -130,8 +131,8 @@ describe('proposeBotAutofix', () => {
     assert.match(p!.reason, /sell|covered/i);
   });
 
-  it('already-disabled equity with no last_result is a no-op', () => {
-    assert.equal(proposeBotAutofix({
+  it('already-disabled parked equity is still DELETED', () => {
+    const p = proposeBotAutofix({
       id: 19,
       name: 'Donchian Breakout',
       enabled: 0,
@@ -140,10 +141,13 @@ describe('proposeBotAutofix', () => {
       action: { side: 'buy', _observe_only: true },
       risk: { stop_loss_pct: 10, take_profit_pct: 20, trailing_stop_pct: 10, hold_overnight: true, hold_over_weekend: true },
       last_result: null,
-    }), null);
+    });
+    assert.ok(p);
+    assert.equal(p!.delete, true);
+    assert.match(p!.reason, /DELETE/);
   });
 
-  it('disabled equity still clears a stale allowlist last_result', () => {
+  it('disabled equity with a stale allowlist last_result is DELETED', () => {
     const p = proposeBotAutofix({
       id: 20,
       name: 'Donchian Breakout',
@@ -155,8 +159,8 @@ describe('proposeBotAutofix', () => {
       last_result: [{ symbol: 'MSFT', skipped: "'equity' not in allowlist [option]" }],
     });
     assert.ok(p);
+    assert.equal(p!.delete, true);
     assert.equal(p!.next.enabled, 0);
-    assert.equal(p!.next.clearLastResult, true);
   });
 
   it('observe stub is not promoted to full_auto', () => {
@@ -196,9 +200,10 @@ describe('proposeBotAutofix', () => {
 });
 
 describe('runBotsAutofix', () => {
-  it('applies puts/equity and skips compliant LEAPS', async () => {
+  it('deletes leftover equity, parks puts, skips compliant LEAPS', async () => {
     resetAutofixForTests();
     const saved: any[] = [];
+    const removed: any[] = [];
     const logs: string[] = [];
     const bots = [
       { id: 1, name: 'Long Put — Hedge', mode: 'full_auto', asset_class: 'option', enabled: 1, action: { option_type: 'put', side: 'buy' }, risk: {} },
@@ -209,15 +214,21 @@ describe('runBotsAutofix', () => {
       env: 'alpaca_paper',
       loadBots: async () => bots,
       saveBot: async (row) => { saved.push(row); },
+      deleteBot: async (row) => { removed.push(row); },
       log: async (type, msg) => { logs.push(`${type}:${msg}`); },
       now: () => '2026-09-21T16:30:00.000Z',
     });
     assert.equal(out.ok, true);
-    assert.equal(out.fixed.length, 2);
+    assert.equal(out.fixed.length, 1);
+    assert.equal(out.deleted.length, 1);
+    assert.equal(out.deleted[0].name, 'RSI Bounce');
+    assert.equal(out.deleted[0].delete, true);
     assert.equal(out.skipped.length, 1);
     assert.equal(out.skipped[0].name, 'NVDA LEAPS');
-    assert.equal(saved.length, 2);
+    assert.equal(saved.length, 1);
+    assert.equal(removed.length, 1);
     assert.ok(logs.some((l) => l.startsWith('bot.autofix:')));
-    assert.match(out.summary, /fixed 2/);
+    assert.ok(logs.some((l) => l.startsWith('bot.autofix.delete:')));
+    assert.match(out.summary, /deleted 1 equity, fixed 1/);
   });
 });
