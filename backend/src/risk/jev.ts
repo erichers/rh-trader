@@ -22,10 +22,35 @@ import {
   type JevBudgetIo,
 } from './jevBudget.js';
 import { fallbackJevGate } from './jevFallback.js';
+import {
+  effectiveJevMode,
+  loadJevSettings,
+  parseJevUiMode,
+  type JevUiMode,
+} from './jevSettings.js';
+import { jevHealth, type JevHealth } from './jevBudget.js';
+import { readFile } from 'node:fs/promises';
 
 export const JEV_MODEL_DEFAULT = 'jev-latest';
 export const JEV_ENTRY_MODE_DEFAULT = 'shadow' as const;
 export type JevEntryMode = 'shadow' | 'active';
+export type { JevUiMode };
+
+export type JevLast = {
+  at: string;
+  symbol: string | null;
+  pick: string | null;
+  because: string | null;
+  bot: string | null;
+};
+
+export type JevPublic = JevHealth & {
+  enabled: boolean;
+  last: JevLast | null;
+  configured: boolean;
+};
+
+let lastJev: JevLast | null = null;
 
 export const JEV_CHOICE_ID = 'action';
 export const JEV_OPTIONS = ['enter', 'skip', 'size_down'] as const;
@@ -117,7 +142,63 @@ export function typesafeConfigured(override?: string | null): boolean {
 
 export function jevEntryMode(override?: string | null): JevEntryMode {
   const raw = String(override ?? config.typesafe.entryMode ?? JEV_ENTRY_MODE_DEFAULT).trim().toLowerCase();
+  if (raw === 'off') return 'shadow';
   return raw === 'active' ? 'active' : 'shadow';
+}
+
+export function rememberJevLast(rec: Record<string, unknown>, state?: Record<string, unknown>): JevLast {
+  const st = (state && typeof state === 'object' ? state : (rec.state as any)) || {};
+  lastJev = {
+    at: String(rec.ts || rec.at || new Date().toISOString()),
+    symbol: rec.symbol != null ? String(rec.symbol) : (st.symbol != null ? String(st.symbol) : null),
+    pick: rec.pick != null ? String(rec.pick) : null,
+    because: rec.because != null ? String(rec.because).slice(0, 240) : null,
+    bot: rec.bot != null ? String(rec.bot) : (st.bot != null ? String(st.bot) : (st.bot_name != null ? String(st.bot_name) : null)),
+  };
+  return lastJev;
+}
+
+export function getJevLast(): JevLast | null {
+  return lastJev;
+}
+
+export function resetJevLastForTests(): void {
+  lastJev = null;
+}
+
+export async function readJevLastFromLog(path = config.typesafe.logPath): Promise<JevLast | null> {
+  if (lastJev) return lastJev;
+  try {
+    const raw = await readFile(path, 'utf8');
+    const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const rec = JSON.parse(lines[i]);
+        if (rec && (rec.pick || rec.event)) return rememberJevLast(rec, rec.state);
+      } catch { /* next */ }
+    }
+  } catch { /* none */ }
+  return lastJev;
+}
+
+export async function jevPublicStatus(): Promise<JevPublic> {
+  const settings = await loadJevSettings().catch(() => ({ enabled: true, mode: parseJevUiMode(config.typesafe.entryMode) }));
+  const spend = await jevHealth().catch(() => ({
+    ok: true, mode: settings.mode, spentUsd: 0, budgetUsd: 5, degraded: false, reason: null,
+  }));
+  const last = await readJevLastFromLog().catch(() => lastJev);
+  const mode = effectiveJevMode(settings);
+  return {
+    ok: mode !== 'off' && !spend.degraded,
+    enabled: mode !== 'off',
+    mode,
+    spentUsd: spend.spentUsd,
+    budgetUsd: spend.budgetUsd,
+    degraded: spend.degraded,
+    reason: spend.reason,
+    last,
+    configured: typesafeConfigured(),
+  };
 }
 
 export function jevModel(override?: string | null): string {
@@ -373,6 +454,7 @@ export async function appendJevJsonl(
   write?: (file: string, line: string) => Promise<void>,
 ): Promise<void> {
   try {
+    rememberJevLast(rec, (rec.state as any) || undefined);
     const line = `${JSON.stringify(rec)}\n`;
     if (write) {
       await write(path, line);
@@ -406,9 +488,23 @@ export async function jevEntryGate(input: JevEntryState & {
 } = {}): Promise<JevGate> {
   const side = String(input.side || 'buy').toLowerCase();
   const source = String(input.source || 'bot').toLowerCase();
-  const mode = jevEntryMode(deps.mode);
+  let ui: JevUiMode;
+  if (deps.mode != null) ui = parseJevUiMode(deps.mode);
+  else {
+    const s = await loadJevSettings().catch(() => ({ enabled: true, mode: parseJevUiMode(config.typesafe.entryMode) }));
+    ui = effectiveJevMode(s);
+  }
+  const mode = ui === 'off' ? 'shadow' : jevEntryMode(ui);
   if (side !== 'buy') return failOpenGate('jev not asked — exit/flatten stays deterministic', false, mode);
   if (source !== 'bot' && source !== 'ai') return failOpenGate('jev not asked — not a bot/ai entry', false, mode);
+  if (ui === 'off') {
+    const gate = failOpenGate('jev off — TypeSafe not called, paper fail-open', false, 'shadow');
+    rememberJevLast({
+      ts: new Date().toISOString(), event: 'jev.off', pick: 'enter', because: gate.because,
+      symbol: input.symbol, bot: input.bot_name || input.bot,
+    });
+    return gate;
+  }
 
   const spend = await loadJevSpend(deps.budgetIo);
   if (!canCallJevApi(spend)) {

@@ -38,6 +38,11 @@ import { runLearning, listRuns, listIdeas, learningStatus } from '../learning.js
 import { armPaperFromBacktests } from '../paperArm.js';
 import { collectPaperHealth } from '../risk/health.js';
 import { runBotsAutofix } from '../bots/autofix.js';
+import { jevPublicStatus } from '../risk/jev.js';
+import { saveJevSettings } from '../risk/jevSettings.js';
+import { loadMuseSettings, saveMuseSettings } from '../muse/settings.js';
+import { museConfigured, museWatchStatus } from '../muse/watch.js';
+import { museLastTune } from '../muse/improve.js';
 
 /** Attach each bot's EFFECTIVE risk (bot value, else the global trade default, with the
  *  source of every field) to a bot list. Additive — no existing field changes. */
@@ -126,6 +131,31 @@ export async function registerRoutes(app: FastifyInstance) {
   });
 
   // Which model answers which task, and what the last liveness probe saw.
+  app.get('/api/jev', async () => jevPublicStatus());
+  app.put('/api/jev', async (req) => {
+    const b = (req.body as any) || {};
+    await saveJevSettings({
+      enabled: b.enabled == null ? undefined : !!b.enabled,
+      mode: b.mode,
+    });
+    return jevPublicStatus();
+  });
+  app.get('/api/muse', async () => {
+    const s = await loadMuseSettings();
+    const lamp = museWatchStatus();
+    return {
+      mode: s.mode,
+      configured: museConfigured(),
+      watch: lamp,
+      lastTune: museLastTune(),
+    };
+  });
+  app.put('/api/muse', async (req) => {
+    const b = (req.body as any) || {};
+    const s = await saveMuseSettings({ mode: b.mode });
+    return { mode: s.mode, configured: museConfigured(), watch: museWatchStatus(), lastTune: museLastTune() };
+  });
+
   app.get('/api/ai/models', async () => {
     if (!probedOnce()) await probeProviders();
     const tasks: Record<string, { provider: string; model: string; live: boolean | null }[]> = {};

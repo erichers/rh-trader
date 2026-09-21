@@ -49,10 +49,10 @@ console.log(`ok=${d.ok} db=${d.db} env=${d.env} live=${d.live} mode=${d.mode} ki
 if (alpaca.configured != null || alpaca.ok != null) {
   console.log(`alpaca configured=${alpaca.configured} ok=${alpaca.ok}${alpaca.error ? ' error=' + alpaca.error : ''}`);
 }
-console.log(`watch available=${watch.available} running=${watch.running} observeOnly=${watch.observeOnly} ok=${watch.ok} lastError=${watch.lastError || ''}`);
+console.log(`watch available=${watch.available} mode=${watch.mode || ''} via=${watch.via || ''} running=${watch.running} observeOnly=${watch.observeOnly} ok=${watch.ok} lastError=${watch.lastError || ''}`);
 if (d.jev) {
   const j = d.jev;
-  console.log(`jev ok=${j.ok} mode=${j.mode} spent=${j.spentUsd} budget=${j.budgetUsd} degraded=${j.degraded}${j.reason ? ' reason=' + j.reason : ''}`);
+  console.log(`jev ok=${j.ok} enabled=${j.enabled} mode=${j.mode} spent=${j.spentUsd} budget=${j.budgetUsd} degraded=${j.degraded}${j.reason ? ' reason=' + j.reason : ''}${j.last?.pick ? ' last=' + j.last.pick + ' ' + (j.last.symbol || '') : ''}`);
 }
 if (d.autofix) {
   const a = d.autofix;

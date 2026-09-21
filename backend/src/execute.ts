@@ -5,8 +5,11 @@ import { isShortDtePrivileged, syncPlayDteToContract } from './risk/dte.js';
 import { applyResolvedPremium, assignInferredAssetClass } from './risk/optionPrice.js';
 import { placeOrder as brokerPlace } from './brokers/index.js';
 import { execObserveBlock } from './risk/observe.js';
-import { applyJevSizeDown, jevEntryGate, jevEntryMode } from './risk/jev.js';
+import { applyJevSizeDown, jevEntryGate } from './risk/jev.js';
+import { cachedJevEffective } from './risk/jevSettings.js';
 import { museAuditAfterFire } from './muse/auditor.js';
+import { cachedMuseMode } from './muse/settings.js';
+import { applyMuseImprove } from './muse/improve.js';
 import { releaseBuyNotional, reserveBuyNotional } from './risk/exposure.js';
 import { mapBrokerOrderStatus } from './risk/exitlifecycle.js';
 
@@ -222,7 +225,7 @@ export async function executeDraft(
       decision.risk.computed.muse_soft_block = muse.flag === 'soft_block' ? 1 : 0;
       if (
         muse.flag === 'soft_block'
-        && jevEntryMode() === 'active'
+        && cachedJevEffective() === 'active'
         && decision.action === 'execute'
         && draft.side === 'buy'
       ) {
@@ -231,6 +234,9 @@ export async function executeDraft(
         decision.risk.reason = `muse soft_block — ${muse.because}`;
       }
     } catch { /* auditor must never crash submit */ }
+    if (cachedMuseMode() === 'improve' && botRow && env === 'alpaca_paper') {
+      await applyMuseImprove([botRow], { env, limit: 1 }).catch(() => {});
+    }
   }
 
   await logRiskEvent(draft, decision.risk);

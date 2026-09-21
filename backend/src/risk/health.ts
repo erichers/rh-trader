@@ -4,7 +4,9 @@ import { alpacaConfigured, probeAlpacaPaper, type AlpacaProbe } from '../brokers
 import { RISK_LAW } from './law.js';
 import { SWING_LAW } from './exitpolicy.js';
 import { museWatchStatus, type MuseWatchLamp } from '../muse/watch.js';
-import { jevHealth, type JevHealth } from './jevBudget.js';
+import { loadMuseSettings } from '../muse/settings.js';
+import { loadJevSettings } from './jevSettings.js';
+import { jevPublicStatus, type JevPublic } from './jev.js';
 import { autofixHealth, type AutofixHealth } from '../bots/autofix.js';
 
 export type HealthFailure =
@@ -33,7 +35,7 @@ export type PaperHealth = {
   swingLaw: typeof SWING_LAW;
   limits: { maxPositionUsd: number; maxConcentrationPct: number; maxDailyLossPct: number; maxOrdersPerDay: number } | null;
   watch?: MuseWatchLamp;
-  jev?: JevHealth;
+  jev?: JevPublic;
   autofix?: AutofixHealth;
 };
 
@@ -108,9 +110,15 @@ export async function collectPaperHealth(): Promise<PaperHealth> {
   const failures = [...new Set([...extraFailures, ...verdict.failures])];
 
   let watch: MuseWatchLamp | undefined;
-  try { watch = museWatchStatus(); } catch { /* lamp stays omitted */ }
-  let jev: JevHealth | undefined;
-  try { jev = await jevHealth(); } catch { /* optional */ }
+  try {
+    await loadMuseSettings();
+    watch = museWatchStatus();
+  } catch { try { watch = museWatchStatus(); } catch { /* lamp stays omitted */ } }
+  let jev: JevPublic | undefined;
+  try {
+    await loadJevSettings();
+    jev = await jevPublicStatus();
+  } catch { /* optional */ }
   let autofix: AutofixHealth | undefined;
   try { autofix = autofixHealth(); } catch { /* optional */ }
 

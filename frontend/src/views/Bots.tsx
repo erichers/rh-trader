@@ -54,7 +54,7 @@ function explain(rules: any, action: any, aiGate: any): string {
 /** Compute health issues + a fix CTA for a bot, given backend health.
  *  last_result error/skip (including allowlist) is only an issue while the bot is ON.
  *  Disabled bots must not paint the banner red. */
-export function issues(bot: any, health: any): { msg: string; cta?: string; href?: string; kind: string }[] {
+function issues(bot: any, health: any): { msg: string; cta?: string; href?: string; kind: string }[] {
   const out: any[] = [];
   const on = !!bot.enabled;
   const lr = J(bot.last_result, null);

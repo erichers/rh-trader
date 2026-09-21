@@ -49,6 +49,7 @@ describe('runMuseWatchCycle', () => {
     resetMuseWatchForTests();
     const cycle = await runMuseWatchCycle({
       env: 'alpaca_paper',
+      improve: false,
       loadPositions: async () => [{ symbol: 'TSLA' }, { symbol: 'QQQ' }],
       loadBots: async () => [
         { name: 'LEAPS momo', enabled: 1, mode: 'full_auto', action: { _strategy: 'leaps-call' } },
