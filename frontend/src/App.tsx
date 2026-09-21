@@ -1,7 +1,9 @@
 import { HashRouter, NavLink, Route, Routes } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { Icon, type IconName } from './components/icons';
-import { Health, SetMode, SetKill, RhConnect, RhSync, SetEnv, RhAuthStart, Focus as FocusApi, SetFocus, SetJev } from './api/client';
+import { Health, SetMode, SetKill, SetEnv, Focus as FocusApi, SetFocus, SetJev } from './api/client';
+import { KILL_ENGAGE_CONFIRM, killEngageNeedsConfirm, jevChipStale } from './deskChrome';
+import { museLamp } from './museLamp';
 import { jevLastShort, jevLastText, museTuneText } from './modelCopy';
 import { readSidebarCollapsed, writeSidebarCollapsed } from './sidebarPref';
 import { showRobinhoodConnect } from './deskChrome';
@@ -56,6 +58,7 @@ const NAV: { label?: string; items: NavItem[] }[] = [
     { to: '/quant', label: 'Quant Lab', icon: 'beaker' },
     { to: '/learning', label: 'Learning', icon: 'learn' },
     { to: '/bots', label: 'Bots', icon: 'bot' },
+    { to: '/models', label: 'Models', icon: 'chat' },
     { to: '/strategies', label: 'Strategy Library', icon: 'library' },
     { to: '/playbooks', label: 'Playbooks', icon: 'playbook' },
     { to: '/backtest', label: 'Backtest', icon: 'backtest' },
@@ -69,7 +72,6 @@ const NAV: { label?: string; items: NavItem[] }[] = [
   ] },
   { label: 'System', items: [
     { to: '/activity', label: 'Activity & Risk', icon: 'activity' },
-    { to: '/models', label: 'Models', icon: 'chat' },
     { to: '/settings', label: 'Settings', icon: 'settings' },
   ] },
 ];
@@ -100,13 +102,7 @@ const ENV_LABELS: Record<string, string> = {
 
 function museWatchDot(apiDown: boolean, health: any): string {
   if (apiDown || !health || health._unreachable) return 'gray';
-  const w = health.watch;
-  if (!w) return 'gray';
-  if (w.lastError) return 'amber';
-  if (w.mode === 'improve' && (w.ok || w.running || w.lastCycle)) return w.running ? 'green' : 'amber';
-  if (!w.available) return 'gray';
-  if (w.running) return 'green';
-  return 'gray';
+  return museLamp(health.watch).dot;
 }
 
 function museWatchLabel(apiDown: boolean, health: any): string {
@@ -127,6 +123,7 @@ function jevDot(apiDown: boolean, health: any): string {
   const j = health.jev;
   if (!j || !j.enabled || j.mode === 'off') return 'gray';
   if (j.degraded) return 'red';
+  if (jevChipStale(j.last?.at)) return 'amber';
   if (j.mode === 'active' && j.ok) return 'green';
   if (j.mode === 'shadow' || j.mode === 'active') return 'amber';
   return 'gray';
@@ -161,7 +158,6 @@ function jevTitle(health: any): string {
 export default function App() {
   const [health, setHealth] = useState<any>(null);
   const [apiDown, setApiDown] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [pendingEnv, setPendingEnv] = useState<string | null>(null); // live-switch confirmation
   const [focus, setFocusState] = useState<any>({ enabled: false, symbol: 'SPY', tickers: ['SPY', 'QQQ'] });
   const [navCollapsed, setNavCollapsed] = useState(() => readSidebarCollapsed(typeof localStorage === 'undefined' ? null : localStorage));
@@ -192,31 +188,10 @@ export default function App() {
     refresh();
   };
   const toggleKill = async () => {
-    await SetKill(!health?.killSwitch);
+    const engaged = !!health?.killSwitch;
+    if (killEngageNeedsConfirm(engaged) && !window.confirm(KILL_ENGAGE_CONFIRM)) return;
+    await SetKill(!engaged);
     refresh();
-  };
-  const connect = async () => {
-    const paper = (health?.env || 'alpaca_paper') !== 'robinhood_live';
-    const ok = window.confirm(paper
-      ? 'Connect Robinhood? This starts live-account OAuth. The paper desk does not need it.'
-      : 'Connect Robinhood and start OAuth for the live account?');
-    if (!ok) return;
-    setBusy(true);
-    try {
-      const r: any = await RhAuthStart();
-      if (r?.authUrl) {
-        // Open Robinhood's authorization page; the backend catches the redirect
-        // on :7321 and finishes the OAuth automatically.
-        window.open(r.authUrl, '_blank');
-      } else if (r?.alreadyConnected) {
-        await RhSync().catch(() => {});
-      }
-    } catch {
-      await RhConnect().catch(() => {});
-    } finally {
-      setBusy(false);
-      setTimeout(refresh, 1500);
-    }
   };
 
   const changeEnv = async (env: string, isLive: boolean) => {
@@ -266,6 +241,14 @@ export default function App() {
             ))}
           </nav>
           <div style={{ flex: 1 }} />
+          <div className="rail-dots" aria-label="Model lamps">
+            <NavLink to="/models/muse" title={health?.watch?.note || 'Muse'}>
+              <span className={`dot ${museWatchDot(apiDown, health)}`} />
+            </NavLink>
+            <NavLink to="/models/jev" title={jevTitle(health)}>
+              <span className={`dot ${jevDot(apiDown, health)}`} />
+            </NavLink>
+          </div>
           <div style={{ padding: '0 18px', fontSize: 11 }} className="muted side-status">
             <div className="row"><span className={`dot ${apiDown ? 'red' : 'green'}`} /> API: {apiDown ? 'down (:8011)' : (health?.listen || 'up')}</div>
             {showRobinhoodConnect(env, isLive) && (
@@ -312,10 +295,6 @@ export default function App() {
             </button>
             <ModeSwitcher mode={health?.mode || 'observe'} onChange={changeMode} />
             <MarketClock />
-            {showRobinhoodConnect(env, isLive) && rhStatus !== 'connected' && (
-              <button onClick={connect} disabled={busy}>{busy ? 'Opening…' : 'Connect Robinhood'}</button>
-            )}
-            {showRobinhoodConnect(env, isLive) && rhStatus === 'connected' && <button onClick={() => RhSync().then(refresh)}>Sync</button>}
             <span className="focus-ctl" title="Focus mode — concentrate the whole app + bots on one ticker">
               <button className={`icon-btn ${focus.enabled ? 'primary' : ''}`} onClick={toggleFocus}><Icon name="focus" size={15} />{focus.enabled ? 'Focus ON' : 'Focus'}</button>
               <select aria-label="Focus ticker" value={focus.symbol} onChange={(e) => pickFocus(e.target.value)} title="Focus ticker">

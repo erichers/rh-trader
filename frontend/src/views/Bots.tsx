@@ -5,6 +5,7 @@ import { Card, Badge, FleetBadge, useAsync, Sym } from '../components/ui';
 import { Icon } from '../components/icons';
 import { optionLabelFromAction } from '../lib/options';
 import { jevScopeFlags } from '../modelCopy';
+import { deleteBotConfirm, promoteLiveOpen } from '../deskChrome';
 import BotWizard, { type BotPreset } from '../components/BotWizard';
 import { PromotionModal } from '../components/quanttools';
 import { RiskCell } from '../components/risksizing';
@@ -71,7 +72,7 @@ function issues(bot: any, health: any): { msg: string; cta?: string; href?: stri
     out.push({ kind: 'amber', msg: 'Options need market data — Alpaca not configured.', cta: 'Open Settings', href: '#/settings' });
   }
   if (bot.enabled && health?.env === 'robinhood_live' && health?.rh?.status !== 'connected') {
-    out.push({ kind: 'amber', msg: 'Live env selected but Robinhood is not connected.', cta: 'Connect Robinhood', href: '#/settings' });
+    out.push({ kind: 'amber', msg: 'Live env selected and the broker is not set up.', cta: 'Open Settings', href: '#/settings' });
   }
   // QuickBots fire from action.plays, not `rules` — the generic "no rules" check doesn't
   // apply (it would falsely flag a working bot). They're managed on the QuickBots page.
@@ -149,6 +150,8 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
   const aiGate = J(bot.ai_gate, { enabled: false });
   const lr = J(bot.last_result, null);
   const probs = issues(bot, health);
+  const blocked = probs.some((p) => p.kind === 'red');
+  const paperDesk = !promoteLiveOpen(health?.env, health?.live);
 
   const startEdit = () => setEdit({
     name: bot.name,
@@ -171,6 +174,12 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
     take_profit_pct: J(bot.risk, {}).take_profit_pct ?? bot.effective_risk?.take_profit_pct ?? 0,
     rules: JSON.stringify(rules, null, 2),
   });
+  const fix = () => { setOpen(true); startEdit(); };
+  const remove = async () => {
+    if (!window.confirm(deleteBotConfirm(String(bot.name || 'bot')))) return;
+    try { await api.del(`/bots/${bot.id}`); reload(); }
+    catch (e: any) { setMsg('Error: ' + (e?.message || e)); }
+  };
 
   // Deep-link target (e.g. "Edit" from the dashboard): expand, scroll into view, and
   // optionally open the edit form. Runs once when this row is the focused bot.
@@ -231,7 +240,15 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
               <button key={m} className={bot.mode === m ? `on ${m}` : ''} onClick={async () => { await SetBotMode(bot.id, m); reload(); }}>{m === 'full_auto' ? 'full' : m.slice(0, 4)}</button>
             ))}
           </div>
-          <button className={shownEnabled ? 'primary' : ''} disabled={busy} onClick={() => setEnabled(!shownEnabled)}>{busy ? '…' : shownEnabled ? 'ON' : 'off'}</button>
+          {blocked ? (
+            <div className="bot-sticky">
+              <button type="button" onClick={fix}>Fix</button>
+              <button type="button" className={shownEnabled ? 'primary' : ''} disabled={busy} onClick={() => setEnabled(!shownEnabled)}>{busy ? '…' : shownEnabled ? 'ON' : 'off'}</button>
+              <button type="button" className="danger" onClick={remove}>Delete</button>
+            </div>
+          ) : (
+            <button className={shownEnabled ? 'primary' : ''} disabled={busy} onClick={() => setEnabled(!shownEnabled)}>{busy ? '…' : shownEnabled ? 'ON' : 'off'}</button>
+          )}
         </div>
       </div>
 
@@ -290,7 +307,7 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
               <button onClick={startEdit}>Edit settings</button>
               <button onClick={runEval}>Run now</button>
               <button onClick={runBt}>Backtest 90d</button>
-              <button className="icon-btn" onClick={() => setPromote(true)} title="Run the paper→live graduation checklist">{action._graduated ? <><Icon name="check" size={14} /> Graduated</> : <><Icon name="shield" size={14} /> Promote to live</>}</button>
+              <button className="icon-btn" disabled={paperDesk} title={paperDesk ? 'Promote stays closed on the paper desk.' : 'Run the graduation checklist'} onClick={() => { if (!paperDesk) setPromote(true); }}>{action._graduated ? <><Icon name="check" size={14} /> Graduated</> : <><Icon name="shield" size={14} /> Promote to live</>}</button>
             </div>
           ) : (
             <div className="grid" style={{ gap: 8, gridTemplateColumns: '1fr 1fr' }}>

@@ -8,6 +8,8 @@ import { BotModeControl, MODE_LEGEND } from '../components/botcontrols';
 import { Icon } from '../components/icons';
 import { jevLastText, museTuneText } from '../modelCopy';
 import ExitPulseMark from '../components/ExitPulseMark';
+import { PAPER_NEXT_STEP, PAPER_POSITIONS_EMPTY } from '../deskChrome';
+import { bookPeakPct, bookPlPct, bookSizeUsd, fmtBookPct, parseOcc } from '../optionBook';
 
 const PNL_WINDOWS: { key: string; label: string }[] = [
   { key: 'day', label: 'Day' }, { key: 'week', label: 'Week' }, { key: 'month', label: 'Month' },
@@ -320,12 +322,16 @@ export default function Dashboard({ health }: { health: any }) {
     items.push({ id: 'monitors', title: <>Live risk monitors ({openMons.length}) — enforcing exits<Info topic="monitors" /></>, node: (
       <>
         <div className="muted" style={{ marginBottom: 6, fontSize: 12 }}>Auto-exits open bot positions on take-profit / stop-loss / trailing-stop (checked every 45s during market hours).</div>
-        <DataTable rows={openMons} storageKey="dash-monitors" filter={openMons.length > 6} cols={[
-          { key: 'symbol', label: 'Symbol', sortValue: (m) => m.symbol, render: (m) => <span><Sym bold>{m.symbol}</Sym> <span className="pill">{m.asset_class}</span></span> },
+        <DataTable rows={openMons} storageKey="dash-monitors" initialSort={{ key: 'pl', dir: -1 }} filter={openMons.length > 6} cols={[
+          { key: 'symbol', label: 'Contract', sortValue: (m) => parseOcc(m.occ_symbol)?.root || m.symbol, filterValue: (m) => `${m.symbol} ${m.occ_symbol || ''} ${parseOcc(m.occ_symbol)?.human || ''}`, render: (m) => {
+            const parsed = parseOcc(m.occ_symbol);
+            return <span><Sym bold>{parsed?.root || m.symbol}</Sym> {parsed ? <span className="muted" style={{ fontSize: 11 }}>{parsed.human}</span> : null} <span className="pill">{m.asset_class}</span></span>;
+          } },
+          { key: 'size', label: 'Size $', align: 'right', sortValue: (m) => bookSizeUsd(m.qty, m.last_price, m.asset_class, m.occ_symbol) ?? 0, render: (m) => { const n = bookSizeUsd(m.qty, m.last_price, m.asset_class, m.occ_symbol); return n == null ? <span className="muted">—</span> : money(n); } },
           { key: 'entry_price', label: 'Entry', align: 'right', sortValue: (m) => Number(m.entry_price), render: (m) => money(m.entry_price) },
-          { key: 'peak_price', label: 'Peak', align: 'right', sortValue: (m) => Number(m.peak_price), render: (m) => money(m.peak_price) },
+          { key: 'peak', label: 'Peak %', align: 'right', sortValue: (m) => bookPeakPct(m.entry_price, m.peak_price) ?? -1e9, render: (m) => { const n = bookPeakPct(m.entry_price, m.peak_price); return n == null ? <span className="muted">—</span> : <span className="muted">{fmtBookPct(n)}</span>; } },
           { key: 'last_price', label: 'Last', align: 'right', sortValue: (m) => Number(m.last_price), render: (m) => money(m.last_price) },
-          { key: 'pl', label: 'P/L', align: 'right', sortValue: (m) => m.entry_price ? (Number(m.last_price) - Number(m.entry_price)) / Number(m.entry_price) : 0, render: (m) => { const pl = m.entry_price ? ((Number(m.last_price) - Number(m.entry_price)) / Number(m.entry_price)) * 100 : 0; return <span className={signClass(pl)}>{pl >= 0 ? '+' : ''}{pl.toFixed(1)}%</span>; } },
+          { key: 'pl', label: 'P/L %', align: 'right', sortValue: (m) => bookPlPct(m.entry_price, m.last_price) ?? -1e9, render: (m) => { const pl = bookPlPct(m.entry_price, m.last_price); return pl == null ? <span className="muted">—</span> : <span className={signClass(pl)}>{fmtBookPct(pl)}</span>; } },
           { key: 'pulse', label: 'Exit pulse', sortable: false, render: (m) => <ExitPulseMark row={m} health={health} /> },
           { key: 'zone', label: 'Stop ◄►  Target', sortable: false, align: 'center', render: (m) => { const pl = m.entry_price ? ((Number(m.last_price) - Number(m.entry_price)) / Number(m.entry_price)) * 100 : 0; return <StopBar pl={pl} tp={Number(m.tp_pct)} sl={Number(m.sl_pct)} />; } },
           { key: 'totp', label: '→ TP', align: 'right', sortValue: (m) => { const pl = m.entry_price ? ((Number(m.last_price) - Number(m.entry_price)) / Number(m.entry_price)) * 100 : 0; return Number(m.tp_pct) > 0 ? Number(m.tp_pct) - pl : 999; }, render: (m) => { const pl = m.entry_price ? ((Number(m.last_price) - Number(m.entry_price)) / Number(m.entry_price)) * 100 : 0; return Number(m.tp_pct) > 0 ? <span className="green" title="gain still needed to hit take-profit">{Math.max(0, Number(m.tp_pct) - pl).toFixed(1)}%</span> : <span className="muted">—</span>; } },
@@ -341,14 +347,19 @@ export default function Dashboard({ health }: { health: any }) {
   }
 
   items.push({ id: 'positions', title: <>Positions ({positions.length}){positions.some((p) => p.live) ? <> <Live /></> : null}</>, node: (
-    positions.length === 0 ? <div className="muted">{live ? 'No positions yet. Connect Robinhood and Sync.' : 'No open positions on the paper account.'}</div> : (
-      <DataTable rows={positions} storageKey="dash-positions" filter={positions.length > 6} filterPlaceholder="filter positions…" cols={[
-        { key: 'symbol', label: 'Symbol', sortValue: (p) => p.symbol, render: (p) => <Sym bold>{p.symbol}</Sym> },
-        { key: 'qty', label: 'Qty', align: 'right', sortValue: (p) => Number(p.qty), render: (p) => num(p.qty, 2) },
-        { key: 'avg_cost', label: 'Avg', align: 'right', sortValue: (p) => Number(p.avg_cost), render: (p) => money(p.avg_cost) },
-        { key: 'current', label: 'Current', align: 'right', sortValue: (p) => Number(posLast(p) ?? 0), render: (p) => { const l = posLast(p); return l != null ? money(l) : '—'; } },
-        { key: 'market_value', label: 'Value', align: 'right', sortValue: (p) => Number(p.market_value), render: (p) => money(p.market_value) },
-        { key: 'unrealized_pl', label: 'P/L', align: 'right', sortValue: (p) => Number(p.unrealized_pl), render: (p) => <span className={signClass(p.unrealized_pl)}>{money(p.unrealized_pl)}</span> },
+    positions.length === 0 ? <div className="muted">{live ? 'No open positions.' : <><div>{PAPER_POSITIONS_EMPTY}</div><div>{PAPER_NEXT_STEP}</div></>}</div> : (
+      <DataTable rows={positions.map((p) => {
+        const mon = openMons.find((m) => m.occ_symbol && (p.occ_symbol === m.occ_symbol || p.symbol === m.occ_symbol))
+          || openMons.find((m) => m.symbol && p.symbol === m.symbol);
+        const occ = p.occ_symbol || mon?.occ_symbol || (String(p.asset_class || '').toLowerCase() === 'option' ? p.symbol : '');
+        return { p, mon, occ, parsed: parseOcc(occ), entry: mon?.entry_price ?? p.avg_cost, last: posLast(p) ?? mon?.last_price, peak: mon?.peak_price };
+      })} storageKey="dash-positions" initialSort={{ key: 'pl', dir: -1 }} filter={positions.length > 6} filterPlaceholder="filter positions…" rowKey={(r) => r.p.id || r.occ || r.p.symbol} cols={[
+        { key: 'name', label: 'Contract', sortValue: (r) => r.parsed?.root || r.p.symbol, filterValue: (r) => `${r.p.symbol} ${r.occ} ${r.parsed?.human || ''}`, render: (r) => <span><Sym bold>{r.parsed?.root || r.p.symbol}</Sym> {r.parsed ? <span className="muted" style={{ fontSize: 11 }}>{r.parsed.human}</span> : null}</span> },
+        { key: 'qty', label: 'Qty', align: 'right', sortValue: (r) => Number(r.p.qty), render: (r) => num(r.p.qty, 2) },
+        { key: 'size', label: 'Size $', align: 'right', sortValue: (r) => bookSizeUsd(r.p.qty, r.last, r.p.asset_class, r.occ) ?? 0, render: (r) => { const n = bookSizeUsd(r.p.qty, r.last, r.p.asset_class, r.occ); return n == null ? <span className="muted">—</span> : money(n); } },
+        { key: 'pl', label: 'P/L %', align: 'right', sortValue: (r) => bookPlPct(r.entry, r.last) ?? -1e9, render: (r) => { const n = bookPlPct(r.entry, r.last); return n == null ? <span className="muted">—</span> : <span className={signClass(n)}>{fmtBookPct(n)}</span>; } },
+        { key: 'peak', label: 'Peak %', align: 'right', sortValue: (r) => bookPeakPct(r.entry, r.peak) ?? -1e9, render: (r) => { const n = bookPeakPct(r.entry, r.peak); return n == null ? <span className="muted">—</span> : <span className="muted">{fmtBookPct(n)}</span>; } },
+        { key: 'pulse', label: 'Exit pulse', sortable: false, render: (r) => r.mon ? <ExitPulseMark row={r.mon} health={health} /> : <span className="muted">No exit watch</span> },
       ]} />
     )
   ) });

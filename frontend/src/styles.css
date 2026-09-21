@@ -120,9 +120,18 @@ a:hover { color: #7dbcff; }
 }
 .desk-lock-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .desk-health {
-  display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 10px;
-  font-size: 11px; font-weight: 700; letter-spacing: 0.2px; color: var(--muted);
+  display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: 0;
+  font-size: 10px; font-weight: 700; letter-spacing: 0; color: var(--muted);
+  white-space: nowrap;
 }
+.desk-health span + span::before { content: ' · '; font-weight: 600; color: var(--muted); }
+.rail-dots { display: none; }
+.bot-sticky { display: inline-flex; align-items: center; gap: 6px; }
+button.quiet-link {
+  background: none; border: none; padding: 0; border-radius: 0;
+  color: var(--muted); font-size: inherit; font-weight: 600; text-decoration: underline;
+}
+button.quiet-link:hover { background: none; color: var(--text); }
 .desk-health .ok { color: var(--green); }
 .desk-health .bad { color: var(--red); }
 .desk-health.warn { color: var(--text); }
@@ -342,6 +351,10 @@ a.model-hub-card:hover { border-color: var(--border-strong); color: inherit; }
   .app.nav-collapsed .brand { padding: 0 8px 14px; justify-content: center; }
   .app.nav-collapsed .nav-collapse { margin-left: 0; }
   .app.nav-collapsed .nav a { justify-content: center; gap: 0; padding: 9px 0; }
+  .app.nav-collapsed .rail-dots {
+    display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 0 0 12px;
+  }
+  .app.nav-collapsed .rail-dots a { display: flex; padding: 4px; }
 }
 
 /* ════════════════════════ Environment indicator (SAFETY) ════════════════════════ */
@@ -528,7 +541,7 @@ a.model-hub-card:hover { border-color: var(--border-strong); color: inherit; }
   .topbar .spacer { display: none; }
   .desk-lock, .desk-lock .desk-health, .desk-lock .kill-lock, .desk-lock .env-badge { display: flex; }
   .desk-lock { width: 100%; align-items: stretch; margin-left: 0; }
-  .desk-health { justify-content: flex-start; }
+  .desk-health { justify-content: flex-start; flex-wrap: wrap; white-space: normal; }
   .content { padding: 14px 14px 72px; }
   .grid.cols-2, .grid.cols-3, .grid.cols-4 { grid-template-columns: 1fr; }
   .jev-stats, .jev-picks, .jev-split, .jev-cols { grid-template-columns: 1fr; }

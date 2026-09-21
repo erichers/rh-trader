@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, NavLink, useParams } from 'react-router-dom';
 import { AiModels, GetJev, GetMuse, SetBotJev, SetJev, SetMuse } from '../api/client';
 import { JEV_CADENCE_FALLBACK, JEV_EMPTY_PICK, jevLastText, jevSkipLabel, museTuneText } from '../modelCopy';
+import { museLamp } from '../museLamp';
+import { jevChipStale } from '../deskChrome';
 import { Badge, Card, fmtDateTime } from '../components/ui';
 
 export type ModelId = 'jev' | 'muse' | 'ai';
@@ -90,12 +92,12 @@ function ModelsHub({ health }: { health: any }) {
       </p>
       <div className="grid cols-3">
         <HubCard to="/models/jev" title="Jev" role="Post-signal panel"
-          dot={!j || !j.enabled || j.mode === 'off' ? 'gray' : j.degraded ? 'red' : j.mode === 'active' && j.ok ? 'green' : 'amber'}
-          status={!j || !j.enabled || j.mode === 'off' ? 'off' : `${j.mode} · $${Number(j.spentUsd || 0).toFixed(2)}/$${j.budgetUsd ?? 5}`}
-          body="After a bot fires, Jev can enter, skip, or size down. On an open option it can hold, exit, or tighten when that bot's exit switch is on. Off never calls TypeSafe." />
+          dot={!j || !j.enabled || j.mode === 'off' ? 'gray' : j.degraded ? 'red' : jevChipStale(j.last?.at) ? 'amber' : j.mode === 'active' && j.ok ? 'green' : 'amber'}
+          status={!j || !j.enabled || j.mode === 'off' ? 'off' : `${j.mode} · $${Number(j.spentUsd || 0).toFixed(2)}/$${j.budgetUsd ?? 5}${jevChipStale(j.last?.at) ? ' · stale' : ''}`}
+          body="After a bot fires, Jev can enter, skip, or size down. On an open option it can CLOSE, PARTIAL, HOLD, or TIGHTEN_TRAIL when that bot's exit switch is on. Off never calls TypeSafe." />
         <HubCard to="/models/muse" title="Muse" role="Auditor / improver"
-          dot={w?.lastError ? 'amber' : (w?.mode === 'improve' && (w.ok || w.running || w.lastCycle) ? (w.running ? 'green' : 'amber') : (w?.available && w?.running ? 'green' : 'gray'))}
-          status={`${w?.mode || 'improve'} · ${w?.via || 'local'}${museTuneText(w?.lastTune) ? ` · ${museTuneText(w?.lastTune)}` : ''}`}
+          dot={museLamp(w).dot}
+          status={`${museLamp(w).text}${museTuneText(w?.lastTune) ? ` · ${museTuneText(w?.lastTune)}` : ''}`}
           body="Muse reviews packets and can clamp paper stops toward the swing law. It never sends an order." />
         <HubCard to="/models/ai" title="AI" role="Research + chat"
           dot={health?.ai ? 'green' : 'gray'}
@@ -296,6 +298,7 @@ function MuseDetail({ health, onChange }: { health: any; onChange: () => void })
   useEffect(() => { GetMuse().then(setLive).catch(() => setLive(null)); }, [health?.watch]);
   const w = live?.watch || health?.watch || {};
   const mode = (live?.mode || w.mode || 'improve') === 'observe' ? 'observe' : 'improve';
+  const lamp = museLamp({ ...w, mode });
   const tune = live?.lastTune || w.lastTune;
 
   return (
@@ -316,7 +319,7 @@ function MuseDetail({ health, onChange }: { health: any; onChange: () => void })
         </div>
       </Card>
 
-      <Card title="Live status" right={<Badge kind={w.lastError ? 'amber' : mode === 'improve' ? 'green' : 'gray'}>{mode}</Badge>}>
+      <Card title="Live status" right={<Badge kind={lamp.kind}>{lamp.text}</Badge>}>
         <div className="grid cols-3" style={{ gap: 12 }}>
           <Stat label="Mode" value={mode} />
           <Stat label="Via" value={w.via === 'muse' && w.available ? 'Muse API' : 'local heuristic'} />
