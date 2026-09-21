@@ -155,8 +155,8 @@ function JevDetail({ health, onChange }: { health: any; onChange: () => void }) 
       onChange();
       reload();
     } catch (e: any) {
-      setErr(String(e?.message || e).slice(0, 160));
-      reload();
+      setErr(String(e?.message || e).slice(0, 180));
+      GetJev().then((row) => { setLive(row); setStatus('ok'); }).catch(() => setStatus('down'));
     }
   };
 
@@ -167,7 +167,7 @@ function JevDetail({ health, onChange }: { health: any; onChange: () => void }) 
           <span className="model-tape">TypeSafe · entry and exit</span>
           <p>
             Jev advises a new long call (enter, skip, or size down) and, when that bot's exit scope is on,
-            an open paper option (hold, exit, or tighten). It is not a price predictor.
+            an open paper option (CLOSE, PARTIAL, HOLD, or TIGHTEN_TRAIL). It is not a price predictor.
           </p>
           <p>
             The hard stop and the +1.5% gain-lock always win. Global mode is off, shadow, or active.
