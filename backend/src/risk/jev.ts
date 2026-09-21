@@ -1,16 +1,17 @@
 /**
- * Optional live Jev / TypeSafe System One *panel* on fired bot entries.
+ * Optional Jev / TypeSafe System One panel.
  *
  * Deterministic rails stay in code (calls-only, DTE / LEAPS waiver, swing
- * law). Jev is a post-signal panel only — never an exit engine and never a
- * price predictor. One System One call per fired entry, four parallel
- * questions, compose in this file.
+ * law). Jev is not a price predictor. This file is the entry panel: one
+ * System One call per fired entry, four questions, composed here.
+ * Open-trade advice lives in jevExit.ts and cannot clear a hard stop.
  *
- * Default `JEV_ENTRY_MODE=shadow`: log answers, always allow paper.
- * `active` applies composition. Weak Choice conf / no key / API error → size_down
- * (not a full-size enter). Off and shadow still allow the risk-engine size.
+ * Global mode is off | shadow | active. Per-bot `risk.jev` defaults off.
+ * Active applies only when that bot's entry scope is on and the desk is
+ * Alpaca paper. Otherwise the decision is logged and the risk-engine size stays.
+ * Weak Choice conf / no key / API error in active → size_down (not full size).
  * A bot universe does not gate a different underlying.
- * Never logs the API key. Exits / flatten never call this.
+ * Never logs the API key. Sells do not call the entry panel.
  */
 
 import { appendFile, mkdir } from 'node:fs/promises';
@@ -23,7 +24,18 @@ import {
   recordJevUsage,
   type JevBudgetIo,
 } from './jevBudget.js';
-import { fallbackJevGate } from './jevFallback.js';
+import { fallbackJevGate, localJevPanel } from './jevFallback.js';
+import {
+  JEV_CADENCE_BANDS,
+  jevCadenceKey,
+  jevCadenceWindowMs,
+  jevEffective,
+  parseJevBotFlags,
+  parseJevDte,
+  rememberCadence,
+  takeFreshCadence,
+  type JevBotFlags,
+} from './jevScope.js';
 import {
   effectiveJevMode,
   loadJevSettings,
@@ -44,11 +56,29 @@ export type JevLast = {
   pick: string | null;
   because: string | null;
   bot: string | null;
+  kind?: 'entry' | 'exit' | null;
+  applied?: boolean | null;
+};
+
+export type JevDecision = {
+  at: string;
+  kind: 'entry' | 'exit' | null;
+  symbol: string | null;
+  bot: string | null;
+  pick: string | null;
+  because: string | null;
+  applied: boolean | null;
+  called: boolean | null;
+  skipped: string | null;
 };
 
 export type JevPublic = JevHealth & {
   enabled: boolean;
   last: JevLast | null;
+  lastEntry: JevLast | null;
+  lastExit: JevLast | null;
+  decisions: JevDecision[];
+  cadence: typeof JEV_CADENCE_BANDS;
   configured: boolean;
 };
 
@@ -131,6 +161,9 @@ export type JevGate = {
   mode: JevEntryMode;
   answer: ChoiceAnswer<JevEntryPick>;
   panel?: JevPanelAnswers;
+  applied?: boolean;
+  skipped?: string | null;
+  opinion?: string | null;
 };
 
 const SYSTEMONE_PATH = '/v1/systemone';
@@ -203,12 +236,16 @@ export function rememberJevLast(rec: Record<string, unknown>, state?: Record<str
   } else if (rec.bot != null) bot = String(rec.bot);
   else if (st.bot != null) bot = String(st.bot);
   else if (st.bot_name != null) bot = String(st.bot_name);
+  const kindRaw = rec.kind != null ? String(rec.kind) : String(rec.event || '');
+  const kind = kindRaw === 'exit' || kindRaw.includes('exit') ? 'exit' : (kindRaw ? 'entry' : null);
   lastJev = {
     at: String(rec.ts || rec.at || new Date().toISOString()),
     symbol,
     pick: rec.pick != null ? String(rec.pick) : null,
     because: rec.because != null ? String(rec.because).slice(0, 240) : null,
     bot,
+    kind,
+    applied: rec.applied === true ? true : rec.applied === false ? false : null,
   };
   return lastJev;
 }
@@ -241,7 +278,13 @@ export async function jevPublicStatus(): Promise<JevPublic> {
   const spend = await jevHealth().catch(() => ({
     ok: true, mode: settings.mode, spentUsd: 0, budgetUsd: 5, degraded: false, reason: null,
   }));
-  const last = await readJevLastFromLog().catch(() => lastJev);
+  const priorLast = lastJev;
+  const tail = await readJevTail().catch(() => [] as Record<string, unknown>[]);
+  const decisions = tail.slice(-12).reverse().map(decisionFromRec);
+  lastJev = priorLast;
+  const last = priorLast || (decisions[0] ? decisionToLast(decisions[0]) : null) || await readJevLastFromLog().catch(() => null);
+  const entryDec = decisions.find((d) => d.kind === 'entry') || null;
+  const exitDec = decisions.find((d) => d.kind === 'exit') || null;
   const mode = effectiveJevMode(settings);
   return {
     ok: mode !== 'off' && !spend.degraded,
@@ -252,8 +295,64 @@ export async function jevPublicStatus(): Promise<JevPublic> {
     degraded: spend.degraded,
     reason: spend.reason,
     last,
+    lastEntry: entryDec ? decisionToLast(entryDec) : (last && last.kind !== 'exit' ? last : null),
+    lastExit: exitDec ? decisionToLast(exitDec) : null,
+    decisions,
+    cadence: JEV_CADENCE_BANDS,
     configured: typesafeConfigured(),
   };
+}
+
+function decisionFromRec(rec: Record<string, unknown>): JevDecision {
+  const last = rememberJevLast(rec, (rec.state as any) || undefined);
+  return {
+    at: last.at,
+    kind: last.kind ?? null,
+    symbol: last.symbol,
+    bot: last.bot,
+    pick: last.pick,
+    because: last.because,
+    applied: last.applied ?? null,
+    called: rec.called === true ? true : rec.called === false ? false : null,
+    skipped: rec.skipped != null ? String(rec.skipped) : null,
+  };
+}
+
+function decisionToLast(d: JevDecision | JevLast): JevLast {
+  return {
+    at: d.at,
+    symbol: d.symbol,
+    pick: d.pick,
+    because: d.because,
+    bot: d.bot,
+    kind: 'kind' in d ? d.kind ?? null : null,
+    applied: 'applied' in d ? d.applied ?? null : null,
+  };
+}
+
+async function readJevTail(path = config.typesafe.logPath, maxBytes = 65536): Promise<Record<string, unknown>[]> {
+  try {
+    const { open, stat } = await import('node:fs/promises');
+    const st = await stat(path);
+    const fh = await open(path, 'r');
+    try {
+      const start = Math.max(0, st.size - maxBytes);
+      const len = st.size - start;
+      const buf = Buffer.alloc(len);
+      await fh.read(buf, 0, len, start);
+      const lines = buf.toString('utf8').split('\n').map((l) => l.trim()).filter(Boolean);
+      if (start > 0) lines.shift();
+      const out: Record<string, unknown>[] = [];
+      for (const line of lines) {
+        try { out.push(JSON.parse(line)); } catch { /* skip torn line */ }
+      }
+      return out;
+    } finally {
+      await fh.close();
+    }
+  } catch {
+    return [];
+  }
 }
 
 export function jevModel(override?: string | null): string {
@@ -470,7 +569,7 @@ export function httpJevClient(opts: {
   };
 }
 
-async function resolveClient(opts: {
+export async function resolveJevClient(opts: {
   client?: JevClient;
   apiKey?: string | null;
 }): Promise<{ client: JevClient | null; apiKey: string; via: 'inject' | 'sdk' | 'http' | 'none' }> {
@@ -545,12 +644,15 @@ export async function appendJevJsonl(
 export async function jevEntryGate(input: JevEntryState & {
   side?: string | null;
   source?: string | null;
+  risk?: unknown;
 }, deps: {
   client?: JevClient;
   apiKey?: string | null;
   paper?: boolean;
   mode?: JevEntryMode | string | null;
   model?: string | null;
+  botFlags?: JevBotFlags;
+  now?: number;
   log?: (file: string, line: string) => Promise<void>;
   logPath?: string;
   budgetIo?: JevBudgetIo;
@@ -564,16 +666,76 @@ export async function jevEntryGate(input: JevEntryState & {
     const s = await loadJevSettings().catch(() => ({ enabled: true, mode: parseJevUiMode(config.typesafe.entryMode) }));
     ui = effectiveJevMode(s);
   }
-  const mode = ui === 'off' ? 'shadow' : jevEntryMode(ui);
+  let mode = ui === 'off' ? 'shadow' : jevEntryMode(ui);
   if (side !== 'buy') return failOpenGate('jev not asked: exit/flatten stays deterministic', false, mode);
   if (source !== 'bot' && source !== 'ai') return failOpenGate('jev not asked: not a bot or ai entry', false, mode);
   if (ui === 'off') {
     const gate = failOpenGate('jev off: TypeSafe not called, risk-engine size kept', false, 'shadow');
     rememberJevLast({
       ts: new Date().toISOString(), event: 'jev.off', pick: 'enter', because: gate.because,
-      symbol: input.symbol, bot: input.bot_name || input.bot,
+      symbol: input.symbol, bot: input.bot_name || input.bot, kind: 'entry', applied: false,
     });
     return gate;
+  }
+
+  const explicit = deps.botFlags != null || input.bot_id != null;
+  const flags: JevBotFlags = deps.botFlags ?? (explicit ? parseJevBotFlags(input.risk) : { entry: true, exit: true });
+  const eff = jevEffective({
+    global: ui,
+    flags,
+    kind: 'entry',
+    legacyOpen: !explicit,
+    paper: deps.paper,
+  });
+  mode = eff.mode;
+  const dteNum = parseJevDte(input.dte ?? input.dte_or_leaps);
+  const leaps = (typeof input.dte_or_leaps === 'string' && /leaps/i.test(input.dte_or_leaps))
+    || (dteNum != null && dteNum >= 180);
+  const cadenceKey = jevCadenceKey('entry', { botId: input.bot_id, symbol: input.symbol });
+  const now = deps.now ?? Date.now();
+  const windowMs = jevCadenceWindowMs(dteNum, leaps);
+  const fresh = takeFreshCadence<JevGate>(cadenceKey, now, windowMs);
+  if (fresh) {
+    return {
+      ...fresh,
+      called: false,
+      skipped: 'cadence',
+      because: `cadence: last entry decision is still fresh (${Math.round(windowMs / 60000)} min)`,
+    };
+  }
+  const stamp = (gate: JevGate): JevGate => {
+    rememberCadence(cadenceKey, now, { ...gate });
+    return gate;
+  };
+
+  if (!eff.call) {
+    const local = localJevPanel(input);
+    const opinion = parseJevPick(local.action?.choice) || 'enter';
+    const because = eff.reason === 'paper_only'
+      ? 'Jev entry stays on Alpaca paper: logged, not acted'
+      : 'per-bot jev entry is off: decision logged, order not changed';
+    const gate = failOpenGate(because, false, 'shadow');
+    gate.applied = false;
+    gate.skipped = eff.reason;
+    gate.opinion = opinion;
+    await appendJevJsonl({
+      ts: new Date(now).toISOString(),
+      event: 'jev.entry',
+      kind: 'entry',
+      mode: 'shadow',
+      pick: opinion,
+      acted: 'enter',
+      applied: false,
+      called: false,
+      skipped: eff.reason,
+      because,
+      symbol: input.symbol,
+      bot: input.bot_name || input.bot || null,
+      per_bot: flags,
+      panel: local,
+      state: buildJevState(input),
+    }, deps.logPath, deps.log);
+    return stamp(gate);
   }
 
   const spend = await loadJevSpend(deps.budgetIo);
@@ -587,9 +749,12 @@ export async function jevEntryGate(input: JevEntryState & {
       because: fb.because,
       panel: fb.panel,
     };
+    out.applied = eff.apply && !out.failOpen;
+    out.skipped = eff.apply ? null : eff.reason;
     await appendJevJsonl({
-      ts: new Date().toISOString(),
+      ts: new Date(now).toISOString(),
       event: 'jev.fallback',
+      kind: 'entry',
       mode,
       degraded: true,
       reason: spend.reason,
@@ -597,30 +762,39 @@ export async function jevEntryGate(input: JevEntryState & {
       failOpen: out.failOpen,
       because: out.because,
       via: fb.via,
+      applied: out.applied,
+      skipped: out.skipped,
+      per_bot: flags,
       state: buildJevState(input),
     }, deps.logPath, deps.log);
-    return out;
+    return stamp(out);
   }
 
-  const resolved = await resolveClient(deps);
+  const resolved = await resolveJevClient(deps);
   if (!resolved.client) {
     const because = mode === 'active'
       ? 'TYPESAFE_API_KEY unset, size down (not full size)'
       : 'TYPESAFE_API_KEY unset, paper entry allowed (shadow)';
     const gate = degradedActiveGate(because, false, mode);
+    gate.applied = eff.apply && !gate.failOpen;
+    gate.skipped = eff.apply ? null : eff.reason;
     await appendJevJsonl({
-      ts: new Date().toISOString(),
+      ts: new Date(now).toISOString(),
       event: 'jev.entry',
+      kind: 'entry',
       mode,
       failOpen: gate.failOpen,
       pick: gate.pick,
       because: gate.because,
       called: false,
+      applied: gate.applied,
+      skipped: gate.skipped,
+      per_bot: flags,
       symbol: input.symbol,
       bot: input.bot_name || input.bot || null,
       state: buildJevState(input),
     }, deps.logPath, deps.log);
-    return gate;
+    return stamp(gate);
   }
 
   try {
@@ -657,19 +831,27 @@ export async function jevEntryGate(input: JevEntryState & {
       failOpen: composed.failOpen,
       called: true,
       mode,
+      applied: eff.apply && !composed.failOpen,
+      skipped: eff.apply ? null : eff.reason,
+      opinion: parseJevPick(panel.action?.choice),
       answer,
       panel,
     };
     await appendJevJsonl({
-      ts: new Date().toISOString(),
+      ts: new Date(now).toISOString(),
       event: 'jev.entry',
+      kind: 'entry',
       mode,
       model: res?.model || jevModel(deps.model),
       via: resolved.via,
-      pick: gate.pick,
+      pick: gate.opinion || gate.pick,
+      acted: gate.pick,
       failOpen: gate.failOpen,
       because: gate.because,
       called: true,
+      applied: gate.applied,
+      skipped: gate.skipped,
+      per_bot: flags,
       symbol: state.symbol,
       bot: state.bot || state.bot_name || null,
       answers: res?.answers ?? null,
@@ -677,7 +859,7 @@ export async function jevEntryGate(input: JevEntryState & {
       panel,
       state,
     }, deps.logPath, deps.log);
-    return gate;
+    return stamp(gate);
   } catch (e: any) {
     const msg = e?.message || String(e);
     const statusMatch = String(msg).match(/\b(401|402|429)\b/);
@@ -687,19 +869,25 @@ export async function jevEntryGate(input: JevEntryState & {
       ? `Jev API error, size down: ${msg}`
       : `Jev API error, paper entry allowed: ${msg}`).slice(0, 240);
     const gate = degradedActiveGate(because, true, mode);
+    gate.applied = eff.apply && !gate.failOpen;
+    gate.skipped = eff.apply ? null : eff.reason;
     await appendJevJsonl({
-      ts: new Date().toISOString(),
+      ts: new Date(now).toISOString(),
       event: 'jev.entry',
+      kind: 'entry',
       mode,
       failOpen: gate.failOpen,
       pick: gate.pick,
       because,
       called: true,
+      applied: gate.applied,
+      skipped: gate.skipped,
+      per_bot: flags,
       symbol: input.symbol,
       bot: input.bot_name || input.bot || null,
       error: msg.slice(0, 240),
       state: buildJevState(input),
     }, deps.logPath, deps.log);
-    return gate;
+    return stamp(gate);
   }
 }

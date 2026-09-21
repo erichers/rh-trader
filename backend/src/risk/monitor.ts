@@ -2,6 +2,8 @@ import { q, exec, audit, getTradingEnv, getExitPolicy } from '../db.js';
 import { raiseAlert } from '../alerts.js';
 import { effectiveHardStop, exitReason, overnightFlattenReason, swingExitBand } from './exitpolicy.js';
 import { isLeapsTrade, calendarDte, SHORT_DTE_RAILS } from './dte.js';
+import { jevExitGate } from './jevExit.js';
+import { parseJevBotFlags, resolveMonitorExit } from './jevScope.js';
 import {
   exitPlacementOutcome,
   heldZeroDecision,
@@ -96,6 +98,13 @@ export async function checkMonitors(opts?: { reconcileOnly?: boolean }): Promise
   const backfill = await backfillNullMonitorBotIds(env).catch(() => ({ open: new Map<number, number>(), newestClosed: null as any }));
   const attached = await ensureMonitorsForOpenPositions(env);
   const open = await q<any>("SELECT * FROM position_monitors WHERE status='open' AND (env=:env OR (env IS NULL AND :env='alpaca_paper'))", { env });
+  const botById = new Map<number, { name?: string; risk?: unknown }>();
+  if (env === 'alpaca_paper') {
+    try {
+      const bots = await q<any>('SELECT id, name, risk FROM bots WHERE env=:env', { env });
+      for (const b of bots) botById.set(Number(b.id), b);
+    } catch { /* exit panel can still log with default-off flags */ }
+  }
 
   const policy = await getExitPolicy();
   let minsToClose = Infinity, longGap = false;
@@ -144,10 +153,75 @@ export async function checkMonitors(opts?: { reconcileOnly?: boolean }): Promise
     const peakFav = ((peak - entry) / entry) * 100;
     await exec('UPDATE position_monitors SET last_price=:p, peak_price=:pk, trough_price=:tr WHERE id=:id', { p: price, pk: peak, tr: trough, id: m.id });
 
-    let reason = exitReason(fav, peakFav, { tp: Number(m.tp_pct) || 0, sl: Number(m.sl_pct) || 0, trail: Number(m.trail_pct) || 0 }) || '';
+    const slPct = Number(m.sl_pct) || 0;
+    const tpPct = Number(m.tp_pct) || 0;
+    let trailPct = Number(m.trail_pct) || 0;
+    // Rails first. Jev is consulted only when they say hold, and only on paper options.
+    let reason = exitReason(fav, peakFav, { tp: tpPct, sl: slPct, trail: trailPct }) || '';
     if (!reason && nearClose) {
       reason = await flattenReasonFor(m, env, { nearClose, longGap }) || '';
     }
+    let jevAdvice: { pick: 'hold' | 'exit' | 'tighten'; applied: boolean } | null = null;
+    if (!reason && env === 'alpaca_paper' && isOption && m.occ_symbol) {
+      try {
+        const bot = botById.get(Number(m.bot_id));
+        const exp = occToContract(m.occ_symbol)?.expiration || '';
+        const dte = exp ? calendarDte(exp) : null;
+        const leaps = isLeapsTrade({ expiration: exp, dte });
+        const gate = await jevExitGate({
+          symbol: m.symbol,
+          bot_id: m.bot_id,
+          bot_name: bot?.name ?? null,
+          bot: bot?.name ?? null,
+          occ: m.occ_symbol,
+          monitor_id: m.id,
+          dte,
+          dte_or_leaps: leaps && dte != null ? `leaps:${dte}` : dte,
+          leaps,
+          fav,
+          peak: peakFav,
+          trail_pct: trailPct,
+          sl_pct: slPct,
+          entry_price: entry,
+          last_price: price,
+          qty: Number(m.qty),
+          asset_class: m.asset_class,
+          expiration: exp || null,
+          source: 'bot',
+        }, {
+          paper: true,
+          botFlags: parseJevBotFlags(bot?.risk),
+        });
+        jevAdvice = { pick: gate.pick, applied: gate.applied };
+        if (gate.skipped !== 'cadence' && gate.skipped !== 'global_off') {
+          await audit('jev.exit', `${m.occ_symbol || m.symbol} ${gate.opinion} applied=${gate.applied}`, {
+            id: m.id,
+            bot_id: m.bot_id ?? null,
+            pick: gate.opinion,
+            acted: gate.pick,
+            applied: gate.applied,
+            skipped: gate.skipped,
+            called: gate.called,
+          });
+        }
+      } catch (e: any) {
+        await audit('jev.exit_error', `exit panel skipped for ${m.symbol}: ${e?.message || e}`, { id: m.id });
+      }
+    }
+    const resolved = resolveMonitorExit({
+      railReason: reason || null,
+      jev: jevAdvice,
+      trailPct,
+      slPct,
+      tpPct,
+      fav,
+      peak: peakFav,
+    });
+    if (resolved.trailPct > 0 && resolved.trailPct < trailPct) {
+      trailPct = resolved.trailPct;
+      await exec('UPDATE position_monitors SET trail_pct=:t WHERE id=:id', { t: trailPct, id: m.id });
+    }
+    reason = resolved.reason || '';
 
     const held = await heldQtyForMonitor(m);
     const exact = await exactOpenQty(m);

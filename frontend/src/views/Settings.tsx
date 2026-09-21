@@ -105,11 +105,13 @@ export default function Settings({ health, onChange }: { health: any; onChange: 
         </div>
       </Card>
 
-      <Card title="Jev: post-signal override" right={<a href="#/models/jev">Open Jev page →</a>}>
+      <Card title="Jev: entry and exit panel" right={<a href="#/models/jev">Open Jev page →</a>}>
         <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
-          Lightning panel after a bot fires. Hard rails (kill, DTE, puts, max $) always win.
-          <b> off</b> never calls TypeSafe and leaves the risk-engine size. <b> shadow</b> logs and never blocks.
-          <b> active</b> may skip or size down. Weak confidence, a missing key, or an API error sizes down.
+          Lightning panel after a bot fires, and on open paper options when that bot's exit scope is on.
+          Hard rails (kill switch, hard stop, gain-lock, trail) always win.
+          <b> off</b> never calls TypeSafe. <b> shadow</b> logs and does not change the order.
+          <b> active</b> may skip or size down an entry, or exit or tighten, only if that bot is switched on.
+          Each bot defaults off. Weak confidence, a missing key, or an API error sizes an entry down and does not sell.
         </div>
         <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
           {(['off', 'shadow', 'active'] as const).map((m) => {

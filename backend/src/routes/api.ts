@@ -39,8 +39,9 @@ import { armPaperFromBacktests } from '../paperArm.js';
 import { collectPaperHealth } from '../risk/health.js';
 import { MONITORS_LIST_SQL } from '../risk/monitorList.js';
 import { runBotsAutofix } from '../bots/autofix.js';
-import { jevPublicStatus } from '../risk/jev.js';
+import { jevPublicStatus, parseBotSymbols } from '../risk/jev.js';
 import { saveJevSettings } from '../risk/jevSettings.js';
+import { parseJevBotFlags } from '../risk/jevScope.js';
 import { loadMuseSettings, saveMuseSettings } from '../muse/settings.js';
 import { museConfigured, museWatchStatus } from '../muse/watch.js';
 import { museLastTune } from '../muse/improve.js';
@@ -136,7 +137,22 @@ export async function registerRoutes(app: FastifyInstance) {
   });
 
   // Which model answers which task, and what the last liveness probe saw.
-  app.get('/api/jev', async () => jevPublicStatus());
+  app.get('/api/jev', async () => {
+    const status = await jevPublicStatus();
+    let bots: { id: number; name: string; enabled: boolean; symbols: string[]; jev: { entry: boolean; exit: boolean } }[] = [];
+    try {
+      const env = await getTradingEnv();
+      const rows = await q<any>('SELECT id, name, enabled, symbols, risk FROM bots WHERE env=:env ORDER BY name ASC', { env });
+      bots = rows.map((b) => ({
+        id: Number(b.id),
+        name: String(b.name || `bot ${b.id}`),
+        enabled: Number(b.enabled) === 1 || b.enabled === true,
+        symbols: parseBotSymbols(b.symbols),
+        jev: parseJevBotFlags(b.risk),
+      }));
+    } catch { /* page still renders the global controls */ }
+    return { ...status, bots };
+  });
   app.put('/api/jev', async (req) => {
     const b = (req.body as any) || {};
     await saveJevSettings({
@@ -759,6 +775,31 @@ export async function registerRoutes(app: FastifyInstance) {
     await exec('UPDATE bots SET risk=CAST(:r AS JSON) WHERE id=:id AND env=:env', { r: JSON.stringify(next), id, env });
     await audit('bot.risk.set', `risk overrides updated for bot #${id}`, { id, env, risk: next });
     return { ok: true, risk: next, effective_risk: await resolveBotRisk(next) };
+  });
+  // Per-bot Jev scopes. Default off. Does not touch stops, size, or other risk fields.
+  app.put('/api/bots/:id/jev', async (req, reply) => {
+    const id = intId(req); if (id == null) return reply.code(400).send({ error: 'invalid id' });
+    const body = (req.body as any) || {};
+    const unknown = Object.keys(body).filter((k) => k !== 'entry' && k !== 'exit');
+    if (unknown.length) return reply.code(400).send({ error: `unsupported field(s): ${unknown.join(', ')}` });
+    if ('entry' in body && typeof body.entry !== 'boolean') return reply.code(400).send({ error: 'entry must be a boolean' });
+    if ('exit' in body && typeof body.exit !== 'boolean') return reply.code(400).send({ error: 'exit must be a boolean' });
+    const env = await getTradingEnv();
+    const [bot] = await q<any>('SELECT id, risk FROM bots WHERE id=:id AND env=:env', { id, env });
+    if (!bot) return reply.code(404).send({ error: 'bot not found' });
+    let cur: any = {};
+    try {
+      cur = (typeof bot.risk === 'string' ? JSON.parse(bot.risk || '{}') : bot.risk) || {};
+    } catch { cur = {}; }
+    const prev = parseJevBotFlags(cur);
+    const next = {
+      entry: typeof body.entry === 'boolean' ? body.entry : prev.entry,
+      exit: typeof body.exit === 'boolean' ? body.exit : prev.exit,
+    };
+    const risk = { ...cur, jev: next };
+    await exec('UPDATE bots SET risk=CAST(:r AS JSON) WHERE id=:id AND env=:env', { r: JSON.stringify(risk), id, env });
+    await audit('bot.jev.set', `jev scope for bot #${id}: entry ${next.entry ? 'on' : 'off'}, exit ${next.exit ? 'on' : 'off'}`, { id, env, jev: next });
+    return { ok: true, id, jev: next };
   });
   app.delete('/api/bots/:id', async (req, reply) => {
     const id = intId(req); if (id == null) return reply.code(400).send({ error: 'invalid id' });

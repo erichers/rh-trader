@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Icon, type IconName } from './components/icons';
 import { Health, SetMode, SetKill, RhConnect, RhSync, SetEnv, RhAuthStart, Focus as FocusApi, SetFocus, SetJev } from './api/client';
 import { jevLastShort, jevLastText, museTuneText } from './modelCopy';
+import { readSidebarCollapsed, writeSidebarCollapsed } from './sidebarPref';
 import MarketClock from './components/MarketClock';
 import AccountStrip from './components/AccountStrip';
 import Dashboard from './views/Dashboard';
@@ -161,6 +162,14 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [pendingEnv, setPendingEnv] = useState<string | null>(null); // live-switch confirmation
   const [focus, setFocusState] = useState<any>({ enabled: false, symbol: 'SPY', tickers: ['SPY', 'QQQ'] });
+  const [navCollapsed, setNavCollapsed] = useState(() => readSidebarCollapsed(typeof localStorage === 'undefined' ? null : localStorage));
+  const toggleNav = () => {
+    setNavCollapsed((cur) => {
+      const next = !cur;
+      writeSidebarCollapsed(typeof localStorage === 'undefined' ? null : localStorage, next);
+      return next;
+    });
+  };
 
   const refresh = () => Health().then((h) => { setHealth(h); setApiDown(false); }).catch(() => {
     setHealth({ ok: false, _unreachable: true });
@@ -226,24 +235,35 @@ export default function App() {
 
   return (
     <HashRouter>
-      <div className={`app${isLive ? ' live' : ''}`}>
+      <div className={`app${isLive ? ' live' : ''}${navCollapsed ? ' nav-collapsed' : ''}`}>
         <aside className="sidebar">
-          <div className="brand">rh.tradingbot</div>
+          <div className="brand">
+            <span className="brand-full">rh.tradingbot</span>
+            <span className="brand-mark">rh</span>
+            <button
+              type="button"
+              className="nav-collapse"
+              aria-expanded={!navCollapsed}
+              aria-label={navCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              title={navCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              onClick={toggleNav}
+            >{navCollapsed ? '›' : '‹'}</button>
+          </div>
           <nav className="nav">
             {NAV.map((group, gi) => (
               <div className="nav-group" key={gi}>
                 {group.label && <div className="nav-group-label">{group.label}</div>}
                 {group.items.map((it) => (
-                  <NavLink key={it.to} to={it.to} end={it.end}>
+                  <NavLink key={it.to} to={it.to} end={it.end} title={it.label}>
                     <Icon name={it.icon} size={17} className="nav-icon" />
-                    <span>{it.to === '/focus' && focus.enabled ? `Focus · ${focus.symbol}` : it.label}</span>
+                    <span className="nav-label">{it.to === '/focus' && focus.enabled ? `Focus · ${focus.symbol}` : it.label}</span>
                   </NavLink>
                 ))}
               </div>
             ))}
           </nav>
           <div style={{ flex: 1 }} />
-          <div style={{ padding: '0 18px', fontSize: 11 }} className="muted">
+          <div style={{ padding: '0 18px', fontSize: 11 }} className="muted side-status">
             <div className="row"><span className={`dot ${apiDown ? 'red' : 'green'}`} /> API: {apiDown ? 'down (:8011)' : (health?.listen || 'up')}</div>
             <div className="row" style={{ marginTop: 4 }}>
               <span className={`dot ${rhDot}`} /> Robinhood: {apiDown ? 'unknown' : rhStatus}

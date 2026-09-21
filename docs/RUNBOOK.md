@@ -4,6 +4,24 @@ Stay on **Alpaca paper**. Do not switch `TRADING_ENV` to `robinhood_live` from t
 
 Monday one-pager (full_auto arm, $10k / 50% rails, Mac stash instructions): [`MONDAY-PAPER-TEST.md`](./MONDAY-PAPER-TEST.md).
 
+## Jev entry and exit (paper)
+
+Models → Jev can advise an entry (enter, skip, size down) and, when you turn that bot's exit scope on, an open option (hold, exit, tighten). It is not a price predictor. Global mode is still off, shadow, or active. Each bot stores `risk.jev = { entry: false, exit: false }` until you enable a scope. Jev changes a paper order only when global mode is active, that scope is on, and the account is Alpaca paper. Otherwise it logs the decision and stands down.
+
+The hard stop, gain-lock floor (+1.5%), and trail run first. A Jev hold or tighten cannot clear a stop. Short dated contracts (0 to 3 DTE) are checked about every 5 minutes, 4 to 14 DTE about every 20 minutes, and LEAPS about every 4 hours. A fresh decision inside that window does not call TypeSafe again. The $5 budget still applies.
+
+Pull on the Mac desk:
+
+```bash
+cd /Users/eric/Sites/grokbot/grokbot-rh-trader
+git fetch origin
+git checkout cursor/jev-exit-per-bot-2a56
+git pull --ff-only origin cursor/jev-exit-per-bot-2a56
+./scripts/start.sh
+```
+
+UI: `http://localhost:8888/grokbot/grokbot-rh-trader/#/models/jev`
+
 ## What must be up
 
 | Piece | Address | If it is down |
