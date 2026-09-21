@@ -218,8 +218,18 @@ export async function registerRoutes(app: FastifyInstance) {
     authUrl: rh.authUrl,
     tools: rh.listToolsCached(),
   }));
-  app.post('/api/rh/connect', async () => ({ status: await rh.connect() }));
-  app.post('/api/rh/auth/start', async () => rh.beginAuth());
+  app.post('/api/rh/connect', async (req, reply) => {
+    if ((req.body as any)?.confirm !== true) {
+      return reply.code(409).send({ error: 'confirmation_required', message: 'Robinhood connect requires confirm:true' });
+    }
+    return { status: await rh.connect() };
+  });
+  app.post('/api/rh/auth/start', async (req, reply) => {
+    if ((req.body as any)?.confirm !== true) {
+      return reply.code(409).send({ error: 'confirmation_required', message: 'Robinhood auth requires confirm:true' });
+    }
+    return rh.beginAuth();
+  });
   app.post('/api/rh/sync', async () => syncAll());
 
   // ── Account / positions / orders ──────────────────────────────────────────

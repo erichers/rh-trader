@@ -5,7 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
-import { ping, getGlobalMode, getKillSwitch, audit, migrate } from './db.js';
+import { ping, getGlobalMode, getKillSwitch, getTradingEnv, audit, migrate } from './db.js';
 import { rh } from './rh/mcpClient.js';
 import { startAuthCallbackServer } from './rh/authServer.js';
 import { registerRoutes } from './routes/api.js';
@@ -81,10 +81,16 @@ async function main() {
   // Catch the Robinhood OAuth redirect so in-app "Connect" completes the flow.
   startAuthCallbackServer();
 
-  // Try connecting to Robinhood (non-fatal if needs auth).
-  rh.connect()
-    .then((s) => app.log.info(`[robinhood] status: ${s}`))
-    .catch(() => {});
+  // Paper desk does not open Robinhood OAuth on boot. Connect only when the
+  // active env is already robinhood_live, or a human confirms /api/rh/auth/start.
+  const bootEnv = await getTradingEnv().catch(() => 'alpaca_paper' as const);
+  if (bootEnv === 'robinhood_live') {
+    rh.connect()
+      .then((s) => app.log.info(`[robinhood] status: ${s}`))
+      .catch(() => {});
+  } else {
+    app.log.info('[robinhood] paper desk: OAuth connect skipped on boot');
+  }
 
   const host = '127.0.0.1';
   const port = config.server.port;

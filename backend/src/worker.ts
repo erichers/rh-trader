@@ -45,7 +45,8 @@ function loop(label: string, everyMs: number, body: () => Promise<void>): NodeJS
 export function startWorker() {
   const sync = loop('sync', 30_000, async () => {
     const env = await getTradingEnv();
-    if (brokerKind(env) === 'robinhood' && !rh.isConnected()) await rh.connect();
+    // Paper never auto-connects. Live OAuth only after the env is already robinhood_live.
+    if (env === 'robinhood_live' && brokerKind(env) === 'robinhood' && !rh.isConnected()) await rh.connect();
     if (await brokerReady()) {
       await syncAll();
       // Record today's equity for THIS account (idempotent per day) — the P/L history

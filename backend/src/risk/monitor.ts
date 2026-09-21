@@ -19,6 +19,8 @@ import { contractPrice, occToContract } from '../brokers/options.js';
 import { getClock } from '../market/clock.js';
 import type { OrderDraft } from './engine.js';
 import { resolveBotRisk } from './sizing.js';
+import { matchMonitorBot, occFromOrderRaw, planMonitorOpen, positiveId } from './monitorBot.js';
+import type { MonitorOrderCandidate, MonitorSignalCandidate } from './monitorBot.js';
 import type { TradingEnv } from '../config.js';
 
 // Live position monitor: enforces per-bot take-profit / stop-loss / trailing-stop on
@@ -34,7 +36,22 @@ export async function createMonitor(draft: OrderDraft, orderId: number, entryPri
   if (ac === 'option' && !occ) return; // can't monitor an option without its concrete contract
   if (ac !== 'equity' && ac !== 'etf' && ac !== 'option') return;
   if (!env) env = await getTradingEnv();
-  if (await hasOpenMonitor(env, draft.symbol, occ)) return;
+  const existing = await openMonitorRow(env, draft.symbol, occ);
+  const plan = planMonitorOpen({
+    draftBotId: draft.bot_id,
+    orderId,
+    hasExisting: !!existing,
+    existingBotId: existing?.bot_id ?? null,
+  });
+  if (plan.action === 'stamp' && existing) {
+    await exec(
+      'UPDATE position_monitors SET bot_id=:bid, order_id=COALESCE(order_id, :oid) WHERE id=:id AND bot_id IS NULL',
+      { bid: plan.bot_id, oid: plan.order_id, id: existing.id },
+    );
+    await audit('monitor.bot_id', `stamped bot ${plan.bot_id} on open ${occ || draft.symbol}`, { id: existing.id, bot_id: plan.bot_id, order_id: plan.order_id });
+    return;
+  }
+  if (plan.action === 'skip') return;
   const [bot] = draft.bot_id ? await q<{ risk: any }>('SELECT risk FROM bots WHERE id=:id AND env=:env', { id: draft.bot_id, env }) : [undefined as any];
   const r = bot?.risk ? (typeof bot.risk === 'string' ? safeParse(bot.risk) : bot.risk) : null;
   const p = draft._play;
@@ -65,7 +82,7 @@ export async function createMonitor(draft: OrderDraft, orderId: number, entryPri
   await exec(
     `INSERT INTO position_monitors (symbol, occ_symbol, env, account_number, asset_class, qty, entry_price, peak_price, trough_price, last_price, tp_pct, sl_pct, trail_pct, bot_id, order_id)
      VALUES (:s,:occ,:env,:acct,:ac,:qty,:entry,:entry,:entry,:entry,:tp,:sl,:trail,:bid,:oid)`,
-    { s: draft.symbol, occ, env, acct: 'agentic', ac, qty: draft.qty, entry, tp, sl, trail, bid: draft.bot_id ?? null, oid: orderId },
+    { s: draft.symbol, occ, env, acct: 'agentic', ac, qty: draft.qty, entry, tp, sl, trail, bid: plan.bot_id, oid: plan.order_id ?? orderId },
   );
   await audit('monitor.open', `watching ${occ || draft.symbol} from ${entry} on ${env} (tp ${tp}/sl ${sl}/trail ${trail})`, { bot_id: draft.bot_id ?? null, source: draft.source });
 }
@@ -75,6 +92,7 @@ export async function createMonitor(draft: OrderDraft, orderId: number, entryPri
  *  (or vice-versa) — so we only manage monitors whose env matches the active env. */
 export async function checkMonitors(opts?: { reconcileOnly?: boolean }): Promise<{ checked: number; closed: number; attached: number; orphaned: number }> {
   const env = await getTradingEnv();
+  const backfill = await backfillNullMonitorBotIds(env).catch(() => ({ open: new Map<number, number>(), newestClosed: null as any }));
   const attached = await ensureMonitorsForOpenPositions(env);
   const open = await q<any>("SELECT * FROM position_monitors WHERE status='open' AND (env=:env OR (env IS NULL AND :env='alpaca_paper'))", { env });
 
@@ -92,6 +110,7 @@ export async function checkMonitors(opts?: { reconcileOnly?: boolean }): Promise
   let closed = 0;
   let orphaned = 0;
   for (const m of open) {
+    if (!positiveId(m.bot_id) && backfill.open.has(Number(m.id))) m.bot_id = backfill.open.get(Number(m.id));
     const isOption = (m.asset_class || '').toLowerCase() === 'option';
     if (isOption && m.occ_symbol) {
       const c = occToContract(m.occ_symbol);
@@ -180,11 +199,13 @@ export async function ensureMonitorsForOpenPositions(env: TradingEnv): Promise<n
     { env },
   );
   let attached = 0;
+  const pool = env === 'alpaca_paper' ? await loadBotMatchPool(env).catch(() => ({ orders: [], signals: [] })) : { orders: [] as MonitorOrderCandidate[], signals: [] as MonitorSignalCandidate[] };
   for (const p of pos) {
     const ac = String(p.asset_class || 'equity').toLowerCase();
     const occ = ac === 'option' ? String(p.occ_symbol || '') : '';
     if (ac === 'option' && !occ) continue;
-    if (await hasOpenMonitor(env, p.symbol, occ)) continue;
+    if (await openMonitorRow(env, p.symbol, occ)) continue;
+    const matched = matchMonitorBot({ symbol: p.symbol, occ, orders: pool.orders, signals: pool.signals });
     const swing = swingExitBand();
     const entry = Number(p.avg_cost) || Number(p.avg_entry_price) || 0;
     if (!(entry > 0)) {
@@ -200,15 +221,16 @@ export async function ensureMonitorsForOpenPositions(env: TradingEnv): Promise<n
     try {
       await exec(
         `INSERT INTO position_monitors (symbol, occ_symbol, env, account_number, asset_class, qty, entry_price, peak_price, trough_price, last_price, tp_pct, sl_pct, trail_pct, bot_id, order_id, pending_exit_order_id, exit_attempts, reason)
-         VALUES (:s,:occ,:env,:acct,:ac,:qty,:entry,:entry,:entry,:entry,:tp,:sl,:trail,NULL,NULL,:pid,:att,:reason)`,
+         VALUES (:s,:occ,:env,:acct,:ac,:qty,:entry,:entry,:entry,:entry,:tp,:sl,:trail,:bid,:oid,:pid,:att,:reason)`,
         {
           s: p.symbol, occ, env, acct: p.account_number || 'agentic', ac,
           qty: Number(p.qty), entry, tp: swing.tp, sl: swing.sl, trail: swing.trail,
+          bid: matched.bot_id, oid: matched.order_id,
           pid: inflight, att: inflight ? 1 : 0,
           reason: inflight ? exitingReason(inflight, 're-attached over working sell') : 're-attached unprotected long',
         },
       );
-      await audit('monitor.reattach', `attached ${occ || p.symbol} @ ${entry} (pending exit ${inflight || 'none'})`, { env });
+      await audit('monitor.reattach', `attached ${occ || p.symbol} @ ${entry} (pending exit ${inflight || 'none'})`, { env, bot_id: matched.bot_id, via: matched.via });
       attached++;
     } catch (e: any) {
       await audit('monitor.reattach_failed', `${occ || p.symbol}: ${e?.message || String(e)}`, { env });
@@ -318,12 +340,89 @@ async function flattenReasonFor(m: any, env: TradingEnv, clock: { nearClose: boo
   });
 }
 
-async function hasOpenMonitor(env: string, symbol: string, occ: string): Promise<boolean> {
-  const [row] = await q<{ n: number }>(
-    "SELECT COUNT(*) n FROM position_monitors WHERE status='open' AND env=:env AND symbol=:s AND IFNULL(occ_symbol,'')=:occ",
+async function openMonitorRow(env: string, symbol: string, occ: string): Promise<{ id: number; bot_id: number | null; order_id: number | null } | null> {
+  const [row] = await q<{ id: number; bot_id: number | null; order_id: number | null }>(
+    "SELECT id, bot_id, order_id FROM position_monitors WHERE status='open' AND env=:env AND symbol=:s AND IFNULL(occ_symbol,'')=:occ ORDER BY id DESC LIMIT 1",
     { env, s: symbol, occ: occ || '' },
   );
-  return !!Number(row?.n);
+  return row || null;
+}
+
+type BotMatchPool = { orders: MonitorOrderCandidate[]; signals: MonitorSignalCandidate[] };
+
+async function loadBotMatchPool(env: string): Promise<BotMatchPool> {
+  const orders = await q<any>(
+    `SELECT id, bot_id, symbol, side, raw FROM orders
+      WHERE (env=:env OR (env IS NULL AND :env='alpaca_paper'))
+        AND side='buy' AND bot_id IS NOT NULL
+        AND status NOT IN ('vetoed','rejected','canceled','observe_only')
+        AND created_at >= DATE_SUB(NOW(), INTERVAL 21 DAY)
+      ORDER BY id DESC LIMIT 400`,
+    { env },
+  );
+  const signals = await q<any>(
+    `SELECT bot_id, symbol, fired FROM signals
+      WHERE fired=1 AND bot_id IS NOT NULL
+        AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+      ORDER BY id DESC LIMIT 400`,
+  );
+  return {
+    orders: (orders || []).map((o) => ({
+      id: o.id,
+      bot_id: o.bot_id,
+      symbol: o.symbol,
+      side: o.side,
+      occ: occFromOrderRaw(o.raw),
+    })),
+    signals: signals || [],
+  };
+}
+
+/** Paper-only. Stamp recent NULL bot_id rows when one buy or one fired signal matches. */
+export async function backfillNullMonitorBotIds(env: TradingEnv): Promise<{
+  open: Map<number, number>;
+  newestClosed: { id: number; bot_id: number; symbol: string; reason: string | null } | null;
+}> {
+  const open = new Map<number, number>();
+  if (env !== 'alpaca_paper') return { open, newestClosed: null };
+  const rows = await q<any>(
+    `SELECT id, symbol, occ_symbol, status, reason FROM position_monitors
+      WHERE bot_id IS NULL
+        AND (env=:env OR env IS NULL)
+        AND (
+          status='open'
+          OR (status='closed' AND closed_at >= DATE_SUB(NOW(), INTERVAL 14 DAY))
+        )
+      ORDER BY id DESC LIMIT 40`,
+    { env },
+  );
+  if (!rows?.length) return { open, newestClosed: null };
+  const pool = await loadBotMatchPool(env);
+  let newestClosed: { id: number; bot_id: number; symbol: string; reason: string | null } | null = null;
+  for (const row of rows) {
+    const matched = matchMonitorBot({
+      symbol: row.symbol,
+      occ: row.occ_symbol,
+      orders: pool.orders,
+      signals: pool.signals,
+    });
+    if (!matched.bot_id || matched.via === 'ambiguous' || matched.via === 'none') continue;
+    await exec(
+      'UPDATE position_monitors SET bot_id=:bid, order_id=COALESCE(order_id, :oid) WHERE id=:id AND bot_id IS NULL',
+      { bid: matched.bot_id, oid: matched.order_id, id: row.id },
+    );
+    if (row.status === 'open') open.set(Number(row.id), matched.bot_id);
+    if (row.status === 'closed' && !newestClosed) {
+      newestClosed = { id: Number(row.id), bot_id: matched.bot_id, symbol: String(row.symbol || ''), reason: row.reason ?? null };
+    }
+  }
+  if (newestClosed) {
+    try {
+      const { tuneFromClosedMonitor } = await import('../muse/improve.js');
+      await tuneFromClosedMonitor(newestClosed, { env, persistLastTune: true, allowDb: true });
+    } catch { /* learning must not block stops */ }
+  }
+  return { open, newestClosed };
 }
 
 async function heldQtyForMonitor(m: any): Promise<number> {
@@ -391,7 +490,21 @@ async function closeMonitorFilled(m: any, reason: string, exitFill: number, last
     "UPDATE position_monitors SET status='closed', reason=:r, exit_price=:xp, exit_is_fill=:isf, last_price=:p, pending_exit_order_id=NULL, closed_at=NOW() WHERE id=:id",
     { r: reason.slice(0, 250), xp: exitFill, isf: isFill ? 1 : 0, p: last, id: m.id },
   );
-  await audit('monitor.close', `${reason} ${m.symbol} @ ${exitFill}${isFill ? ' (fill)' : ' (trigger≈fill)'} → filled`, { id: m.id });
+  await audit('monitor.close', `${reason} ${m.symbol} @ ${exitFill}${isFill ? ' (fill)' : ' (trigger≈fill)'} → filled`, { id: m.id, bot_id: m.bot_id ?? null });
+  const env = (m.env || 'alpaca_paper') as TradingEnv;
+  if (env === 'alpaca_paper') {
+    try {
+      const { tuneFromClosedMonitor } = await import('../muse/improve.js');
+      await tuneFromClosedMonitor({
+        id: m.id,
+        bot_id: m.bot_id,
+        symbol: m.symbol,
+        reason,
+        entry_price: m.entry_price,
+        exit_price: exitFill,
+      }, { env, persistLastTune: true, allowDb: true });
+    } catch { /* Muse tune must not block the close */ }
+  }
 }
 
 function safeParse(s: string): any { try { return JSON.parse(s); } catch { return null; } }

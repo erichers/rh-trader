@@ -3,6 +3,7 @@ import { RhStatus, RhAuthStart, RhSync, SetMode, SetKill, RiskLimits, SetRiskLim
 import { RISK_FIELDS, fmtField, sizingLine } from '../components/risksizing';
 import { Card, Badge, useAsync, Info, money } from '../components/ui';
 import { Icon } from '../components/icons';
+import { jevLastText, museTuneText } from '../modelCopy';
 
 const MODE_DESC: [string, string, string][] = [
   ['observe', 'Observe', 'Logs what every bot/Claude would do. Places NO real orders.'],
@@ -43,6 +44,11 @@ export default function Settings({ health, onChange }: { health: any; onChange: 
           <b>{rh.data?.status || '…'}</b>
           <span className="muted">{rh.data?.tools?.length || 0} tools</span>
           <button className="primary" disabled={busy} onClick={async () => {
+            const paper = (health?.env || 'alpaca_paper') !== 'robinhood_live';
+            const ok = window.confirm(paper
+              ? 'Connect Robinhood? This starts live-account OAuth. The paper desk does not need it.'
+              : 'Connect Robinhood and start OAuth for the live account?');
+            if (!ok) return;
             setBusy(true);
             try {
               const r: any = await RhAuthStart();
@@ -99,11 +105,11 @@ export default function Settings({ health, onChange }: { health: any; onChange: 
         </div>
       </Card>
 
-      <Card title="Jev — post-signal override" right={<a href="#/models/jev">Open Jev page →</a>}>
+      <Card title="Jev: post-signal override" right={<a href="#/models/jev">Open Jev page →</a>}>
         <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
           Lightning panel after a bot fires. Hard rails (kill, DTE, puts, max $) always win.
-          <b> off</b> never calls TypeSafe (fail-open). <b> shadow</b> logs and never blocks.
-          <b> active</b> may skip / size_down. $5 prepaid budget degrades to local decide.
+          <b> off</b> never calls TypeSafe and leaves the risk-engine size. <b> shadow</b> logs and never blocks.
+          <b> active</b> may skip or size down. Weak confidence, a missing key, or an API error sizes down.
         </div>
         <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
           {(['off', 'shadow', 'active'] as const).map((m) => {
@@ -119,12 +125,11 @@ export default function Settings({ health, onChange }: { health: any; onChange: 
         <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
           spent ${Number(health?.jev?.spentUsd || 0).toFixed(4)} / ${health?.jev?.budgetUsd ?? 5}
           {health?.jev?.degraded ? ` · degraded: ${health?.jev?.reason || 'yes'}` : ''}
-          {health?.jev?.last?.pick ? ` · last ${health.jev.last.pick} ${health.jev.last.symbol || ''}` : ''}
         </div>
-        {health?.jev?.last?.because && <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{health.jev.last.because}</div>}
+        {jevLastText(health?.jev?.last) && <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>{jevLastText(health?.jev?.last)}</div>}
       </Card>
 
-      <Card title="Muse — auditor + improver" right={<a href="#/models/muse">Open Muse page →</a>}>
+      <Card title="Muse: auditor and improver" right={<a href="#/models/muse">Open Muse page →</a>}>
         <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
           Muse never places orders. <b>observe</b> watches only.
           <b> improve</b> (paper default) clamps SL≤10 / TP toward 20 / trail 8–15 and may nudge min_matches / cooldown.
@@ -143,7 +148,7 @@ export default function Settings({ health, onChange }: { health: any; onChange: 
         </div>
         <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
           {health?.watch?.note || 'Muse never places.'}
-          {health?.watch?.lastTune?.name ? ` · last tune ${health.watch.lastTune.name}` : ''}
+          {museTuneText(health?.watch?.lastTune) ? ` · ${museTuneText(health?.watch?.lastTune)}` : ''}
         </div>
       </Card>
 

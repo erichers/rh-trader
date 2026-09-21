@@ -6,6 +6,7 @@ import { BlockBoard, type BlockItem } from '../components/blocks';
 import { DataTable, type Column } from '../components/datatable';
 import { BotModeControl, MODE_LEGEND } from '../components/botcontrols';
 import { Icon } from '../components/icons';
+import { jevLastText, museTuneText } from '../modelCopy';
 
 const PNL_WINDOWS: { key: string; label: string }[] = [
   { key: 'day', label: 'Day' }, { key: 'week', label: 'Week' }, { key: 'month', label: 'Month' },
@@ -214,6 +215,19 @@ export default function Dashboard({ health }: { health: any }) {
       ))}</>
     ) });
   }
+
+  const nullBots = (health?.autofix?.nullBotMonitors || []) as { symbol: string; nullCloses: number }[];
+  items.push({ id: 'desk-models', title: 'Jev and Muse', right: <a href="#/models">models</a>, node: (
+    <div style={{ fontSize: 13, lineHeight: 1.5 }}>
+      <div><b>Jev last pick:</b> {jevLastText(health?.jev?.last) || 'none yet'}</div>
+      <div><b>Muse last tune:</b> {museTuneText(health?.watch?.lastTune) || 'none yet'}</div>
+      {nullBots.length > 0 && (
+        <div className="amber" style={{ marginTop: 6 }}>
+          Closed monitors with no bot: {nullBots.map((n) => `${n.symbol} (${n.nullCloses})`).join(', ')}. Muse cannot learn those until a bot id is matched.
+        </div>
+      )}
+    </div>
+  ) });
 
   items.push({ id: 'stats', title: 'Account', right: pnl.data?.source !== 'unavailable' && pnl.data?.current ? <span className="muted" style={{ fontSize: 11 }}>live equity {money(pnl.data.current)}</span> : undefined, node: (
     <div className="grid cols-4">

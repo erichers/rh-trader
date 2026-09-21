@@ -50,7 +50,7 @@ export function localJevEvidence(state: JevEntryState) {
     id: 'fallback_rails',
     options: ['hold', 'review'] as const,
     pick: 'review',
-    because: 'TypeSafe degraded — local Choice/Score panel',
+    because: 'TypeSafe degraded: local Choice/Score panel',
     evidence: { symbol: state.symbol, dte: state.dte_or_leaps ?? state.dte },
   });
   const q = score({

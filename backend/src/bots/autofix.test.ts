@@ -1,8 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  chronicNullBotCloses,
   classifyBotForAutofix,
   clampExitBand,
+  noteNullBotMonitors,
+  autofixHealth,
   proposeBotAutofix,
   resetAutofixForTests,
   runBotsAutofix,
@@ -230,5 +233,27 @@ describe('runBotsAutofix', () => {
     assert.ok(logs.some((l) => l.startsWith('bot.autofix:')));
     assert.ok(logs.some((l) => l.startsWith('bot.autofix.delete:')));
     assert.match(out.summary, /deleted 1 equity, fixed 1/);
+  });
+});
+
+describe('chronic null bot_id closes', () => {
+  it('surfaces a symbol with repeated null closes and does not invent a disable list', () => {
+    resetAutofixForTests();
+    const rows = chronicNullBotCloses([
+      { symbol: 'NVDA', bot_id: null },
+      { symbol: 'NVDA', bot_id: null },
+      { symbol: 'NVDA', bot_id: null },
+      { symbol: 'NVDA', bot_id: 39 },
+      { symbol: 'SPY', bot_id: null },
+      { symbol: 'QQQ', bot_id: null },
+      { symbol: 'QQQ', bot_id: null },
+    ]);
+    assert.deepEqual(rows, [{ symbol: 'NVDA', nullCloses: 3 }]);
+    noteNullBotMonitors([
+      { symbol: 'NVDA', bot_id: null },
+      { symbol: 'NVDA', bot_id: null },
+      { symbol: 'NVDA', bot_id: null },
+    ]);
+    assert.deepEqual(autofixHealth().nullBotMonitors, [{ symbol: 'NVDA', nullCloses: 3 }]);
   });
 });

@@ -52,24 +52,76 @@ export type AutofixResult = {
   summary: string;
 };
 
+export type NullBotClose = { symbol: string; nullCloses: number };
+
 export type AutofixHealth = {
   lastRun: string | null;
   lastFixedCount: number;
   lastError: string | null;
+  /** Recent closed monitors with no bot_id, grouped when a symbol is chronic. */
+  nullBotMonitors: NullBotClose[];
 };
 
 let lastRun: string | null = null;
 let lastFixedCount = 0;
 let lastError: string | null = null;
+let nullBotMonitors: NullBotClose[] = [];
+let nullLoadedAt = 0;
+
+/** Same symbol, at least `min` recent closes, all missing bot_id. Does not disable bots. */
+export function chronicNullBotCloses(
+  rows: { symbol?: string | null; bot_id?: number | null }[],
+  min = 3,
+): NullBotClose[] {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    const id = Number(r.bot_id);
+    if (Number.isInteger(id) && id > 0) continue;
+    const symbol = String(r.symbol || '').trim().toUpperCase();
+    if (!symbol) continue;
+    counts.set(symbol, (counts.get(symbol) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .filter(([, n]) => n >= min)
+    .map(([symbol, nullCloses]) => ({ symbol, nullCloses }))
+    .sort((a, b) => b.nullCloses - a.nullCloses || a.symbol.localeCompare(b.symbol));
+}
+
+export function noteNullBotMonitors(rows: { symbol?: string | null; bot_id?: number | null }[]): void {
+  nullBotMonitors = chronicNullBotCloses(rows);
+  nullLoadedAt = Date.now();
+}
+
+/** Health poll. Failures do not stick, so a down DB retries next call. */
+export async function refreshNullBotMonitors(load?: () => Promise<{ symbol?: string | null; bot_id?: number | null }[]>): Promise<void> {
+  if (nullLoadedAt && Date.now() - nullLoadedAt < 60_000) return;
+  try {
+    const rows = load
+      ? await load()
+      : await q<{ symbol: string; bot_id: number | null }>(
+        `SELECT symbol, bot_id FROM position_monitors
+          WHERE status='closed' AND bot_id IS NULL
+            AND (env=:env OR (env IS NULL AND :env='alpaca_paper'))
+            AND closed_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)`,
+        { env: 'alpaca_paper' },
+      );
+    nullBotMonitors = chronicNullBotCloses(rows || []);
+    nullLoadedAt = Date.now();
+  } catch {
+    /* leave the previous snapshot; retry next health poll */
+  }
+}
 
 export function autofixHealth(): AutofixHealth {
-  return { lastRun, lastFixedCount, lastError };
+  return { lastRun, lastFixedCount, lastError, nullBotMonitors };
 }
 
 export function resetAutofixForTests(): void {
   lastRun = null;
   lastFixedCount = 0;
   lastError = null;
+  nullBotMonitors = [];
+  nullLoadedAt = 0;
 }
 
 function clone<T>(v: T): T {

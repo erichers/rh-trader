@@ -2,6 +2,7 @@ import { HashRouter, NavLink, Route, Routes } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { Icon, type IconName } from './components/icons';
 import { Health, SetMode, SetKill, RhConnect, RhSync, SetEnv, RhAuthStart, Focus as FocusApi, SetFocus, SetJev } from './api/client';
+import { jevLastShort, jevLastText, museTuneText } from './modelCopy';
 import MarketClock from './components/MarketClock';
 import AccountStrip from './components/AccountStrip';
 import Dashboard from './views/Dashboard';
@@ -111,7 +112,7 @@ function museWatchLabel(apiDown: boolean, health: any): string {
   if (!w) return 'unknown';
   const mode = w.mode === 'improve' ? 'improve' : 'observe';
   const via = w.via === 'local' ? 'local' : '';
-  const tune = w.lastTune?.name ? `last tune ${w.lastTune.name}` : '';
+  const tune = museTuneText(w.lastTune);
   if (!w.available && mode !== 'improve') return 'n/a · observe-only';
   if (w.lastError) return `${mode} · error`;
   const bits = [mode, via, w.running ? 'running' : (w.lastCycle ? 'idle' : 'waiting'), tune].filter(Boolean);
@@ -135,7 +136,7 @@ function jevLabel(apiDown: boolean, health: any): string {
   const spent = Number(j.spentUsd) || 0;
   const budget = Number(j.budgetUsd) || 5;
   const last = j.last;
-  const lastBit = last?.pick && last?.symbol ? `last ${last.pick} ${last.symbol}` : (last?.pick ? `last ${last.pick}` : '');
+  const lastBit = jevLastShort(last);
   const money = `$${spent.toFixed(2)}/$${budget}`;
   if (j.degraded) return `${j.mode} · budget · ${money}`;
   return [j.mode, money, lastBit].filter(Boolean).join(' · ');
@@ -149,8 +150,7 @@ function jevTitle(health: any): string {
     `mode=${j.mode}`,
     `spent=$${Number(j.spentUsd || 0).toFixed(4)} / $${j.budgetUsd ?? 5}`,
     j.degraded ? `degraded: ${j.reason || 'yes'}` : 'ok',
-    last?.because ? `last: ${last.because}` : '',
-    last?.bot ? `bot=${last.bot}` : '',
+    last ? jevLastText(last) : '',
   ].filter(Boolean);
   return bits.join(' · ');
 }
@@ -184,6 +184,11 @@ export default function App() {
     refresh();
   };
   const connect = async () => {
+    const paper = (health?.env || 'alpaca_paper') !== 'robinhood_live';
+    const ok = window.confirm(paper
+      ? 'Connect Robinhood? This starts live-account OAuth. The paper desk does not need it.'
+      : 'Connect Robinhood and start OAuth for the live account?');
+    if (!ok) return;
     setBusy(true);
     try {
       const r: any = await RhAuthStart();
@@ -262,7 +267,7 @@ export default function App() {
               <button
                 style={{ fontSize: 10, padding: '1px 6px', marginLeft: 'auto' }}
                 disabled={apiDown}
-                title={health?.jev?.enabled && health?.jev?.mode !== 'off' ? 'Turn Jev off (fail-open, no TypeSafe calls)' : 'Enable Jev in shadow (log, never block)'}
+                title={health?.jev?.enabled && health?.jev?.mode !== 'off' ? 'Turn Jev off (no TypeSafe calls)' : 'Enable Jev in shadow (log only, never blocks)'}
                 onClick={async (e) => {
                   e.preventDefault();
                   e.stopPropagation();

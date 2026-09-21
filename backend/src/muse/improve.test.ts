@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyMuseImprove, proposeMuseImprove, resetMuseImproveForTests } from './improve.js';
+import { applyMuseImprove, formatMuseTune, museLastTune, proposeMuseImprove, resetMuseImproveForTests, tuneFromClosedMonitor } from './improve.js';
 import { museWatchLamp } from './watch.js';
 
 describe('muse improve local path', () => {
@@ -71,12 +71,62 @@ describe('muse improve local path', () => {
 
     const paper = await applyMuseImprove(bots, {
       env: 'alpaca_paper',
+      persistLastTune: false,
       save: async (p) => { saved.push(p); },
       log: async (type, msg) => { logs.push(`${type}:${msg}`); },
     });
     assert.equal(paper.applied.length, 1);
     assert.equal(saved.length, 1);
     assert.ok(logs.some((l) => l.startsWith('muse.improve:')));
+    assert.equal(museLastTune(), null);
+  });
+
+  it('tuneFromClosedMonitor names the bot and does not persist when persistLastTune is false', async () => {
+    resetMuseImproveForTests();
+    let saved = 0;
+    const res = await tuneFromClosedMonitor({
+      id: 301,
+      bot_id: 39,
+      symbol: 'NVDA',
+      reason: 'trailing-stop',
+      bot_name: 'NVDA Momentum',
+    }, {
+      persistLastTune: false,
+      env: 'alpaca_paper',
+      bot: {
+        id: 39,
+        name: 'NVDA Momentum',
+        mode: 'full_auto',
+        action: { option_type: 'call' },
+        risk: { stop_loss_pct: 18, take_profit_pct: 40, trailing_stop_pct: 25 },
+        rules: {},
+      },
+      save: async () => { saved += 1; },
+    });
+    assert.equal(res.learned, true);
+    assert.equal(res.lastTune.botId, 39);
+    assert.equal(res.lastTune.name, 'NVDA Momentum');
+    assert.equal(res.lastTune.missingBot, false);
+    assert.equal(museLastTune(), null);
+    assert.equal(saved, 0);
+    assert.ok(res.applied);
+  });
+
+  it('tuneFromClosedMonitor with no bot_id does not invent a bot', async () => {
+    resetMuseImproveForTests();
+    const res = await tuneFromClosedMonitor({
+      id: 297,
+      bot_id: null,
+      symbol: 'NVDA',
+      reason: 'trailing-stop',
+    }, { persistLastTune: false, allowDb: false });
+    assert.equal(res.learned, false);
+    assert.equal(res.lastTune.botId, null);
+    assert.equal(res.lastTune.missingBot, true);
+    assert.match(res.lastTune.because || '', /no bot id/);
+    assert.equal(museLastTune(), null);
+    assert.equal(formatMuseTune(res.lastTune), 'last tune: bot missing');
+    assert.equal(formatMuseTune({ at: 't', botId: 39, name: 'NVDA Momentum' }), 'last tune NVDA Momentum');
   });
 });
 

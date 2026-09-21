@@ -7,7 +7,7 @@ import { museWatchStatus, type MuseWatchLamp } from '../muse/watch.js';
 import { loadMuseSettings } from '../muse/settings.js';
 import { loadJevSettings } from './jevSettings.js';
 import { jevPublicStatus, type JevPublic } from './jev.js';
-import { autofixHealth, type AutofixHealth } from '../bots/autofix.js';
+import { autofixHealth, refreshNullBotMonitors, type AutofixHealth } from '../bots/autofix.js';
 
 export type HealthFailure =
   | 'db_down'
@@ -122,7 +122,10 @@ export async function collectPaperHealth(): Promise<PaperHealth> {
     jev = await jevPublicStatus();
   } catch { /* optional */ }
   let autofix: AutofixHealth | undefined;
-  try { autofix = autofixHealth(); } catch { /* optional */ }
+  try {
+    if (db && String(env) === 'alpaca_paper') await refreshNullBotMonitors();
+    autofix = autofixHealth();
+  } catch { /* optional */ }
 
   return {
     ok: db, // process answered; db is the minimum "API can persist"

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useParams } from 'react-router-dom';
 import { AiModels, GetJev, GetMuse, SetJev, SetMuse } from '../api/client';
+import { jevLastText, museTuneText } from '../modelCopy';
 import { Badge, Card, fmtDateTime } from '../components/ui';
 
 export type ModelId = 'jev' | 'muse' | 'ai';
@@ -94,7 +95,7 @@ function ModelsHub({ health }: { health: any }) {
           body="After a bot fires, Jev scores the setup. Off never calls TypeSafe. Shadow logs. Active may skip or size down." />
         <HubCard to="/models/muse" title="Muse" role="Auditor / improver"
           dot={w?.lastError ? 'amber' : (w?.mode === 'improve' && (w.ok || w.running || w.lastCycle) ? (w.running ? 'green' : 'amber') : (w?.available && w?.running ? 'green' : 'gray'))}
-          status={`${w?.mode || 'improve'} · ${w?.via || 'local'}${w?.lastTune?.name ? ` · last tune ${w.lastTune.name}` : ''}`}
+          status={`${w?.mode || 'improve'} · ${w?.via || 'local'}${museTuneText(w?.lastTune) ? ` · ${museTuneText(w?.lastTune)}` : ''}`}
           body="Muse reviews packets and can clamp paper stops toward the swing law. It never sends an order." />
         <HubCard to="/models/ai" title="AI" role="Research + chat"
           dot={health?.ai ? 'green' : 'gray'}
@@ -143,9 +144,10 @@ function JevDetail({ health, onChange }: { health: any; onChange: () => void }) 
           </p>
           <p>
             Hard rails always win: kill switch, options-only, calls-only, DTE / LEAPS, and max $.
-            <b> off</b> never calls TypeSafe (entries fail-open). <b> shadow</b> logs and never blocks.
-            <b> active</b> may skip or size down when confidence is high. A $5 prepaid budget
-            degrades to local decide — the desk keeps running.
+            <b> off</b> never calls TypeSafe and leaves the risk-engine size. <b> shadow</b> logs and never blocks.
+            <b> active</b> may skip or size down. Weak confidence, a missing key, or an API error sizes down instead of full size.
+            A bot scoped to SPY and QQQ does not gate a different underlying. A $5 prepaid budget
+            degrades to local decide. The desk keeps running.
           </p>
         </div>
       </Card>
@@ -154,14 +156,13 @@ function JevDetail({ health, onChange }: { health: any; onChange: () => void }) 
         <div className="grid cols-3" style={{ gap: 12 }}>
           <Stat label="Mode" value={cur} />
           <Stat label="Spend" value={`$${Number(j.spentUsd || 0).toFixed(4)} / $${j.budgetUsd ?? 5}`} />
-          <Stat label="TypeSafe key" value={j.configured ? 'configured' : 'not set — fail-open'} />
+          <Stat label="TypeSafe key" value={j.configured ? 'configured' : 'not set. Active mode sizes down.'} />
         </div>
         {j.degraded && <div className="amber" style={{ marginTop: 10, fontSize: 13 }}>Degraded: {j.reason || 'budget or payment'}</div>}
-        {last?.pick && (
+        {(last?.pick || last?.symbol || last?.bot || last?.because) && (
           <div style={{ marginTop: 12, padding: 12, background: 'var(--panel2)', borderRadius: 10 }}>
             <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6 }}>Last pick</div>
-            <div style={{ marginTop: 4 }}><b>{last.pick}</b> {last.symbol || ''} {last.bot ? `· ${last.bot}` : ''}</div>
-            {last.because && <div className="muted" style={{ marginTop: 4, fontSize: 13 }}>{last.because}</div>}
+            <div style={{ marginTop: 4 }}>{jevLastText(last)}</div>
             {last.at && <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>{fmtDateTime(last.at)}</div>}
           </div>
         )}
@@ -217,11 +218,12 @@ function MuseDetail({ health, onChange }: { health: any; onChange: () => void })
           {w.armedBots != null ? ` · ${w.armedBots} armed bots` : ''}
         </div>
         {w.lastError && <div className="amber" style={{ marginTop: 8 }}>{sanitizeProbeError(w.lastError)}</div>}
-        {tune?.name && (
+        {museTuneText(tune) && (
           <div style={{ marginTop: 12, padding: 12, background: 'var(--panel2)', borderRadius: 10 }}>
             <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6 }}>Last tune</div>
-            <div style={{ marginTop: 4 }}><b>{tune.name}</b>{tune.botId != null ? ` · bot #${tune.botId}` : ''}</div>
-            {tune.at && <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>{fmtDateTime(tune.at)}</div>}
+            <div style={{ marginTop: 4 }}><b>{museTuneText(tune)}</b>{tune?.botId != null ? ` (bot #${tune.botId}${tune?.symbol ? `, ${tune.symbol}` : ''})` : ''}</div>
+            {tune?.because && <div className="muted" style={{ marginTop: 4, fontSize: 13 }}>{tune.because}</div>}
+            {tune?.at && <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>{fmtDateTime(tune.at)}</div>}
           </div>
         )}
       </Card>

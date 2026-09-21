@@ -7,7 +7,9 @@
  * questions, compose in this file.
  *
  * Default `JEV_ENTRY_MODE=shadow`: log answers, always allow paper.
- * `active` applies composition. No key / API error → fail-open + log.
+ * `active` applies composition. Weak Choice conf / no key / API error → size_down
+ * (not a full-size enter). Off and shadow still allow the risk-engine size.
+ * A bot universe does not gate a different underlying.
  * Never logs the API key. Exits / flatten never call this.
  */
 
@@ -83,6 +85,7 @@ export type JevEntryState = {
   open_positions_count?: number | null;
   mode?: string | null;
   source?: string | null;
+  universe?: string[] | null;
 };
 
 export type JevAnswer = {
@@ -146,14 +149,66 @@ export function jevEntryMode(override?: string | null): JevEntryMode {
   return raw === 'active' ? 'active' : 'shadow';
 }
 
+export function parseBotSymbols(raw: unknown): string[] {
+  let v = raw;
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (!s) return [];
+    try { v = JSON.parse(s); } catch { v = s.split(/[,\s]+/); }
+  }
+  if (!Array.isArray(v)) return [];
+  return [...new Set(v.map((s) => String(s || '').trim().toUpperCase()).filter(Boolean))];
+}
+
+/** True when the bot has no stored universe, or the order symbol is in it. */
+export function jevAppliesToSymbol(symbols: unknown, symbol: string): { apply: boolean; universe: string[] } {
+  const universe = parseBotSymbols(symbols);
+  const sym = String(symbol || '').trim().toUpperCase();
+  if (!universe.length || universe.includes(sym)) return { apply: true, universe };
+  return { apply: false, universe };
+}
+
+/**
+ * When this returns non-null, do not call TypeSafe and do not size or skip
+ * the order from that bot. The pair on the result is the order's own bot + symbol.
+ */
+export function jevUniverseBlock(
+  symbols: unknown,
+  symbol: string,
+  botName?: string | null,
+): { pick: 'not_applied'; because: string; symbol: string; bot: string | null; universe: string[] } | null {
+  const scope = jevAppliesToSymbol(symbols, symbol);
+  if (scope.apply) return null;
+  const sym = String(symbol || '').trim().toUpperCase();
+  const bot = botName ? String(botName) : null;
+  const who = bot || 'this bot';
+  return {
+    pick: 'not_applied',
+    symbol: sym,
+    bot,
+    universe: scope.universe,
+    because: `Jev not applied: ${who} is scoped to ${scope.universe.join(', ')}. ${sym} is outside that universe.`,
+  };
+}
+
 export function rememberJevLast(rec: Record<string, unknown>, state?: Record<string, unknown>): JevLast {
   const st = (state && typeof state === 'object' ? state : (rec.state as any)) || {};
+  const recSym = rec.symbol != null && String(rec.symbol) !== '' ? String(rec.symbol) : null;
+  const stSym = st.symbol != null && String(st.symbol) !== '' ? String(st.symbol) : null;
+  const disagree = !!(recSym && stSym && recSym.toUpperCase() !== stSym.toUpperCase());
+  const symbol = disagree ? recSym : (recSym || stSym);
+  let bot: string | null = null;
+  if (disagree) {
+    bot = rec.bot != null ? String(rec.bot) : null;
+  } else if (rec.bot != null) bot = String(rec.bot);
+  else if (st.bot != null) bot = String(st.bot);
+  else if (st.bot_name != null) bot = String(st.bot_name);
   lastJev = {
     at: String(rec.ts || rec.at || new Date().toISOString()),
-    symbol: rec.symbol != null ? String(rec.symbol) : (st.symbol != null ? String(st.symbol) : null),
+    symbol,
     pick: rec.pick != null ? String(rec.pick) : null,
     because: rec.because != null ? String(rec.because).slice(0, 240) : null,
-    bot: rec.bot != null ? String(rec.bot) : (st.bot != null ? String(st.bot) : (st.bot_name != null ? String(st.bot_name) : null)),
+    bot,
   };
   return lastJev;
 }
@@ -233,7 +288,9 @@ export function buildJevState(input: JevEntryState): Record<string, unknown> {
   return {
     bot_id: input.bot_id ?? null,
     bot_name: clip(input.bot_name ?? input.bot, 80),
+    bot: clip(input.bot_name ?? input.bot, 80),
     symbol: String(input.symbol || '').toUpperCase(),
+    universe: parseBotSymbols(input.universe),
     asset_class: input.asset_class ?? null,
     option_type: input.option_type ?? null,
     expiration: input.expiration ?? null,
@@ -328,20 +385,20 @@ export function parseJevPanel(answers: Record<string, JevAnswer> | undefined | n
  *   skip if coherent<0.55 OR (action=skip && conf≥0.70)
  *   size_down if action=size_down OR setup_quality<1.2
  *   else enter
- *   Choice conf<0.75 → fail-open even in active
+ *   Choice conf<0.75 in active → size_down (not a full-size enter)
  */
 export function composeJevEntry(panel: JevPanelAnswers, mode: JevEntryMode = 'shadow'): JevCompose {
   if (mode !== 'active') {
-    return { pick: 'enter', failOpen: true, because: 'jev shadow — logged, paper allowed' };
+    return { pick: 'enter', failOpen: true, because: 'jev shadow: logged, paper allowed' };
   }
   const actionConf = panel.action?.confidence;
   const actionPick = parseJevPick(panel.action?.choice);
   if (actionConf == null || actionConf < JEV_CHOICE_CONF_MIN) {
     const shown = actionConf == null ? 'missing' : actionConf.toFixed(2);
     return {
-      pick: 'enter',
-      failOpen: true,
-      because: `jev choice conf ${shown} < ${JEV_CHOICE_CONF_MIN} — fail-open even in active`,
+      pick: 'size_down',
+      failOpen: false,
+      because: `choice confidence ${shown} is below ${JEV_CHOICE_CONF_MIN}, so size down`,
     };
   }
   const coherent = panel.signal_coherent;
@@ -437,6 +494,19 @@ async function resolveClient(opts: {
   };
 }
 
+/** Active mode cuts size instead of allowing a full-size entry. Shadow stays fail-open. */
+function degradedActiveGate(because: string, called: boolean, mode: JevEntryMode): JevGate {
+  if (mode !== 'active') return failOpenGate(because, called, mode);
+  const answer = choice({
+    id: JEV_CHOICE_ID,
+    options: JEV_OPTIONS,
+    pick: 'size_down',
+    because,
+    evidence: { failOpen: false, mode, degraded: true },
+  });
+  return { pick: 'size_down', confidence: 0, because, failOpen: false, called, mode, answer };
+}
+
 function failOpenGate(because: string, called: boolean, mode: JevEntryMode): JevGate {
   const answer = choice({
     id: JEV_CHOICE_ID,
@@ -469,7 +539,7 @@ export async function appendJevJsonl(
 
 /**
  * Ask Jev whether to enter. Never throws.
- * Shadow (default) and missing-key / errors fail-open.
+ * Shadow (default) fail-opens. Active missing-key / errors size down.
  * `side` other than buy short-circuits without a network call.
  */
 export async function jevEntryGate(input: JevEntryState & {
@@ -495,10 +565,10 @@ export async function jevEntryGate(input: JevEntryState & {
     ui = effectiveJevMode(s);
   }
   const mode = ui === 'off' ? 'shadow' : jevEntryMode(ui);
-  if (side !== 'buy') return failOpenGate('jev not asked — exit/flatten stays deterministic', false, mode);
-  if (source !== 'bot' && source !== 'ai') return failOpenGate('jev not asked — not a bot/ai entry', false, mode);
+  if (side !== 'buy') return failOpenGate('jev not asked: exit/flatten stays deterministic', false, mode);
+  if (source !== 'bot' && source !== 'ai') return failOpenGate('jev not asked: not a bot or ai entry', false, mode);
   if (ui === 'off') {
-    const gate = failOpenGate('jev off — TypeSafe not called, paper fail-open', false, 'shadow');
+    const gate = failOpenGate('jev off: TypeSafe not called, risk-engine size kept', false, 'shadow');
     rememberJevLast({
       ts: new Date().toISOString(), event: 'jev.off', pick: 'enter', because: gate.because,
       symbol: input.symbol, bot: input.bot_name || input.bot,
@@ -534,15 +604,20 @@ export async function jevEntryGate(input: JevEntryState & {
 
   const resolved = await resolveClient(deps);
   if (!resolved.client) {
-    const gate = failOpenGate('TYPESAFE_API_KEY unset — paper fail-open, entry allowed', false, mode);
+    const because = mode === 'active'
+      ? 'TYPESAFE_API_KEY unset, size down (not full size)'
+      : 'TYPESAFE_API_KEY unset, paper entry allowed (shadow)';
+    const gate = degradedActiveGate(because, false, mode);
     await appendJevJsonl({
       ts: new Date().toISOString(),
       event: 'jev.entry',
       mode,
-      failOpen: true,
-      pick: 'enter',
+      failOpen: gate.failOpen,
+      pick: gate.pick,
       because: gate.because,
       called: false,
+      symbol: input.symbol,
+      bot: input.bot_name || input.bot || null,
       state: buildJevState(input),
     }, deps.logPath, deps.log);
     return gate;
@@ -595,6 +670,8 @@ export async function jevEntryGate(input: JevEntryState & {
       failOpen: gate.failOpen,
       because: gate.because,
       called: true,
+      symbol: state.symbol,
+      bot: state.bot || state.bot_name || null,
       answers: res?.answers ?? null,
       usage: res?.usage ?? null,
       panel,
@@ -606,16 +683,20 @@ export async function jevEntryGate(input: JevEntryState & {
     const statusMatch = String(msg).match(/\b(401|402|429)\b/);
     const status = statusMatch ? Number(statusMatch[1]) : undefined;
     await recordJevUsage({ error: msg, status, io: deps.budgetIo });
-    const because = `jev error — fail-open: ${msg}`.slice(0, 240);
-    const gate = failOpenGate(because, true, mode);
+    const because = (mode === 'active'
+      ? `Jev API error, size down: ${msg}`
+      : `Jev API error, paper entry allowed: ${msg}`).slice(0, 240);
+    const gate = degradedActiveGate(because, true, mode);
     await appendJevJsonl({
       ts: new Date().toISOString(),
       event: 'jev.entry',
       mode,
-      failOpen: true,
-      pick: 'enter',
+      failOpen: gate.failOpen,
+      pick: gate.pick,
       because,
       called: true,
+      symbol: input.symbol,
+      bot: input.bot_name || input.bot || null,
       error: msg.slice(0, 240),
       state: buildJevState(input),
     }, deps.logPath, deps.log);
