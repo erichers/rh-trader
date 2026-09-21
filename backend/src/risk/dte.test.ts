@@ -296,7 +296,7 @@ describe('contract selection prefers 2–14 DTE and matches play vs expiration',
 });
 
 describe('short-DTE rails constants', () => {
-  it('are tighter than the swing-law 10/25 band', () => {
+  it('are tighter than the swing-law 10/20 band', () => {
     assert.ok(SHORT_DTE_RAILS.slMax <= 5);
     assert.ok(SHORT_DTE_RAILS.tpMax <= 12);
     assert.ok(SHORT_DTE_RAILS.tpMin >= 6);

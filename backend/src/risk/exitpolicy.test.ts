@@ -56,7 +56,9 @@ describe('exitReason — cut losers / winners ride', () => {
   it('arms gain-lock at +10% and floors at 0 (never round-trip to a loss)', () => {
     assert.equal(exitReason(0, 10, band), 'gain-lock');
     assert.equal(exitReason(-0.1, 12, band), 'gain-lock');
-    assert.equal(exitReason(0.1, 12, band), null); // still above floor
+    // +12% peak faded to +0.1% is a 11.9pt giveback — trail 10 fires before the floor.
+    assert.equal(exitReason(0.1, 12, band), 'trailing-stop');
+    assert.equal(exitReason(3, 12, band), null); // inside the 10pt trail, still above floor
     assert.equal(exitReason(-1, 9.9, band), null); // not armed yet; not yet −10%
   });
 

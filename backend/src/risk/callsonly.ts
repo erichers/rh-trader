@@ -74,7 +74,7 @@ export function callsOnlyBuyCheck(draft: CallsOnlyHint, opts: CallsOnlyOpts = {}
   const ac = inferAssetClass(draft);
   const ot = optionTypeOf(draft);
 
-  if (ot === 'put' || (ac === 'option' && ot === 'put')) {
+  if (ot === 'put') {
     return {
       pass: false,
       reason: PUTS_BLOCKED_REASON,

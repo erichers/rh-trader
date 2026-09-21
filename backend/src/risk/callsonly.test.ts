@@ -8,6 +8,7 @@ import {
   convertEquityDraftToCall,
   isFullAutoPaper,
   shouldConvertEquityBot,
+  type CallsOnlyHint,
 } from './callsonly.js';
 
 const paperAuto = { mode: 'full_auto' as const, env: 'alpaca_paper' as const };
@@ -64,11 +65,11 @@ describe('callsOnlyBuyCheck — full_auto paper', () => {
 describe('convertEquityDraftToCall', () => {
   it('turns a Friday-style ORB equity lot into a 1-lot ATM weekly call', () => {
     const d = convertEquityDraftToCall({
-      side: 'buy' as const,
+      side: 'buy',
       asset_class: 'equity',
       qty: 13,
       est_price: 721.36,
-    });
+    } as CallsOnlyHint);
     assert.equal(d.asset_class, 'option');
     assert.equal(d.option_type, 'call');
     assert.equal(d.strike_target, 'atm');
