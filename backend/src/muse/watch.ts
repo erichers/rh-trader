@@ -8,7 +8,7 @@ import { config } from '../config.js';
 import { audit, getTradingEnv, q } from '../db.js';
 import { isObserveOnlyBot } from '../risk/observe.js';
 import { cachedMuseMode, loadMuseSettings, type MuseUiMode } from './settings.js';
-import { applyMuseImprove, museLastTune } from './improve.js';
+import { applyMuseImprove, formatMuseTune, museLastTune, type MuseLastTune } from './improve.js';
 
 export type MuseWatchLamp = {
   available: boolean;
@@ -22,7 +22,7 @@ export type MuseWatchLamp = {
   note: string;
   positions?: number;
   armedBots?: number;
-  lastTune?: { at: string; botId: number | null; name: string } | null;
+  lastTune?: MuseLastTune | null;
 };
 
 export type MuseWatchCycle = {
@@ -56,7 +56,7 @@ export function museWatchLamp(input: {
   armedBots?: number;
   mode?: MuseUiMode;
   via?: 'muse' | 'local';
-  lastTune?: { at: string; botId: number | null; name: string } | null;
+  lastTune?: MuseLastTune | null;
 }): MuseWatchLamp {
   const mode = input.mode || 'observe';
   const via = input.via || (input.configured ? 'muse' : 'local');
@@ -98,7 +98,8 @@ export function museWatchLamp(input: {
     };
   }
   const ok = !!(input.running || input.lastCycle);
-  const tune = input.lastTune?.name ? `last tune ${input.lastTune.name}` : null;
+  const tuneText = formatMuseTune(input.lastTune);
+  const tune = tuneText || null;
   return {
     available: true,
     observeOnly,

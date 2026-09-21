@@ -4,8 +4,9 @@
 //
 // Eric's locked SWING LAW (Monday paper / full_auto):
 //   1. HARD STOP −10% from entry — cut losers fast. A wider bot sl cannot loosen this.
-//   2. GAIN-LOCK arms at +10% with floor 0 (breakeven). A trade that was up ≥10%
-//      may never close negative. The trailing stop also stays dormant until this peak.
+//   2. GAIN-LOCK arms at +10% with floor +1.5%. A trade that was up ≥10%
+//      triggers while still green, so fill slip does not lock in a red print.
+//      The trailing stop also stays dormant until this peak. Hard stop stays −10%.
 //   3. Soft take-profit goal ~20%: close when hit IF there is no trail to ride;
 //      otherwise the trail keeps riding winners past 20%.
 //   4. Ratcheting trail — base width 10%, tighter as the win grows.
@@ -14,7 +15,7 @@ export type ExitBand = { tp: number; sl: number; trail: number };
 
 export const HARD_STOP_PCT = 10;
 export const GAIN_LOCK_ARM_PCT = 10;
-export const GAIN_LOCK_FLOOR_PCT = 0;
+export const GAIN_LOCK_FLOOR_PCT = 1.5;
 export const SOFT_TAKE_PROFIT_PCT = 20;
 export const SWING_TRAIL_PCT = 10;
 export const ENTRY_DTE_MIN = 2;

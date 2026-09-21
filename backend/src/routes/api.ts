@@ -37,6 +37,7 @@ import { getFutures, leadingFuture } from '../market/futures.js';
 import { runLearning, listRuns, listIdeas, learningStatus } from '../learning.js';
 import { armPaperFromBacktests } from '../paperArm.js';
 import { collectPaperHealth } from '../risk/health.js';
+import { MONITORS_LIST_SQL } from '../risk/monitorList.js';
 import { runBotsAutofix } from '../bots/autofix.js';
 import { jevPublicStatus } from '../risk/jev.js';
 import { saveJevSettings } from '../risk/jevSettings.js';
@@ -218,8 +219,18 @@ export async function registerRoutes(app: FastifyInstance) {
     authUrl: rh.authUrl,
     tools: rh.listToolsCached(),
   }));
-  app.post('/api/rh/connect', async () => ({ status: await rh.connect() }));
-  app.post('/api/rh/auth/start', async () => rh.beginAuth());
+  app.post('/api/rh/connect', async (req, reply) => {
+    if ((req.body as any)?.confirm !== true) {
+      return reply.code(409).send({ error: 'confirmation_required', message: 'Robinhood connect requires confirm:true' });
+    }
+    return { status: await rh.connect() };
+  });
+  app.post('/api/rh/auth/start', async (req, reply) => {
+    if ((req.body as any)?.confirm !== true) {
+      return reply.code(409).send({ error: 'confirmation_required', message: 'Robinhood auth requires confirm:true' });
+    }
+    return rh.beginAuth();
+  });
   app.post('/api/rh/sync', async () => syncAll());
 
   // ── Account / positions / orders ──────────────────────────────────────────
@@ -472,7 +483,7 @@ export async function registerRoutes(app: FastifyInstance) {
   // ── Live position monitors (trailing-stop / TP / SL enforcement) ──────────
   app.get('/api/monitors', async () => {
     const env = await getTradingEnv();
-    return q("SELECT * FROM position_monitors WHERE env=:env OR (env IS NULL AND :env='alpaca_paper') ORDER BY status ASC, opened_at DESC LIMIT 100", { env });
+    return q(MONITORS_LIST_SQL, { env });
   });
   app.post('/api/monitors/check', async () => (await import('../risk/monitor.js')).checkMonitors());
   app.get('/api/audit', async () => q('SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 150'));

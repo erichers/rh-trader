@@ -26,10 +26,26 @@ export type MuseImproveProposal = {
   next: { risk: Record<string, any>; rules: Record<string, any> };
 };
 
-let lastTune: { at: string; botId: number | null; name: string } | null = null;
+export type MuseLastTune = {
+  at: string;
+  botId: number | null;
+  name: string;
+  missingBot?: boolean;
+  symbol?: string | null;
+  because?: string | null;
+};
 
-export function museLastTune(): { at: string; botId: number | null; name: string } | null {
+let lastTune: MuseLastTune | null = null;
+
+export function museLastTune(): MuseLastTune | null {
   return lastTune;
+}
+
+/** Honest lamp text. A null bot is not a bot name. */
+export function formatMuseTune(tune: MuseLastTune | null | undefined): string {
+  if (!tune) return '';
+  if (tune.botId == null || tune.missingBot) return 'last tune: bot missing';
+  return `last tune ${tune.name || `bot #${tune.botId}`}`;
 }
 
 export function resetMuseImproveForTests(): void {
@@ -124,6 +140,8 @@ export async function applyMuseImprove(
     log?: typeof audit;
     now?: () => string;
     limit?: number;
+    /** Tests pass false so a heuristic run cannot stamp lastTune (or a DB row). */
+    persistLastTune?: boolean;
   } = {},
 ): Promise<{ applied: MuseImproveProposal[]; skipped: number }> {
   const env = opts.env || await getTradingEnv().catch(() => 'alpaca_paper');
@@ -140,13 +158,22 @@ export async function applyMuseImprove(
     applied.push(p);
     if (opts.dryRun) continue;
     if (opts.save) await opts.save(p, env);
-    else if (p.id != null) {
+    else if (p.id != null && opts.persistLastTune !== false) {
       await exec(
         `UPDATE bots SET risk=CAST(:risk AS JSON), rules=CAST(:rules AS JSON) WHERE id=:id AND env=:env`,
         { risk: JSON.stringify(p.next.risk), rules: JSON.stringify(p.next.rules), id: p.id, env },
       );
     }
-    lastTune = { at: opts.now ? opts.now() : new Date().toISOString(), botId: p.id, name: p.name };
+    if (opts.persistLastTune !== false) {
+      lastTune = {
+        at: opts.now ? opts.now() : new Date().toISOString(),
+        botId: p.id,
+        name: p.name,
+        missingBot: p.id == null,
+        because: p.reason,
+      };
+    }
+    if (opts.persistLastTune === false && !opts.log) continue;
     await write(
       'muse.improve',
       `${p.name}: ${p.reason}`.slice(0, 240),
@@ -154,4 +181,100 @@ export async function applyMuseImprove(
     ).catch(() => {});
   }
   return { applied, skipped: bots.length - applied.length };
+}
+
+export type ClosedMonitorTuneInput = {
+  id?: number | null;
+  bot_id?: number | null;
+  symbol?: string | null;
+  reason?: string | null;
+  entry_price?: number | null;
+  exit_price?: number | null;
+  bot_name?: string | null;
+};
+
+/**
+ * Learn from a closed monitor. With bot_id, lastTune names that bot and a
+ * paper improve proposal may be saved. Without bot_id, lastTune says the bot
+ * is missing and nothing is written. persistLastTune:false (tests) does not
+ * touch the process stamp or the database.
+ */
+export async function tuneFromClosedMonitor(
+  monitor: ClosedMonitorTuneInput,
+  opts: {
+    env?: string;
+    persistLastTune?: boolean;
+    allowDb?: boolean;
+    now?: () => string;
+    bot?: any;
+    loadBot?: (id: number, env: string) => Promise<any | null>;
+    save?: (p: MuseImproveProposal, env: string) => Promise<void>;
+    log?: typeof audit;
+  } = {},
+): Promise<{ learned: boolean; lastTune: MuseLastTune; applied: MuseImproveProposal | null }> {
+  const at = opts.now ? opts.now() : new Date().toISOString();
+  const persist = opts.persistLastTune !== false;
+  const env = opts.env || 'alpaca_paper';
+  const botId = Number(monitor.bot_id);
+  const hasBot = Number.isInteger(botId) && botId > 0;
+  if (!hasBot) {
+    const tune: MuseLastTune = {
+      at,
+      botId: null,
+      name: 'bot missing',
+      missingBot: true,
+      symbol: monitor.symbol ?? null,
+      because: 'closed monitor had no bot id, so Muse did not learn a bot',
+    };
+    if (persist) lastTune = tune;
+    return { learned: false, lastTune: tune, applied: null };
+  }
+
+  let bot = opts.bot ?? null;
+  if (!bot && opts.loadBot) bot = await opts.loadBot(botId, env);
+  if (!bot && persist && opts.allowDb && env === 'alpaca_paper') {
+    const [row] = await q<any>(
+      'SELECT id, name, enabled, mode, action, rules, risk, last_result FROM bots WHERE id=:id AND env=:env',
+      { id: botId, env },
+    );
+    bot = row || null;
+  }
+  const name = String(bot?.name || monitor.bot_name || `bot #${botId}`);
+  let applied: MuseImproveProposal | null = null;
+  if (bot && env === 'alpaca_paper' && !isLiveEnv(env as any)) {
+    applied = proposeMuseImprove({ ...bot, id: bot.id ?? botId, name });
+    if (applied && persist && (opts.allowDb || opts.save)) {
+      if (opts.save) await opts.save(applied, env);
+      else {
+        await exec(
+          `UPDATE bots SET risk=CAST(:risk AS JSON), rules=CAST(:rules AS JSON) WHERE id=:id AND env=:env`,
+          { risk: JSON.stringify(applied.next.risk), rules: JSON.stringify(applied.next.rules), id: botId, env },
+        );
+      }
+    }
+  }
+  const because = applied
+    ? applied.reason
+    : `learned close ${monitor.symbol || ''} ${monitor.reason || ''}`.replace(/\s+/g, ' ').trim();
+  const tune: MuseLastTune = {
+    at,
+    botId,
+    name,
+    missingBot: false,
+    symbol: monitor.symbol ?? null,
+    because,
+  };
+  if (persist) {
+    lastTune = tune;
+    if (opts.allowDb || opts.log) {
+      const write = opts.log || audit;
+      await write('muse.tune', `${name}: ${because}`.slice(0, 240), {
+        id: monitor.id ?? null,
+        botId,
+        symbol: monitor.symbol ?? null,
+        learned: true,
+      }).catch(() => {});
+    }
+  }
+  return { learned: true, lastTune: tune, applied };
 }

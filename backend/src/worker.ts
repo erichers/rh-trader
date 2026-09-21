@@ -3,10 +3,11 @@ import { syncAll } from './brokers/index.js';
 import { brokerKind } from './brokers/index.js';
 import { alpacaConfigured } from './brokers/alpaca.js';
 import { evaluateAllEnabledBots } from './bots/engine.js';
-import { audit, getKillSwitch, getTradingEnv } from './db.js';
+import { audit, getKillSwitch, getTradingEnv, q } from './db.js';
 import { isMarketOpen } from './market/clock.js';
 import { refreshNews } from './market/news.js';
 import { checkMonitors } from './risk/monitor.js';
+import { closedMarketMonitorOpts } from './risk/monitorList.js';
 import { getActiveCampaign, recordSnapshot, activateArmedIfFunded } from './campaign.js';
 import { dailyReview, newsMonitor } from './ai/advisor.js';
 import { getFocus, learnTicker } from './focus.js';
@@ -21,6 +22,15 @@ import { runMuseWatchCycle } from './muse/watch.js';
 import { runBotsAutofix } from './bots/autofix.js';
 
 let timers: NodeJS.Timeout[] = [];
+
+async function openMonitorCount(): Promise<number> {
+  const env = await getTradingEnv();
+  const [row] = await q<{ n: number }>(
+    "SELECT COUNT(*) AS n FROM position_monitors WHERE status='open' AND (env=:env OR (env IS NULL AND :env='alpaca_paper'))",
+    { env },
+  );
+  return Number(row?.n) || 0;
+}
 
 async function brokerReady(): Promise<boolean> {
   const env = await getTradingEnv();
@@ -45,7 +55,8 @@ function loop(label: string, everyMs: number, body: () => Promise<void>): NodeJS
 export function startWorker() {
   const sync = loop('sync', 30_000, async () => {
     const env = await getTradingEnv();
-    if (brokerKind(env) === 'robinhood' && !rh.isConnected()) await rh.connect();
+    // Paper never auto-connects. Live OAuth only after the env is already robinhood_live.
+    if (env === 'robinhood_live' && brokerKind(env) === 'robinhood' && !rh.isConnected()) await rh.connect();
     if (await brokerReady()) {
       await syncAll();
       // Record today's equity for THIS account (idempotent per day) — the P/L history
@@ -66,14 +77,18 @@ export function startWorker() {
     await evaluateAllEnabledBots();
   });
 
-  // Live trailing-stop / TP / SL enforcement on open positions (every 45s, market hours).
+  // Live trailing-stop / TP / SL enforcement on open positions (every 45s).
   // NOTE: do NOT skip on the kill switch — exits are close-only protection and must keep
   // running while the switch is engaged (the switch blocks new BUYS, not protective SELLS).
+  // Off-hours still runs the full exit ladder when any monitor is open. reconcileOnly
+  // skips stop/trail/gain-lock, which left Mag-7 gaps unsold after the close.
   const monitors = loop('monitor', 45_000, async () => {
-    // Off-hours: reconcile dead monitors (expired contracts) so the alerts loop — which
-    // runs 24/7 — can't keep firing false criticals from them; exits wait for the session.
-    if (!(await isMarketOpen())) { await checkMonitors({ reconcileOnly: true }); return; }
-    await checkMonitors();
+    if (await isMarketOpen()) {
+      await checkMonitors();
+      return;
+    }
+    const openN = await openMonitorCount().catch(() => 1);
+    await checkMonitors(closedMarketMonitorOpts(openN));
   });
 
   // Operational alerts: order fills, stop/TP exits, FAILED exits, intraday drawdown breaches.

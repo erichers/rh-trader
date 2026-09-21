@@ -5,7 +5,7 @@ import { isShortDtePrivileged, syncPlayDteToContract } from './risk/dte.js';
 import { applyResolvedPremium, assignInferredAssetClass } from './risk/optionPrice.js';
 import { placeOrder as brokerPlace } from './brokers/index.js';
 import { execObserveBlock } from './risk/observe.js';
-import { applyJevSizeDown, jevEntryGate } from './risk/jev.js';
+import { appendJevJsonl, applyJevSizeDown, jevEntryGate, jevUniverseBlock } from './risk/jev.js';
 import { cachedJevEffective } from './risk/jevSettings.js';
 import { museAuditAfterFire } from './muse/auditor.js';
 import { cachedMuseMode } from './muse/settings.js';
@@ -99,9 +99,9 @@ export async function executeDraft(
 
   // Observe-only stubs never create an order row — even when enabled=1 and mode=auto.
   // Re-read the bot so a missing draft._observe_only cannot bypass the gate.
-  let botRow: { name?: any; action?: any; rules?: any; risk?: any; mode?: any } | null = null;
+  let botRow: { name?: any; action?: any; rules?: any; risk?: any; mode?: any; symbols?: any } | null = null;
   if (draft.bot_id) {
-    const rows = await q<any>('SELECT name, action, rules, risk, mode FROM bots WHERE id=:id AND env=:env', {
+    const rows = await q<any>('SELECT name, action, rules, risk, mode, symbols FROM bots WHERE id=:id AND env=:env', {
       id: draft.bot_id, env,
     });
     botRow = rows[0] || null;
@@ -130,9 +130,36 @@ export async function executeDraft(
   let jevFailOpen = false;
 
   // Optional Jev post-signal panel on fired bot/AI entries only. Exits stay
-  // deterministic. Default shadow mode logs and never blocks. Active may skip
-  // / size_down. No key / API error → fail-open. Hard rails already ran.
+  // deterministic. Shadow logs and never blocks. Active may skip or size_down.
+  // Active + weak Choice conf / API error / unset key sizes down (not full size).
+  // A stored bot universe does not gate a different underlying. Hard rails already ran.
   if (decision.action === 'execute' && draft.side === 'buy' && (draft.source === 'bot' || draft.source === 'ai')) {
+    const universeBlock = draft.bot_id
+      ? jevUniverseBlock(botRow?.symbols, draft.symbol, botRow?.name ? String(botRow.name) : null)
+      : null;
+    if (universeBlock) {
+      jevPick = universeBlock.pick;
+      jevFailOpen = true;
+      decision.risk.checks.jev_entry = { pass: true, detail: universeBlock.because };
+      decision.risk.computed.jev_not_applied = 1;
+      await appendJevJsonl({
+        ts: new Date().toISOString(),
+        event: 'jev.universe',
+        pick: universeBlock.pick,
+        because: universeBlock.because,
+        symbol: universeBlock.symbol,
+        bot: universeBlock.bot,
+        called: false,
+        applied: false,
+      });
+      await audit('jev.entry', `${draft.symbol} not_applied`, {
+        bot_id: draft.bot_id ?? null,
+        env,
+        pick: universeBlock.pick,
+        because: universeBlock.because,
+        called: false,
+      });
+    } else {
     const paper = env === 'alpaca_paper';
     let openPositions = 0;
     try {
@@ -164,6 +191,7 @@ export async function executeDraft(
       },
       est_premium: draft.est_price,
       premium: draft.est_price,
+      universe: botRow?.symbols,
       equity: decision.risk.computed.portfolio_equity,
       open_positions_count: openPositions,
       mode,
@@ -196,13 +224,14 @@ export async function executeDraft(
     if (gate.pick === 'skip' && !gate.failOpen) {
       decision.action = 'veto';
       decision.risk.ok = false;
-      decision.risk.reason = `jev: skip — ${gate.because}`;
+      decision.risk.reason = `jev skip: ${gate.because}`;
     } else if (gate.pick === 'size_down' && !gate.failOpen) {
       const before = Number(draft.qty || 1);
       draft.qty = applyJevSizeDown(before);
       decision.risk.computed.jev_size_down_from = before;
       decision.risk.computed.jev_size_down_to = draft.qty;
       decision.risk.checks.jev_entry.detail = `${gate.because}; qty ${before}→${draft.qty}`;
+    }
     }
   }
 

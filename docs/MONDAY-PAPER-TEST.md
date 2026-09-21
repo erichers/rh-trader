@@ -42,14 +42,14 @@ If `stash pop` conflicts:
 
 - `frontend/**`, `DeskLive`, `OpenBook`, `bots/engine.ts` — **keep yours**
 - `backend/src/risk/engine.ts` — keep Eric’s other hunks **and** keep `applyFullAutoSoftBypass` (book/concentration stay hard) plus `checks.entry_dte`
-- `backend/src/risk/exitpolicy.ts` — keep the locked constants: `HARD_STOP_PCT=10`, `GAIN_LOCK_ARM_PCT=10`, `GAIN_LOCK_FLOOR_PCT=0`, `SOFT_TAKE_PROFIT_PCT=20`, `SWING_TRAIL_PCT=10`. Trail stays dormant until peak ≥ +10%. Do not restore 25/12 or the old +30% / +1% lock
+- `backend/src/risk/exitpolicy.ts` — keep the locked constants: `HARD_STOP_PCT=10`, `GAIN_LOCK_ARM_PCT=10`, `GAIN_LOCK_FLOOR_PCT=1.5`, `SOFT_TAKE_PROFIT_PCT=20`, `SWING_TRAIL_PCT=10`. Trail stays dormant until peak ≥ +10%. Floor +1.5% so a gain-lock fill does not print red. Do not restore 25/12 or the old +30% / +1% lock. Do not loosen the −10% hard stop.
 - `backend/src/risk/monitor.ts` — keep `overnightFlattenReason` / LEAPS exception and `exitReason(...)` as the only exit ladder
 
 ### Files this follow-up touches vs likely local work
 
 | Path | This follow-up | Local risk |
 | --- | --- | --- |
-| `backend/src/risk/exitpolicy.ts` | swing law constants + `exitReason` + overnight helper | **likely conflict** — keep −10 / +10 / 0 / ~20 / trail 10 |
+| `backend/src/risk/exitpolicy.ts` | swing law constants + `exitReason` + overnight helper | **likely conflict** — keep −10 / +10 arm / +1.5 floor / ~20 / trail 10 |
 | `backend/src/risk/dte.ts` | **new** — 2–14 DTE gate | no conflict |
 | `backend/src/risk/monitor.ts` | swing defaults; LEAPS-only overnight | possible |
 | `backend/src/risk/engine.ts` | additive `entry_dte` check | possible — keep book rails + DTE check |
@@ -66,7 +66,7 @@ PR #9 (`cursor/monday-grokbot-paper-b394`) is the Monday gates only. **This bran
 cd /Users/eric/Sites/grokbot/grokbot-rh-trader
 ./scripts/health.sh
 # expect ok=true db=true env=alpaca_paper live=false mode=full_auto
-# /api/health now also has swingLaw { hardStopPct:10, gainLockArmPct:10, gainLockFloorPct:0, softTakeProfitPct:20, trailPct:10, entryDteMin:2, entryDteMax:14 }
+# /api/health now also has swingLaw { hardStopPct:10, gainLockArmPct:10, gainLockFloorPct:1.5, softTakeProfitPct:20, trailPct:10, entryDteMin:2, entryDteMax:14 }
 # do NOT run desk-up.sh / paper-trade.sh if that would rebuild over dirty files
 ```
 
@@ -84,12 +84,15 @@ If you need a restart after merging this branch: `./scripts/stop.sh && ./scripts
 - No draft/stage/place/veto from watch stubs.
 - Donchian + Momentum + ORB on one name in **full_auto**: third ticket **vetoes** on $10k book or 25% concentration.
 - 0DTE / 1DTE option buys **veto** for normal bots. Weekly/monthly resolve inside 2–14 DTE (play.dte is rewritten to the selected contract). Allowlisted high-certainty bots may take 0–1 with tight rails.
-- A position that prints −10% from entry should auto-exit (`stop-loss`). A +10% peak that fades to 0 should `gain-lock`.
+- A position that prints −10% from entry should auto-exit (`stop-loss`). A +10% peak that fades to +1.5% should `gain-lock` (do not wait for 0 — fill slip was closing those red).
 - A working Alpaca sell still `new` must **not** close the monitor. NVDA/SPY-style stuck exits cancel+retry or escalate.
 - Flat META/GOOGL: one orphan, zero extra veto rows.
 - Every open long has an open monitor (`swingLaw` sl 10 / trail 10 / tp 20). Trail does not fire until peak ≥ +10%.
 - New full_auto buys are **long calls**. Non-LEAPS stay **2–14 DTE**. **LEAPS long calls remain eligible** (do not park). Puts skip/veto (`puts_blocked`). **No equity**: `ALLOWED_ASSET_CLASSES=option` only. Autofix **DELETES** leftover equity rows (does not convert or park). Covered-call selling stays blocked.
-- Optional Jev (`TYPESAFE_API_KEY`): post-signal override panel. Env `JEV_ENTRY_MODE` is the **seed only**. Desk sidebar + Settings persist `jev.enabled` / `jev.mode` (`off`|`shadow`|`active`). `off` never calls TypeSafe (fail-open). `$5` budget degrades to local `decide.ts` + optional Kimi/Groq review. Hard rails always win.
+- Optional Jev (`TYPESAFE_API_KEY`): post-signal override panel. Env `JEV_ENTRY_MODE` is the **seed only**. Desk sidebar + Settings persist `jev.enabled` / `jev.mode` (`off`|`shadow`|`active`). `off` never calls TypeSafe and leaves the risk-engine size. `shadow` logs and never blocks. `active` may skip or size down. Weak Choice confidence, a missing key, or an API error **sizes down** (not a full-size enter). A bot whose universe is SPY/QQQ (or any other list) does not apply that Jev decision to a different underlying. `$5` budget degrades to local `decide.ts` + optional Kimi/Groq review. Hard rails always win.
+- Position monitors opened from a bot fill persist `bot_id`. If reattach already inserted a null monitor, the fill stamps `bot_id` and `order_id` instead of returning. Reattach (`matchMonitorBot` / `loadBotMatchPool`) uses the latest **filled or partially_filled** buy for that exact OCC (`raw.draft._contract.occSymbol`). Vetoed, canceled, and rejected orders are ignored. Another contract, a buy with no OCC, or a fired signal is not used. If no filled buy matches the OCC, `bot_id` stays null (do not invent one — NVDA `NVDA260925C00227500` had only vetoed Index QuickBot id 39 rows). Index QuickBot is never stamped onto NVDA. AI opens may stay null. Muse `tuneFromClosedMonitor` names that bot on `lastTune`. A close with no bot id shows "bot missing" and does not learn. Health `autofix.nullBotMonitors` lists symbols with 3+ recent null closes. It does not disable bots. Index QuickBot symbols are clamped back to SPY and QQQ when they drift, and focus does not move that bot onto another underlying. `/api/health` `swingLaw.gainLockFloorPct` is `1.5`.
+- `/api/monitors` lists **open** stops first (`ORDER BY (status='open') DESC, opened_at DESC LIMIT 200`). Alphabetical `status ASC` hid open rows behind closed.
+- Off-hours, open monitors still run stop / trail / gain-lock. `reconcileOnly` is only for an empty book.
 - Muse watcher + auditor: never places. Mode `muse.mode` = `observe` | `improve` (paper default **improve**). Improve applies local SL≤10 / TP toward 20 / trail 8–15 and min_matches/cooldown tweaks; writes `muse.improve`. No Muse key → local heuristic still runs (not stuck `n/a · observe-only`). Lamp never green when the API is down.
 - Standing autofix: `POST /api/bots/autofix` (`{ dry_run?: true }`) plus a 20-min worker tick (paper, kill off). Leftover **equity rows are DELETED** (Mac already removed #3 MACD, #4 Golden Cross, #5 Bollinger, #6 Donchian, #7 Trend, #8 Momentum Day, #9 ORB, #10 Intraday MR, #17 AI Conviction, #81 Equity Snapback — seed must not recreate them). Puts / covered-call sells / non-allowlist 0–1 → `mode=observe` **and `enabled=0`**, and **`last_result` is cleared**. Long-call LEAPS → `full_auto` + `option` + `call` + `buy` (far expiry kept). New-entry exits clamp sl≤10 / tp 20 / trail 8–15 (prefer 10); `hold_overnight` + `hold_over_weekend` true. Never widens live open-position stops. Health: `autofix: { lastRun, lastFixedCount, lastError }` plus `allowedAssetClasses: ['option']`. The Mac `scripts/autofix-bots.py` 20-min bridge can retire after this merge. Bots UI `issues()` only counts `last_result` error/skip while the bot is enabled (allowlist skip on a disabled bot is not an issue).
 - `action._timeframe` drives eval bars (`15m`/`15Min` → Alpaca `15Min`). Default remains `1Day`. Signal row timeframe matches. Swing-law exits unchanged.

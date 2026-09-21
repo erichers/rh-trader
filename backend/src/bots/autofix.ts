@@ -16,6 +16,7 @@ import {
 import { OBSERVE_STUB_KEYS, OBSERVE_STUB_NAMES, parseJsonish } from '../risk/observe.js';
 import { isShortDtePrivileged, SHORT_DTE_BAND, SHORT_DTE_RAILS } from '../risk/shortdte.js';
 import { isDeletedLeftoverEquity, isEquityAssetClass } from '../risk/optionsonly.js';
+import { clampIndexQuickbotUniverse, isIndexQuickbotName, parseSymbolList } from './indexUniverse.js';
 
 export const AUTOFIX_TRAIL_MIN = 8;
 export const AUTOFIX_TRAIL_MAX = 15;
@@ -36,6 +37,8 @@ export type AutofixProposal = {
     action: Record<string, any>;
     risk: Record<string, any>;
     clearLastResult: boolean;
+    /** Set when Index QuickBot symbols drifted off SPY and QQQ. */
+    symbols?: string[];
   };
 };
 
@@ -52,24 +55,76 @@ export type AutofixResult = {
   summary: string;
 };
 
+export type NullBotClose = { symbol: string; nullCloses: number };
+
 export type AutofixHealth = {
   lastRun: string | null;
   lastFixedCount: number;
   lastError: string | null;
+  /** Recent closed monitors with no bot_id, grouped when a symbol is chronic. */
+  nullBotMonitors: NullBotClose[];
 };
 
 let lastRun: string | null = null;
 let lastFixedCount = 0;
 let lastError: string | null = null;
+let nullBotMonitors: NullBotClose[] = [];
+let nullLoadedAt = 0;
+
+/** Same symbol, at least `min` recent closes, all missing bot_id. Does not disable bots. */
+export function chronicNullBotCloses(
+  rows: { symbol?: string | null; bot_id?: number | null }[],
+  min = 3,
+): NullBotClose[] {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    const id = Number(r.bot_id);
+    if (Number.isInteger(id) && id > 0) continue;
+    const symbol = String(r.symbol || '').trim().toUpperCase();
+    if (!symbol) continue;
+    counts.set(symbol, (counts.get(symbol) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .filter(([, n]) => n >= min)
+    .map(([symbol, nullCloses]) => ({ symbol, nullCloses }))
+    .sort((a, b) => b.nullCloses - a.nullCloses || a.symbol.localeCompare(b.symbol));
+}
+
+export function noteNullBotMonitors(rows: { symbol?: string | null; bot_id?: number | null }[]): void {
+  nullBotMonitors = chronicNullBotCloses(rows);
+  nullLoadedAt = Date.now();
+}
+
+/** Health poll. Failures do not stick, so a down DB retries next call. */
+export async function refreshNullBotMonitors(load?: () => Promise<{ symbol?: string | null; bot_id?: number | null }[]>): Promise<void> {
+  if (nullLoadedAt && Date.now() - nullLoadedAt < 60_000) return;
+  try {
+    const rows = load
+      ? await load()
+      : await q<{ symbol: string; bot_id: number | null }>(
+        `SELECT symbol, bot_id FROM position_monitors
+          WHERE status='closed' AND bot_id IS NULL
+            AND (env=:env OR (env IS NULL AND :env='alpaca_paper'))
+            AND closed_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)`,
+        { env: 'alpaca_paper' },
+      );
+    nullBotMonitors = chronicNullBotCloses(rows || []);
+    nullLoadedAt = Date.now();
+  } catch {
+    /* leave the previous snapshot; retry next health poll */
+  }
+}
 
 export function autofixHealth(): AutofixHealth {
-  return { lastRun, lastFixedCount, lastError };
+  return { lastRun, lastFixedCount, lastError, nullBotMonitors };
 }
 
 export function resetAutofixForTests(): void {
   lastRun = null;
   lastFixedCount = 0;
   lastError = null;
+  nullBotMonitors = [];
+  nullLoadedAt = 0;
 }
 
 function clone<T>(v: T): T {
@@ -142,6 +197,8 @@ export function classifyBotForAutofix(bot: any): AutofixClass {
   // those are not library watch stubs and must still disable + clear last_result.
   if (looksLikePut(action, name)) return 'put';
   if (looksLikeCoveredOrSell(action, name)) return 'sell';
+  // Options basket. A missing top-level option_type must not delete it as equity.
+  if (isIndexQuickbotName(name) && !isEquityAssetClass(bot?.asset_class)) return 'ok';
   const privileged = isShortDtePrivileged({ key, name, keys: [action?._play?.key, action?._strategy] });
   if (explicitShortDte(action, risk) && !privileged) return 'short_dte';
   if (isLibraryWatchStub(bot, action, risk)) return 'observe_stub';
@@ -247,8 +304,14 @@ const CLASS_REASON: Record<AutofixClass, string> = {
 export function proposeBotAutofix(bot: any): AutofixProposal | null {
   const origAction = clone(parseJsonish(bot?.action) ?? bot?.action ?? {}) || {};
   const origRisk = clone(parseJsonish(bot?.risk) ?? bot?.risk ?? {}) || {};
-  const action = clone(origAction);
+  let action = clone(origAction);
   const risk = clone(origRisk);
+  let symbols: string[] | undefined;
+  const universe = clampIndexQuickbotUniverse({ name: bot?.name, symbols: bot?.symbols, action });
+  if (universe) {
+    action = universe.action;
+    symbols = universe.symbols;
+  }
   const name = String(bot?.name || `bot #${bot?.id ?? '?'}`);
   const klass = classifyBotForAutofix(bot);
   const key = strategyKey(action, risk);
@@ -307,14 +370,15 @@ export function proposeBotAutofix(bot: any): AutofixProposal | null {
   if (!eq(origAction, action)) changes.push({ field: 'action', from: origAction, to: action });
   if (!eq(origRisk, risk)) changes.push({ field: 'risk', from: origRisk, to: risk });
   if (clearLastResult) changes.push({ field: 'last_result', from: bot?.last_result ?? null, to: null });
+  if (symbols) changes.push({ field: 'symbols', from: parseSymbolList(bot?.symbols), to: symbols });
   if (!changes.length) return null;
 
   return {
     id: bot?.id != null ? Number(bot.id) : null,
     name,
-    reason: CLASS_REASON[klass],
+    reason: symbols ? `${CLASS_REASON[klass]}; symbols clamped to SPY, QQQ` : CLASS_REASON[klass],
     changes,
-    next: { mode, enabled, asset_class, action, risk, clearLastResult },
+    next: { mode, enabled, asset_class, action, risk, clearLastResult, ...(symbols ? { symbols } : {}) },
   };
 }
 
@@ -382,6 +446,7 @@ export async function runBotsAutofix(opts: {
         } else if (proposal.id != null) {
           await exec(
             `UPDATE bots SET mode=:mode, enabled=:enabled, asset_class=:ac, action=CAST(:action AS JSON), risk=CAST(:risk AS JSON)
+             ${proposal.next.symbols ? ', symbols=CAST(:symbols AS JSON)' : ''}
              ${proposal.next.clearLastResult ? ', last_result=NULL' : ''}
              WHERE id=:id AND env=:env`,
             {
@@ -390,6 +455,7 @@ export async function runBotsAutofix(opts: {
               ac: proposal.next.asset_class,
               action: JSON.stringify(proposal.next.action),
               risk: JSON.stringify(proposal.next.risk),
+              symbols: proposal.next.symbols ? JSON.stringify(proposal.next.symbols) : null,
               id: proposal.id,
               env,
             },

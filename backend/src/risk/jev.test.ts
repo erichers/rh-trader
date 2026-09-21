@@ -8,12 +8,16 @@ import {
   applyJevSizeDown,
   composeJevEntry,
   httpJevClient,
+  jevAppliesToSymbol,
   jevEntryGate,
   jevEntryMode,
   jevEntryQuestion,
   jevEntryQuestions,
+  jevUniverseBlock,
   parseJevPanel,
   parseJevPick,
+  rememberJevLast,
+  resetJevLastForTests,
   typesafeConfigured,
   type JevClient,
   type JevPanelAnswers,
@@ -43,7 +47,10 @@ function mockClient(answers: Record<string, unknown>): JevClient {
 }
 
 describe('Jev / TypeSafe entry panel', () => {
-  beforeEach(() => resetJevBudgetForTests());
+  beforeEach(() => {
+    resetJevBudgetForTests();
+    resetJevLastForTests();
+  });
   it('parses enter | skip | size_down and exposes the four questions', () => {
     assert.equal(parseJevPick('enter'), 'enter');
     assert.equal(parseJevPick('SKIP'), 'skip');
@@ -90,21 +97,22 @@ describe('Jev / TypeSafe entry panel', () => {
     assert.ok(0.80 >= JEV_SKIP_CONF_MIN);
   });
 
-  it('compose: Choice conf < 0.75 fail-opens even in active', () => {
+  it('compose: Choice conf < 0.75 sizes down in active (not full size)', () => {
     const low = composeJevEntry(panel({
       signal_coherent: 0.2,
       action: { choice: 'skip', confidence: 0.72 },
     }), 'active');
-    assert.equal(low.pick, 'enter');
-    assert.equal(low.failOpen, true);
+    assert.equal(low.pick, 'size_down');
+    assert.equal(low.failOpen, false);
+    assert.match(low.because, /size down/);
     assert.ok(0.72 < JEV_CHOICE_CONF_MIN);
     assert.ok(0.72 >= JEV_SKIP_CONF_MIN);
 
     const missing = composeJevEntry(panel({
       action: { choice: 'skip', confidence: null },
     }), 'active');
-    assert.equal(missing.pick, 'enter');
-    assert.equal(missing.failOpen, true);
+    assert.equal(missing.pick, 'size_down');
+    assert.equal(missing.failOpen, false);
   });
 
   it('compose: size_down if action=size_down or setup_quality < 1.2', () => {
@@ -126,16 +134,24 @@ describe('Jev / TypeSafe entry panel', () => {
     assert.equal(enter.failOpen, false);
   });
 
-  it('fail-opens when no API key (does not call the network)', async () => {
+  it('sizes down when no API key in active (does not call the network)', async () => {
     assert.equal(typesafeConfigured(''), false);
     const open = await jevEntryGate(
-      { symbol: 'QQQ', why: 'breakout', dte: 7, side: 'buy', source: 'bot' },
+      { symbol: 'QQQ', bot_name: 'Index QuickBot', why: 'breakout', dte: 7, side: 'buy', source: 'bot' },
       { apiKey: '', mode: 'active' },
     );
-    assert.equal(open.pick, 'enter');
-    assert.equal(open.failOpen, true);
+    assert.equal(open.pick, 'size_down');
+    assert.equal(open.failOpen, false);
     assert.equal(open.called, false);
     assert.match(open.because, /TYPESAFE_API_KEY unset/);
+    assert.match(open.because, /size down/);
+
+    const shadow = await jevEntryGate(
+      { symbol: 'QQQ', why: 'breakout', dte: 7, side: 'buy', source: 'bot' },
+      { apiKey: '', mode: 'shadow' },
+    );
+    assert.equal(shadow.pick, 'enter');
+    assert.equal(shadow.failOpen, true);
   });
 
   it('shadow mode never blocks a mocked skip', async () => {
@@ -199,9 +215,9 @@ describe('Jev / TypeSafe entry panel', () => {
     assert.equal(down.failOpen, false);
   });
 
-  it('fail-opens on client errors', async () => {
+  it('sizes down on client errors in active', async () => {
     const gate = await jevEntryGate(
-      { symbol: 'SPY', why: 'momo', dte: 4, side: 'buy', source: 'bot' },
+      { symbol: 'SPY', bot: 'SPY bot', why: 'momo', dte: 4, side: 'buy', source: 'bot' },
       {
         apiKey: 'test-not-a-secret',
         mode: 'active',
@@ -209,10 +225,49 @@ describe('Jev / TypeSafe entry panel', () => {
         client: { async systemOne() { throw new Error('503 typesafe down'); } },
       },
     );
-    assert.equal(gate.pick, 'enter');
-    assert.equal(gate.failOpen, true);
-    assert.match(gate.because, /fail-open/);
+    assert.equal(gate.pick, 'size_down');
+    assert.equal(gate.failOpen, false);
+    assert.match(gate.because, /size down/);
     assert.match(gate.because, /503/);
+  });
+
+  it('does not apply a SPY/QQQ bot decision to NVDA', () => {
+    assert.equal(jevAppliesToSymbol(['SPY', 'QQQ'], 'NVDA').apply, false);
+    assert.equal(jevAppliesToSymbol(['SPY', 'QQQ'], 'qqq').apply, true);
+    const block = jevUniverseBlock(['SPY', 'QQQ'], 'NVDA', 'Index QuickBot');
+    assert.ok(block);
+    assert.equal(block!.pick, 'not_applied');
+    assert.equal(block!.symbol, 'NVDA');
+    assert.match(block!.bot || '', /Index QuickBot/);
+    assert.match(block!.because, /outside that universe/);
+    assert.equal(jevUniverseBlock(['NVDA'], 'NVDA', 'NVDA call'), null);
+  });
+
+  it('does not mix one event bot with another event symbol', () => {
+    rememberJevLast({
+      ts: '2026-09-21T16:00:00.000Z',
+      pick: 'size_down',
+      symbol: 'NVDA',
+      bot: 'NVDA call',
+      because: 'choice confidence 0.40 is below 0.75, so size down',
+      state: { symbol: 'SPY', bot_name: 'Index QuickBot' },
+    });
+    const mixed = rememberJevLast({
+      pick: 'size_down',
+      symbol: 'NVDA',
+      because: 'from the NVDA order',
+    }, { symbol: 'SPY', bot_name: 'Index QuickBot' });
+    assert.equal(mixed.symbol, 'NVDA');
+    assert.equal(mixed.bot, null);
+
+    const paired = rememberJevLast({
+      pick: 'enter',
+      symbol: 'QQQ',
+      bot: 'Index QuickBot',
+      because: 'jev enter',
+    });
+    assert.equal(paired.symbol, 'QQQ');
+    assert.equal(paired.bot, 'Index QuickBot');
   });
 
   it('does not call Jev for exits', async () => {

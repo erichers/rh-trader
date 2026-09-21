@@ -7,7 +7,7 @@ import { museWatchStatus, type MuseWatchLamp } from '../muse/watch.js';
 import { loadMuseSettings } from '../muse/settings.js';
 import { loadJevSettings } from './jevSettings.js';
 import { jevPublicStatus, type JevPublic } from './jev.js';
-import { autofixHealth, type AutofixHealth } from '../bots/autofix.js';
+import { autofixHealth, refreshNullBotMonitors, type AutofixHealth } from '../bots/autofix.js';
 
 export type HealthFailure =
   | 'db_down'
@@ -70,6 +70,7 @@ export async function collectPaperHealth(): Promise<PaperHealth> {
     pid: process.pid,
     uptime_s: Math.round(process.uptime()),
     riskLaw: { maxTradeUsd: RISK_LAW.maxTradeUsd, maxDailyDrawdownPct: RISK_LAW.maxDailyDrawdownPct },
+    // Desk reads swingLaw.gainLockFloorPct (1.5). Arm stays 10. Hard stop stays 10.
     swingLaw: SWING_LAW,
     allowedAssetClasses: config.trading.allowedAssetClasses,
   };
@@ -122,7 +123,10 @@ export async function collectPaperHealth(): Promise<PaperHealth> {
     jev = await jevPublicStatus();
   } catch { /* optional */ }
   let autofix: AutofixHealth | undefined;
-  try { autofix = autofixHealth(); } catch { /* optional */ }
+  try {
+    if (db && String(env) === 'alpaca_paper') await refreshNullBotMonitors();
+    autofix = autofixHealth();
+  } catch { /* optional */ }
 
   return {
     ok: db, // process answered; db is the minimum "API can persist"
