@@ -8,7 +8,9 @@ Monday one-pager (full_auto arm, $10k / 50% rails, Mac stash instructions): [`MO
 
 Models → Jev can advise an entry (enter, skip, size down) and, when you turn that bot's exit scope on, an open option (hold, exit, tighten). It is not a price predictor. Global mode is still off, shadow, or active. Each bot stores `risk.jev = { entry: false, exit: false }` until you enable a scope. Jev changes a paper order only when global mode is active, that scope is on, and the account is Alpaca paper. Otherwise it logs the decision and stands down.
 
-The hard stop, gain-lock floor (+1.5%), and trail run first. A Jev hold or tighten cannot clear a stop. Short dated contracts (0 to 3 DTE) are checked about every 5 minutes, 4 to 14 DTE about every 20 minutes, and LEAPS about every 4 hours. A fresh decision inside that window does not call TypeSafe again. The $5 budget still applies.
+The hard stop, gain-lock floor (+1.5%), and trail run first. A Jev hold or tighten cannot clear a stop or the gain-lock. Short dated contracts (0 to 3 DTE) are checked about every 5 minutes, 4 to 14 DTE about every 20 minutes, and LEAPS about every 4 hours. A fresh decision inside that window does not call TypeSafe again. The $5 budget still applies.
+
+Connect Robinhood is hidden while the desk is Alpaca paper. The top-bar live switch still asks in the UI, and the API still requires `confirm: true`.
 
 Pull on the Mac desk:
 

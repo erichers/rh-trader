@@ -39,15 +39,18 @@ export default function Settings({ health, onChange }: { health: any; onChange: 
       </Card>
 
       <Card title="Robinhood connection">
+        {(health?.env || 'alpaca_paper') !== 'robinhood_live' ? (
+          <div className="muted" style={{ fontSize: 13, lineHeight: 1.45 }}>
+            This desk is Alpaca paper. Robinhood connect stays hidden here.
+            Going live still takes the top-bar switch and a second confirmation on the server.
+          </div>
+        ) : (
         <div className="row">
           <span className={`dot ${rh.data?.status === 'connected' ? 'green' : rh.data?.status === 'needs_auth' ? 'amber' : 'red'}`} />
           <b>{rh.data?.status || '…'}</b>
           <span className="muted">{rh.data?.tools?.length || 0} tools</span>
           <button className="primary" disabled={busy} onClick={async () => {
-            const paper = (health?.env || 'alpaca_paper') !== 'robinhood_live';
-            const ok = window.confirm(paper
-              ? 'Connect Robinhood? This starts live-account OAuth. The paper desk does not need it.'
-              : 'Connect Robinhood and start OAuth for the live account?');
+            const ok = window.confirm('Connect Robinhood and start OAuth for the live account?');
             if (!ok) return;
             setBusy(true);
             try {
@@ -58,13 +61,16 @@ export default function Settings({ health, onChange }: { health: any; onChange: 
           }}>{busy ? 'Opening…' : 'Connect / set up Robinhood'}</button>
           <button disabled={busy} onClick={async () => { setBusy(true); await RhSync(); setBusy(false); }}>Sync now</button>
         </div>
+        )}
+        {(health?.env || 'alpaca_paper') === 'robinhood_live' && (
         <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
           Clicking <b>Connect</b> opens Robinhood's authorization page in a new tab. After you approve, the app
           finishes setup automatically (it catches the redirect on <code>localhost:7321</code>) and links your
           Robinhood Agentic account. You can also run <code>npm run rh:auth</code> in /backend.
         </div>
-        {rh.data?.lastError && <div className="red" style={{ marginTop: 6 }}>{rh.data.lastError}</div>}
-        {(rh.data?.tools || []).length > 0 && (
+        )}
+        {(health?.env || 'alpaca_paper') === 'robinhood_live' && rh.data?.lastError && <div className="red" style={{ marginTop: 6 }}>{rh.data.lastError}</div>}
+        {(health?.env || 'alpaca_paper') === 'robinhood_live' && (rh.data?.tools || []).length > 0 && (
           <div style={{ marginTop: 10 }}>
             <div className="muted">Available MCP tools:</div>
             <div className="row" style={{ marginTop: 4 }}>

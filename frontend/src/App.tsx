@@ -4,6 +4,7 @@ import { Icon, type IconName } from './components/icons';
 import { Health, SetMode, SetKill, RhConnect, RhSync, SetEnv, RhAuthStart, Focus as FocusApi, SetFocus, SetJev } from './api/client';
 import { jevLastShort, jevLastText, museTuneText } from './modelCopy';
 import { readSidebarCollapsed, writeSidebarCollapsed } from './sidebarPref';
+import { showRobinhoodConnect } from './deskChrome';
 import MarketClock from './components/MarketClock';
 import AccountStrip from './components/AccountStrip';
 import Dashboard from './views/Dashboard';
@@ -265,9 +266,11 @@ export default function App() {
           <div style={{ flex: 1 }} />
           <div style={{ padding: '0 18px', fontSize: 11 }} className="muted side-status">
             <div className="row"><span className={`dot ${apiDown ? 'red' : 'green'}`} /> API: {apiDown ? 'down (:8011)' : (health?.listen || 'up')}</div>
-            <div className="row" style={{ marginTop: 4 }}>
-              <span className={`dot ${rhDot}`} /> Robinhood: {apiDown ? 'unknown' : rhStatus}
-            </div>
+            {showRobinhoodConnect(env, isLive) && (
+              <div className="row" style={{ marginTop: 4 }}>
+                <span className={`dot ${rhDot}`} /> Robinhood: {apiDown ? 'unknown' : rhStatus}
+              </div>
+            )}
             <NavLink to="/models/ai" className="status-link" title={health?.aiLabel || 'AI research + chat'}>
               <span className={`dot ${apiDown ? 'gray' : (health?.ai ? 'green' : 'gray')}`} />
               <span className="status-text">AI: {apiDown ? 'unknown' : (health?.ai ? (health?.aiShort || 'ready') : 'no key')}</span>
@@ -304,10 +307,10 @@ export default function App() {
           <header className="topbar">
             <ModeSwitcher mode={health?.mode || 'observe'} onChange={changeMode} />
             <MarketClock />
-            {rhStatus !== 'connected' && (
+            {showRobinhoodConnect(env, isLive) && rhStatus !== 'connected' && (
               <button onClick={connect} disabled={busy}>{busy ? 'Opening…' : 'Connect Robinhood'}</button>
             )}
-            {rhStatus === 'connected' && <button onClick={() => RhSync().then(refresh)}>Sync</button>}
+            {showRobinhoodConnect(env, isLive) && rhStatus === 'connected' && <button onClick={() => RhSync().then(refresh)}>Sync</button>}
             <span className="focus-ctl" title="Focus mode — concentrate the whole app + bots on one ticker">
               <button className={`icon-btn ${focus.enabled ? 'primary' : ''}`} onClick={toggleFocus}><Icon name="focus" size={15} />{focus.enabled ? 'Focus ON' : 'Focus'}</button>
               <select aria-label="Focus ticker" value={focus.symbol} onChange={(e) => pickFocus(e.target.value)} title="Focus ticker">
@@ -322,7 +325,7 @@ export default function App() {
               aria-label="Trading environment"
               value={env}
               onChange={(e) => changeEnv(e.target.value, e.target.value !== 'alpaca_paper')}
-              title="Switch environment"
+              title="Alpaca paper is the desk. Live still asks for confirmation here and on the server."
             >
               <option value="alpaca_paper">Paper (Alpaca)</option>
               <option value="robinhood_live">Live — Robinhood</option>

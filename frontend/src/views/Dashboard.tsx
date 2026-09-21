@@ -339,7 +339,7 @@ export default function Dashboard({ health }: { health: any }) {
   }
 
   items.push({ id: 'positions', title: <>Positions ({positions.length}){positions.some((p) => p.live) ? <> <Live /></> : null}</>, node: (
-    positions.length === 0 ? <div className="muted">No positions yet. Connect Robinhood and Sync.</div> : (
+    positions.length === 0 ? <div className="muted">{live ? 'No positions yet. Connect Robinhood and Sync.' : 'No open positions on the paper account.'}</div> : (
       <DataTable rows={positions} storageKey="dash-positions" filter={positions.length > 6} filterPlaceholder="filter positions…" cols={[
         { key: 'symbol', label: 'Symbol', sortValue: (p) => p.symbol, render: (p) => <Sym bold>{p.symbol}</Sym> },
         { key: 'qty', label: 'Qty', align: 'right', sortValue: (p) => Number(p.qty), render: (p) => num(p.qty, 2) },

@@ -157,6 +157,21 @@ describe('per-bot Jev scope', () => {
     assert.equal(sold.slPct, 10);
     assert.equal(exitReason(-10, 2, { tp: 20, sl: sold.slPct, trail: sold.trailPct }), 'stop-loss');
 
+    const gainRail = exitReason(1.4, 12, { tp: 20, sl: 10, trail: 10 });
+    assert.equal(gainRail, 'gain-lock');
+    const gain = resolveMonitorExit({
+      railReason: gainRail,
+      jev: { pick: 'hold', applied: true },
+      trailPct: 10,
+      slPct: 10,
+      tpPct: 20,
+      fav: 1.4,
+      peak: 12,
+    });
+    assert.equal(gain.reason, 'gain-lock');
+    assert.equal(gain.slPct, 10);
+    assert.equal(gain.trailPct, 10);
+
     const tight = resolveMonitorExit({
       railReason: null,
       jev: { pick: 'tighten', applied: true },
