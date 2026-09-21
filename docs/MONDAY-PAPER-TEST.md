@@ -89,7 +89,8 @@ If you need a restart after merging this branch: `./scripts/stop.sh && ./scripts
 - Flat META/GOOGL: one orphan, zero extra veto rows.
 - Every open long has an open monitor (`swingLaw` sl 10 / trail 10 / tp 20). Trail does not fire until peak ≥ +10%.
 - New full_auto buys are **long calls**. Non-LEAPS stay **2–14 DTE**. **LEAPS long calls remain eligible** (do not park). Puts skip/veto (`puts_blocked`). Equity templates convert to ATM weekly calls — they do not open shares. Covered-call selling stays blocked.
-- Optional Jev (`TYPESAFE_API_KEY`): Choice `enter|skip|size_down` on bot entries. Unset/error fail-opens on paper. Exits never call Jev.
+- Optional Jev (`TYPESAFE_API_KEY`): post-signal panel only (noul `signal_coherent`, Choice `action`, Score `setup_quality`, noul `too_crowded_same_day`). Default `JEV_ENTRY_MODE=shadow` logs and never blocks paper. `active` may skip / size_down. Unset/error fail-opens. Exits never call Jev.
+- `action._timeframe` drives eval bars (`15m`/`15Min` → Alpaca `15Min`). Default remains `1Day`. Signal row timeframe matches. Swing-law exits unchanged.
 - Kill switch: new buys stop; exits still flatten. Non-LEAPS flatten before the close.
 
 ## Success

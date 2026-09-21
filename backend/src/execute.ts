@@ -123,16 +123,44 @@ export async function executeDraft(
 
   const decision = await decideExecution(draft, mode, env);
 
-  // Optional Jev Choice on fired bot/AI entries only. Exits stay deterministic.
-  // No key / API error → paper fail-open (allow). A real skip still vetoes.
+  // Optional Jev post-signal panel on fired bot/AI entries only. Exits stay
+  // deterministic. Default shadow mode logs and never blocks. Active may skip
+  // / size_down. No key / API error → fail-open.
   if (decision.action === 'execute' && draft.side === 'buy' && (draft.source === 'bot' || draft.source === 'ai')) {
     const paper = env === 'alpaca_paper';
+    let openPositions = 0;
+    try {
+      const [row] = await q<{ n: number }>(
+        'SELECT COUNT(*) n FROM positions WHERE env=:env AND ABS(qty) > 0',
+        { env },
+      );
+      openPositions = Number(row?.n ?? 0);
+    } catch { /* state field is optional */ }
+    const leaps = decision.risk.computed.leaps === 1;
+    const dte = decision.risk.computed.entry_dte ?? draft._play?.dte ?? null;
     const gate = await jevEntryGate({
       symbol: draft.symbol,
+      bot_id: draft.bot_id,
+      bot_name: botRow?.name,
       bot: botRow?.name,
+      asset_class: draft.asset_class,
+      option_type: draft.option_type,
+      expiration: draft._contract?.expiration || draft.expiration,
+      strike_target: draft.strike_target,
+      dte_or_leaps: leaps ? (dte != null ? `leaps:${dte}` : 'leaps') : dte,
+      dte,
+      signal_why: opts.rationale,
       why: opts.rationale,
-      dte: draft._play?.dte ?? draft._contract?.expiration,
+      checks: {
+        entry_dte: decision.risk.checks.entry_dte?.detail,
+        calls_only: decision.risk.checks.calls_only?.detail,
+        puts_blocked: decision.risk.checks.puts_blocked?.detail,
+      },
+      est_premium: draft.est_price,
       premium: draft.est_price,
+      equity: decision.risk.computed.portfolio_equity,
+      open_positions_count: openPositions,
+      mode,
       side: draft.side,
       source: draft.source,
     }, { paper });

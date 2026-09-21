@@ -11,6 +11,7 @@ import { sizeDraft } from '../risk/sizing.js';
 import { isObserveOnlyBot, observeOnlySkipWhy } from '../risk/observe.js';
 import { allowlistSkipReason, assignInferredAssetClass, botClassSkipReason, looksLikeOptionPlay } from '../risk/optionPrice.js';
 import { callsOnlyBuyCheck, convertEquityDraftToCall, shouldConvertEquityBot } from '../risk/callsonly.js';
+import { botEvalTimeframe, signalTimeframe } from './timeframe.js';
 
 export type Bot = {
   id: number;
@@ -54,11 +55,12 @@ function parseBot(row: any): Bot {
 }
 
 // ── Re-entry policy ─────────────────────────────────────────────────────────
-// Bots evaluate DAILY-bar signals every 120s, and a daily signal (e.g. EMA9>EMA21) stays
-// TRUE for the whole session. So instead of one-entry-per-day (too few) or no guard at all
-// (re-buys every 2 min), allow a FEW entries per day SPACED by a cooldown: that turns a
-// persistently-true signal into 3–5 distinct, spread-out adds and lets a signal that flips
-// off→on re-fire. Per-bot override via risk.{max_entries_per_day, reentry_cooldown_min};
+// Bots evaluate bars every 120s. Default timeframe is 1Day (`action._timeframe`
+// missing). LEAPS momentum bots seed `_timeframe: "15Min"` and must use Alpaca
+// 15Min bars — do not hardcode daily. A daily/intraday signal can stay TRUE for
+// the session, so instead of one-entry-per-day (too few) or no guard at all
+// (re-buys every 2 min), allow a FEW entries per day SPACED by a cooldown.
+// Per-bot override via risk.{max_entries_per_day, reentry_cooldown_min};
 // defaults give up to 4 entries, ≥45 min apart.
 export const DEFAULT_MAX_ENTRIES_PER_DAY = 4;
 export const DEFAULT_REENTRY_COOLDOWN_MIN = 45;
@@ -366,9 +368,11 @@ export async function evaluateBot(botRow: any): Promise<any> {
       results.push({ symbol, skipped: 'crypto blocked' });
       continue;
     }
-    const closes = await closesFor(symbol);
+    const barTf = botEvalTimeframe(bot.action);
+    const closes = await closesFor(symbol, barTf);
     const snap = snapshot(closes);
     const ev = evalRules(bot.rules, snap);
+    const sigTf = signalTimeframe(barTf);
 
     let aiOk = true;
     let ai: any = null;
@@ -385,10 +389,11 @@ export async function evaluateBot(botRow: any): Promise<any> {
 
     await exec(
       `INSERT INTO signals (bot_id, symbol, timeframe, fired, matched, snapshot)
-       VALUES (:bid,:sym,'1d',:fired,CAST(:matched AS JSON),CAST(:snap AS JSON))`,
+       VALUES (:bid,:sym,:tf,:fired,CAST(:matched AS JSON),CAST(:snap AS JSON))`,
       {
         bid: bot.id,
         sym: symbol,
+        tf: sigTf,
         fired: ev.fired ? 1 : 0,
         matched: JSON.stringify({ rules: ev.matched, why: ev.why, checks: ev.checks, ai }),
         snap: JSON.stringify(snap),
@@ -406,9 +411,11 @@ export async function evaluateBot(botRow: any): Promise<any> {
         continue;
       }
       const side = (bot.action?.side as 'buy' | 'sell') || ev.side;
-      // RE-ENTRY POLICY: the worker re-evaluates every 120s on DAILY bars and a fired daily
-      // signal holds all session — so allow a few entries/day SPACED by a cooldown (a persistent
-      // signal becomes 3–5 distinct adds) instead of one-and-done. Per-bot tunable; see reentryGate.
+      // RE-ENTRY POLICY: the worker re-evaluates every 120s (1Day default, or
+      // action._timeframe such as 15Min for LEAPS momentum) and a fired signal
+      // can hold all session — so allow a few entries/day SPACED by a cooldown
+      // (a persistent signal becomes 3–5 distinct adds) instead of one-and-done.
+      // Per-bot tunable; see reentryGate.
       const env = await getTradingEnv();
       const lockKey = `${bot.id}:${symbol}:${side}`;
       if (!claimEntrySlot(lockKey)) {

@@ -81,10 +81,13 @@ export const config = {
     basePath: process.env.BASE_PATH || '/grokbot/grokbot-rh-trader',
   },
   typesafe: {
-    // Optional Jev / System One. Unset → paper entries fail-open (no live call).
+    // Optional Jev / System One panel. Unset key → paper entries fail-open.
+    // entryMode shadow (default) logs and never blocks; active applies composition.
     apiKey: process.env.TYPESAFE_API_KEY || '',
     baseUrl: process.env.TYPESAFE_BASE_URL || 'https://api.typesafe.ai',
     model: process.env.TYPESAFE_MODEL || 'jev-latest',
+    entryMode: (process.env.JEV_ENTRY_MODE || 'shadow').toLowerCase() === 'active' ? 'active' : 'shadow',
+    logPath: process.env.JEV_LOG_PATH || path.join(root, 'data', 'jev-entry.jsonl'),
   },
   alpaca: {
     apiKey: process.env.ALPACA_API_KEY || '',
