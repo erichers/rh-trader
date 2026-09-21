@@ -70,6 +70,7 @@ export async function collectPaperHealth(): Promise<PaperHealth> {
     pid: process.pid,
     uptime_s: Math.round(process.uptime()),
     riskLaw: { maxTradeUsd: RISK_LAW.maxTradeUsd, maxDailyDrawdownPct: RISK_LAW.maxDailyDrawdownPct },
+    // Desk reads swingLaw.gainLockFloorPct (1.5). Arm stays 10. Hard stop stays 10.
     swingLaw: SWING_LAW,
     allowedAssetClasses: config.trading.allowedAssetClasses,
   };

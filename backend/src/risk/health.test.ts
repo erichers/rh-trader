@@ -61,7 +61,10 @@ describe('healthVerdict', () => {
 });
 
 describe('SWING_LAW /api/health snapshot', () => {
-  it('is 10 / 10 / 1.5 / 20 / 10 / dte 2–14', () => {
+  it('exposes swingLaw.gainLockFloorPct = 1.5 (arm 10, hard stop 10)', () => {
+    assert.equal(SWING_LAW.gainLockFloorPct, 1.5);
+    assert.equal(SWING_LAW.gainLockArmPct, 10);
+    assert.equal(SWING_LAW.hardStopPct, 10);
     assert.deepEqual(SWING_LAW, {
       hardStopPct: 10,
       gainLockArmPct: 10,

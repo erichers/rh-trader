@@ -3,10 +3,11 @@
  * A reattached stop used to insert bot_id NULL, and a later bot fill then
  * bailed out because a monitor already existed. Muse cannot learn that close.
  *
- * Buy lookup uses filled / partially_filled rows only. A vetoed, canceled, or
- * rejected order must not stamp a bot — that is how Index QuickBot (SPY/QQQ)
- * landed on an open NVDA monitor. If no filled buy matches the OCC, bot_id
- * stays null rather than inventing one from a vetoed Index draft.
+ * Reattach and backfill call matchMonitorBot with the loadBotMatchPool rows.
+ * Only a filled or partially_filled buy for that exact OCC may stamp bot_id.
+ * Vetoed, canceled, and rejected rows never count — that is how Index QuickBot
+ * id 39 landed on NVDA260925C00227500. No filled match stays null. Do not
+ * invent a bot from another contract, a bare buy, or a fired signal.
  */
 import { INDEX_QUICKBOT_SYMBOLS, isIndexQuickbotName } from '../bots/indexUniverse.js';
 
@@ -91,10 +92,10 @@ function fromOrder(o: MonitorOrderCandidate): MonitorBotMatch {
 /**
  * A usable draft bot_id wins (the fill that opened the position).
  * A vetoed/canceled/rejected draft does not. Index QuickBot never owns NVDA.
- * Otherwise the latest filled or partially_filled buy: exact OCC first
- * (from raw.draft._contract.occSymbol), then a filled buy that has no OCC stored.
- * A buy for a different contract is never used. No filled buy → one fired
- * signal that may own the symbol, else none.
+ * Otherwise the latest filled or partially_filled buy for the exact OCC
+ * (from raw.draft._contract.occSymbol). Another contract, a buy with no OCC,
+ * or a fired signal is not a match. No filled row for that OCC → bot_id null.
+ * With no OCC (equity), the latest filled buy wins, else one fired signal.
  * AI opens stay null because they have no draft bot_id and no bot buy.
  */
 export function matchMonitorBot(input: {
@@ -128,12 +129,10 @@ export function matchMonitorBot(input: {
   if (occ) {
     const exact = buys.find((o) => normOcc(o.occ) === occ);
     if (exact) return fromOrder(exact);
-    const otherContract = buys.some((o) => {
-      const oocc = normOcc(o.occ);
-      return !!oocc && oocc !== occ;
-    });
-    const bare = buys.find((o) => !normOcc(o.occ));
-    if (bare && !otherContract) return fromOrder(bare);
+    // No filled/partially_filled row for this OCC. Leave bot_id null.
+    // Vetoed Index drafts for NVDA260925C00227500 must not stamp id 39, and a
+    // broker-sync gap (no fill row) must not be filled in from a signal.
+    return { bot_id: null, order_id: null, via: 'none' };
   } else {
     const hit = buys[0];
     if (hit) return fromOrder(hit);

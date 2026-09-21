@@ -78,8 +78,9 @@ describe('monitor bot_id persistence', () => {
         filled({ id: 7, bot_id: 88, symbol: 'NVDA', occ: '' }),
       ],
     });
-    assert.equal(bare.bot_id, 88);
-    assert.equal(bare.order_id, 7);
+    assert.equal(bare.via, 'none');
+    assert.equal(bare.bot_id, null);
+    assert.equal(bare.order_id, null);
 
     const wrongContract = matchMonitorBot({
       symbol: 'NVDA',
@@ -160,5 +161,40 @@ describe('monitor bot_id persistence', () => {
     });
     assert.equal(indexPartial.bot_id, 39);
     assert.equal(indexPartial.order_id, 70);
+  });
+
+  it('leaves NVDA260925C00227500 null when Index 39 only has vetoed rows for that OCC', () => {
+    const occ = 'NVDA260925C00227500';
+    const index = 'Index QuickBot — SPY & QQQ';
+    const hit = matchMonitorBot({
+      symbol: 'NVDA',
+      occ,
+      orders: [
+        { id: 900, bot_id: 39, symbol: 'NVDA', occ, side: 'buy', status: 'vetoed', bot_name: index },
+        { id: 901, bot_id: 39, symbol: 'NVDA', occ, side: 'buy', status: 'canceled', bot_name: index },
+        { id: 902, bot_id: 39, symbol: 'NVDA', occ, side: 'buy', status: 'rejected', bot_name: index },
+        filled({ id: 50, bot_id: 88, symbol: 'NVDA', occ: 'NVDA260116C00180000', bot_name: 'NVDA Momentum' }),
+        filled({ id: 51, bot_id: 12, symbol: 'NVDA', bot_name: 'Other NVDA' }),
+      ],
+      signals: [
+        { bot_id: 39, symbol: 'NVDA', fired: 1, bot_name: index },
+        { bot_id: 88, symbol: 'NVDA', fired: 1, bot_name: 'NVDA Momentum' },
+      ],
+    });
+    assert.equal(hit.via, 'none');
+    assert.equal(hit.bot_id, null);
+    assert.equal(hit.order_id, null);
+
+    const filledSameOcc = matchMonitorBot({
+      symbol: 'NVDA',
+      occ,
+      orders: [
+        { id: 900, bot_id: 39, symbol: 'NVDA', occ, side: 'buy', status: 'vetoed', bot_name: index },
+        filled({ id: 77, bot_id: 88, symbol: 'NVDA', occ, bot_name: 'NVDA Momentum' }),
+      ],
+    });
+    assert.equal(filledSameOcc.via, 'order');
+    assert.equal(filledSameOcc.bot_id, 88);
+    assert.equal(filledSameOcc.order_id, 77);
   });
 });

@@ -354,6 +354,9 @@ async function openMonitorRow(env: string, symbol: string, occ: string): Promise
 type BotMatchPool = { orders: MonitorOrderCandidate[]; signals: MonitorSignalCandidate[] };
 
 async function loadBotMatchPool(env: string): Promise<BotMatchPool> {
+  // SQL keeps the pool to fills so vetoed rows cannot crowd out a real fill
+  // under LIMIT. matchMonitorBot is still the gate: a non-fill in the pool
+  // cannot stamp, and an OCC with no filled row stays bot_id null.
   const orders = await q<any>(BOT_MATCH_BUY_SQL, { env });
   const signals = await q<any>(BOT_MATCH_SIGNAL_SQL);
   return {
@@ -370,7 +373,7 @@ async function loadBotMatchPool(env: string): Promise<BotMatchPool> {
   };
 }
 
-/** Paper-only. Stamp recent NULL bot_id rows when one buy or one fired signal matches. */
+/** Paper-only. Stamp recent NULL bot_id rows only when a filled buy matches the OCC. No fill stays null. */
 export async function backfillNullMonitorBotIds(env: TradingEnv): Promise<{
   open: Map<number, number>;
   newestClosed: { id: number; bot_id: number; symbol: string; reason: string | null } | null;
