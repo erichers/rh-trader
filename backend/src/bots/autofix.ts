@@ -242,6 +242,9 @@ export function proposeBotAutofix(bot: any): AutofixProposal | null {
   Object.assign(risk, nextRisk);
   clampDteBands(risk, privileged);
   clampPlayLists(action);
+  // Standing law 2026-09-21: hold overnight/weekend (LEAPS + swing calls).
+  risk.hold_overnight = true;
+  risk.hold_over_weekend = true;
 
   const changes: AutofixChange[] = [];
   if (mode !== String(bot?.mode || '')) changes.push({ field: 'mode', from: bot?.mode ?? null, to: mode });

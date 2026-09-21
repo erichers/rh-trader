@@ -59,6 +59,8 @@ describe('proposeBotAutofix', () => {
     assert.equal(p!.next.risk.stop_loss_pct, 10);
     assert.equal(p!.next.risk.take_profit_pct, 20);
     assert.equal(p!.next.risk.trailing_stop_pct, 10);
+    assert.equal(p!.next.risk.hold_overnight, true);
+    assert.equal(p!.next.risk.hold_over_weekend, true);
   });
 
   it('keeps a tighter sl and an in-range trail', () => {
@@ -87,6 +89,8 @@ describe('proposeBotAutofix', () => {
     assert.equal(p!.next.action.side, 'buy');
     assert.equal(p!.next.action.expiration, '2029-01-19');
     assert.equal(p!.next.action._observe_only, undefined);
+    assert.equal(p!.next.risk.hold_overnight, true);
+    assert.equal(p!.next.risk.hold_over_weekend, true);
   });
 
   it('already-compliant LEAPS is skipped (idempotent)', () => {
@@ -96,7 +100,7 @@ describe('proposeBotAutofix', () => {
       mode: 'full_auto',
       asset_class: 'option',
       action: { side: 'buy', option_type: 'call', expiration: 'leaps' },
-      risk: { stop_loss_pct: 10, take_profit_pct: 20, trailing_stop_pct: 10 },
+      risk: { stop_loss_pct: 10, take_profit_pct: 20, trailing_stop_pct: 10, hold_overnight: true, hold_over_weekend: true },
     };
     assert.equal(proposeBotAutofix(bot), null);
     assert.equal(proposeBotAutofix({ ...bot, ...proposeBotAutofix({
@@ -125,7 +129,7 @@ describe('proposeBotAutofix', () => {
       mode: 'full_auto',
       enabled: 1,
       action: { side: 'buy', option_type: 'call', _observe_only: true, _strategy: 'mean-revert-watch' },
-      risk: { _observe_only: true, stop_loss_pct: 10, take_profit_pct: 20, trailing_stop_pct: 10 },
+      risk: { _observe_only: true, stop_loss_pct: 10, take_profit_pct: 20, trailing_stop_pct: 10, hold_overnight: true, hold_over_weekend: true },
     });
     assert.ok(p);
     assert.equal(p!.next.mode, 'observe');
@@ -162,7 +166,7 @@ describe('runBotsAutofix', () => {
     const bots = [
       { id: 1, name: 'Long Put — Hedge', mode: 'full_auto', asset_class: 'option', enabled: 1, action: { option_type: 'put', side: 'buy' }, risk: {} },
       { id: 2, name: 'RSI Bounce', mode: 'auto', asset_class: 'equity', enabled: 1, action: { side: 'buy' }, risk: {} },
-      { id: 3, name: 'NVDA LEAPS', mode: 'full_auto', asset_class: 'option', enabled: 1, action: { side: 'buy', option_type: 'call', expiration: 'leaps' }, risk: { stop_loss_pct: 10, take_profit_pct: 20, trailing_stop_pct: 10 } },
+      { id: 3, name: 'NVDA LEAPS', mode: 'full_auto', asset_class: 'option', enabled: 1, action: { side: 'buy', option_type: 'call', expiration: 'leaps' }, risk: { stop_loss_pct: 10, take_profit_pct: 20, trailing_stop_pct: 10, hold_overnight: true, hold_over_weekend: true } },
     ];
     const out = await runBotsAutofix({
       env: 'alpaca_paper',
