@@ -131,7 +131,7 @@ export function tightenTrail(trailPct: number): number {
   return Math.min(t, next);
 }
 
-export type JevExitAction = 'hold' | 'exit' | 'tighten';
+export type JevExitAction = 'hold' | 'exit' | 'tighten' | 'partial';
 
 /**
  * Merge a Jev exit opinion onto a rail reason.
@@ -155,7 +155,13 @@ export function mergeJevExit(opts: {
   if (opts.pick === 'exit') {
     return { reason: 'jev-exit', trailPct: opts.trailPct, slPct };
   }
-  return { reason: null, trailPct: tightenTrail(opts.trailPct), slPct };
+  if (opts.pick === 'partial') {
+    return { reason: 'jev-partial', trailPct: opts.trailPct, slPct };
+  }
+  if (opts.pick === 'tighten') {
+    return { reason: null, trailPct: tightenTrail(opts.trailPct), slPct };
+  }
+  return { reason: null, trailPct: opts.trailPct, slPct };
 }
 
 /**

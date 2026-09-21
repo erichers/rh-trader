@@ -128,6 +128,142 @@ describe('per-bot Jev scope', () => {
     assert.equal(jevCadenceWindowMs(900, true), JEV_CADENCE_LEAPS_MS);
   });
 
+  it('logs an exit decision outside regular hours and does not call TypeSafe', async () => {
+    let called = 0;
+    const logs: string[] = [];
+    const gate = await jevExitGate({
+      symbol: 'SPY',
+      bot_id: 89,
+      bot_name: 'wave',
+      monitor_id: 8901,
+      occ: 'SPY260930C00500000',
+      dte: 2,
+      fav: 4,
+      peak: 6,
+      trail_pct: 10,
+      sl_pct: 10,
+    }, {
+      mode: 'active',
+      paper: true,
+      rth: false,
+      apiKey: 'test-not-a-secret',
+      botFlags: { entry: true, exit: true },
+      now: 1_900_000_000_000,
+      client: { async systemOne() { called++; return { answers: {} }; } },
+      log: async (_f, line) => { logs.push(line); },
+      budgetIo: { read: async () => null, write: async () => {}, log: () => {} },
+    });
+    assert.equal(called, 0);
+    assert.equal(gate.called, false);
+    assert.equal(gate.applied, false);
+    assert.equal(gate.pick, 'hold');
+    assert.equal(gate.skipped, 'rth_closed');
+    assert.equal(logs.length, 1);
+    const rec = JSON.parse(logs[0]);
+    assert.equal(rec.skipped, 'rth_closed');
+    assert.equal(rec.kind, 'exit');
+  });
+
+  it('still logs when exit scope is off outside regular hours', async () => {
+    let called = 0;
+    const logs: string[] = [];
+    const gate = await jevExitGate({
+      symbol: 'SPY',
+      bot_id: 12,
+      monitor_id: 1201,
+      occ: 'SPY260930C00500000',
+      dte: 5,
+      fav: 1,
+      peak: 2,
+    }, {
+      mode: 'active',
+      paper: true,
+      rth: false,
+      botFlags: { entry: false, exit: false },
+      now: 1_900_000_100_000,
+      client: { async systemOne() { called++; return { answers: {} }; } },
+      log: async (_f, line) => { logs.push(line); },
+      budgetIo: { read: async () => null, write: async () => {}, log: () => {} },
+    });
+    assert.equal(called, 0);
+    assert.equal(gate.skipped, 'per_bot_off');
+    assert.equal(logs.length, 1);
+  });
+
+  it('replays a partial sell inside the window and does not turn it into a full close', async () => {
+    let called = 0;
+    const client: JevClient = {
+      async systemOne() {
+        called++;
+        return exitClient('partial').systemOne({ state: {}, questions: {} });
+      },
+    };
+    const base = {
+      symbol: 'IWM',
+      bot_id: 25,
+      monitor_id: 2501,
+      occ: 'IWM261016C00200000',
+      dte: 9,
+      fav: 3,
+      peak: 4,
+      qty: 4,
+    };
+    const deps = {
+      mode: 'active' as const,
+      paper: true,
+      apiKey: 'test-not-a-secret',
+      botFlags: { entry: true, exit: true },
+      client,
+      log: async () => {},
+      budgetIo: { read: async () => null, write: async () => {}, log: () => {} },
+    };
+    const first = await jevExitGate(base, { ...deps, now: 1_910_000_000_000 });
+    const second = await jevExitGate(base, { ...deps, now: 1_910_000_000_000 + 60_000 });
+    assert.equal(first.pick, 'partial');
+    assert.equal(first.applied, true);
+    assert.equal(second.called, false);
+    assert.equal(second.pick, 'partial');
+    assert.equal(second.applied, true);
+    assert.equal(called, 1);
+  });
+
+  it('uses the 2 minute exit window on expiry day inside the last 90 minutes', async () => {
+    let called = 0;
+    const client: JevClient = {
+      async systemOne() {
+        called++;
+        return exitClient('hold').systemOne({ state: {}, questions: {} });
+      },
+    };
+    const base = {
+      symbol: 'QQQ',
+      bot_id: 21,
+      monitor_id: 2101,
+      occ: 'QQQ260921C00500000',
+      dte: 0,
+      fav: 1,
+      peak: 1,
+    };
+    const deps = {
+      mode: 'active' as const,
+      paper: true,
+      minutesToClose: 40,
+      apiKey: 'test-not-a-secret',
+      botFlags: { entry: true, exit: true },
+      client,
+      log: async () => {},
+      budgetIo: { read: async () => null, write: async () => {}, log: () => {} },
+    };
+    const t0 = 1_920_000_000_000;
+    await jevExitGate(base, { ...deps, now: t0 });
+    const inside = await jevExitGate(base, { ...deps, now: t0 + 90_000 });
+    const after = await jevExitGate(base, { ...deps, now: t0 + 150_000 });
+    assert.equal(inside.skipped, 'cadence');
+    assert.equal(inside.called, false);
+    assert.equal(after.called, true);
+    assert.equal(called, 2);
+  });
+
   it('exit advice cannot clear a hard stop or loosen the stop', () => {
     const rail = exitReason(-10, 0, { tp: 20, sl: 35, trail: 10 });
     assert.equal(rail, 'stop-loss');

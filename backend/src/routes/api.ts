@@ -42,6 +42,7 @@ import { runBotsAutofix } from '../bots/autofix.js';
 import { jevPublicStatus, parseBotSymbols } from '../risk/jev.js';
 import { saveJevSettings } from '../risk/jevSettings.js';
 import { parseJevBotFlags } from '../risk/jevScope.js';
+import { jevExitArmError } from '../risk/jevWave1.js';
 import { loadMuseSettings, saveMuseSettings } from '../muse/settings.js';
 import { museConfigured, museWatchStatus } from '../muse/watch.js';
 import { museLastTune } from '../muse/improve.js';
@@ -785,8 +786,12 @@ export async function registerRoutes(app: FastifyInstance) {
     if ('entry' in body && typeof body.entry !== 'boolean') return reply.code(400).send({ error: 'entry must be a boolean' });
     if ('exit' in body && typeof body.exit !== 'boolean') return reply.code(400).send({ error: 'exit must be a boolean' });
     const env = await getTradingEnv();
-    const [bot] = await q<any>('SELECT id, risk FROM bots WHERE id=:id AND env=:env', { id, env });
+    const [bot] = await q<any>('SELECT id, name, action, risk FROM bots WHERE id=:id AND env=:env', { id, env });
     if (!bot) return reply.code(404).send({ error: 'bot not found' });
+    if (body.exit === true) {
+      const refused = jevExitArmError(env, { id: bot.id, name: bot.name, action: bot.action });
+      if (refused) return reply.code(409).send({ error: refused });
+    }
     let cur: any = {};
     try {
       cur = (typeof bot.risk === 'string' ? JSON.parse(bot.risk || '{}') : bot.risk) || {};

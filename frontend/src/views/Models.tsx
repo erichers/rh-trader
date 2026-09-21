@@ -202,11 +202,11 @@ function JevDetail({ health, onChange }: { health: any; onChange: () => void }) 
           </div>
         </Card>
         <Card title="Check cadence">
-          <p className="muted jev-help">A fresh decision inside the window skips the next TypeSafe call. The hard stop still runs on the monitor loop.</p>
+          <p className="muted jev-help">Exit checks during regular hours. A fresh decision inside the window skips the next TypeSafe call. The hard stop still runs on the monitor loop.</p>
           <div className="jev-bands">
             {cadence.map((b: any) => (
               <div key={b.band} className="jev-band">
-                <div className="muted">{b.dte} DTE</div>
+                <div className="muted">{String(b.dte).includes('DTE') ? b.dte : `${b.dte} DTE`}</div>
                 <b>{b.every}</b>
               </div>
             ))}
@@ -243,7 +243,7 @@ function JevDetail({ health, onChange }: { health: any; onChange: () => void }) 
       </Card>
 
       <Card title={decisions.length ? `Last ${decisions.length} decisions` : 'Last decisions'}>
-        <p className="muted jev-help">Exit Jev is a separate pick from entry. Applied means global active, that scope was on, and the desk is on Alpaca paper. Off still logs.</p>
+        <p className="muted jev-help">Exit picks are CLOSE, PARTIAL, HOLD, or TIGHTEN_TRAIL. Wave-1 stays off until you turn a candidate on. Paper only. Applied means global active, that scope was on, and the desk is on Alpaca paper. Off still logs.</p>
         {!decisions.length && status === 'down' && <div className="muted">Decision log needs the API.</div>}
         {!decisions.length && status !== 'down' && <div className="muted">No decisions yet.</div>}
         {!!decisions.length && (

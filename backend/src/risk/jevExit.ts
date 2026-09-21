@@ -1,8 +1,8 @@
 /**
  * Jev exit panel for an open paper option.
  *
- * Asks hold | exit | tighten. The monitor applies the result only after the
- * swing-law rail has already had its say. A hard stop is never cleared.
+ * Asks CLOSE | PARTIAL | HOLD | TIGHTEN_TRAIL. The monitor applies the result
+ * only after the swing-law rail has already had its say. A hard stop is never cleared.
  * Per-bot exit off still logs a local opinion and does not call TypeSafe.
  */
 
@@ -20,7 +20,6 @@ import {
 } from './jev.js';
 import {
   jevCadenceKey,
-  jevCadenceWindowMs,
   jevEffective,
   parseJevDte,
   rememberCadence,
@@ -30,8 +29,9 @@ import {
   type JevExitAction,
 } from './jevScope.js';
 import { effectiveJevMode, loadJevSettings, parseJevUiMode, type JevUiMode } from './jevSettings.js';
+import { jevExitCadenceWindowMs } from './jevWave1.js';
 
-export const JEV_EXIT_OPTIONS = ['hold', 'exit', 'tighten'] as const;
+export const JEV_EXIT_OPTIONS = ['hold', 'exit', 'partial', 'tighten'] as const;
 export type JevExitPick = JevExitAction;
 
 export type JevExitPanel = {
@@ -71,10 +71,11 @@ export type JevExitInput = JevEntryState & {
 const EXIT_CONF_MIN = 0.75;
 
 export function parseJevExitPick(raw: unknown): JevExitPick | null {
-  const s = String(raw || '').toLowerCase().replace(/-/g, '_');
-  if (s === 'hold' || s === 'exit' || s === 'tighten' || s === 'size_down' || s === 'sizedown') {
-    return s === 'sizedown' || s === 'size_down' ? 'tighten' : (s as JevExitPick);
-  }
+  const s = String(raw || '').toLowerCase().replace(/[\s-]+/g, '_');
+  if (s === 'close') return 'exit';
+  if (s === 'partial') return 'partial';
+  if (s === 'tighten_trail' || s === 'size_down' || s === 'sizedown') return 'tighten';
+  if (s === 'hold' || s === 'exit' || s === 'tighten' || s === 'partial') return s;
   return null;
 }
 
@@ -90,11 +91,12 @@ export function jevExitQuestions() {
     },
     action: {
       type: 'choice' as const,
-      instructions: 'Advise this open Alpaca paper long call. Code already owns the hard stop, the gain-lock floor, and the trail. You cannot turn those off. hold leaves the rail plan. exit asks to sell the remaining contracts. tighten narrows the trail only. Not a price prediction.',
+      instructions: 'Advise this open Alpaca paper long call. Code already owns the hard stop, the gain-lock floor, and the trail. You cannot turn those off, widen them, add size, or use Robinhood. CLOSE sells the rest. PARTIAL sells part and keeps a remainder. HOLD leaves the rail plan. TIGHTEN_TRAIL narrows the trail only. Not a price prediction.',
       criteria: {
-        hold: 'Keep the position. Rails stay in charge.',
-        exit: 'Thesis is broken enough to sell the remaining contracts now.',
-        tighten: 'Stay in, but narrow the trailing stop. Do not loosen the hard stop.',
+        hold: 'HOLD. Keep the position. Rails stay in charge.',
+        exit: 'CLOSE. Thesis is broken enough to sell the remaining contracts now.',
+        partial: 'PARTIAL. Sell part of the contracts. Never add. A single contract cannot partial.',
+        tighten: 'TIGHTEN_TRAIL. Stay in, but narrow the trailing stop. Do not loosen the hard stop.',
       },
     },
     giveback_risk: {
@@ -154,10 +156,13 @@ export function composeJevExit(panel: JevExitPanel, mode: 'shadow' | 'active'): 
     };
   }
   if (opinion === 'exit' && conf >= 0.70) {
-    return { pick: 'exit', opinion, failOpen: false, because: `jev exit (c=${conf.toFixed(2)})` };
+    return { pick: 'exit', opinion, failOpen: false, because: `CLOSE (c=${conf.toFixed(2)})` };
+  }
+  if (opinion === 'partial' && conf >= 0.70) {
+    return { pick: 'partial', opinion, failOpen: false, because: `PARTIAL (c=${conf.toFixed(2)}). Sell only, never add.` };
   }
   if (opinion === 'tighten' && conf >= 0.70) {
-    return { pick: 'tighten', opinion, failOpen: false, because: `jev tighten (c=${conf.toFixed(2)})` };
+    return { pick: 'tighten', opinion, failOpen: false, because: `TIGHTEN_TRAIL (c=${conf.toFixed(2)})` };
   }
   return { pick: 'hold', opinion, failOpen: false, because: `jev hold (c=${conf.toFixed(2)})` };
 }
@@ -213,7 +218,12 @@ function exitState(input: JevExitInput): Record<string, unknown> {
   };
 }
 
-type ExitReplay = { opinion: JevExitPick; appliedExit: boolean; because: string };
+type ExitReplay = {
+  opinion: JevExitPick;
+  appliedExit: boolean;
+  appliedPick?: 'exit' | 'partial';
+  because: string;
+};
 
 export async function jevExitGate(input: JevExitInput, deps: {
   client?: JevClient;
@@ -222,6 +232,9 @@ export async function jevExitGate(input: JevExitInput, deps: {
   mode?: JevUiMode | string | null;
   model?: string | null;
   botFlags?: JevBotFlags;
+  /** Regular-hours gate. Undefined does not block (unit tests). False skips TypeSafe and sell replays. */
+  rth?: boolean;
+  minutesToClose?: number | null;
   now?: number;
   log?: (file: string, line: string) => Promise<void>;
   logPath?: string;
@@ -251,21 +264,23 @@ export async function jevExitGate(input: JevExitInput, deps: {
     monitorId: input.monitor_id,
   });
   const now = deps.now ?? Date.now();
-  const windowMs = jevCadenceWindowMs(dteNum, leaps);
+  const windowMs = jevExitCadenceWindowMs({ dte: dteNum, leaps, minutesToClose: deps.minutesToClose });
   const fresh = takeFreshCadence<ExitReplay>(key, now, windowMs);
   if (fresh && eff.reason !== 'global_off') {
-    if (fresh.appliedExit && eff.apply) {
-      const because = `cadence: replay exit without a new TypeSafe call (${Math.round(windowMs / 60000)} min)`;
+    const replaySell = fresh.appliedExit && eff.apply && deps.rth !== false;
+    if (replaySell) {
+      const pick: JevExitPick = fresh.appliedPick === 'partial' ? 'partial' : 'exit';
+      const because = `cadence: replay ${pick} without a new TypeSafe call (${Math.round(windowMs / 60000)} min)`;
       const answer = choice({
         id: 'exit',
         options: JEV_EXIT_OPTIONS,
-        pick: 'exit',
+        pick,
         because,
         evidence: { cadence: true },
       });
       return {
-        pick: 'exit',
-        opinion: 'exit',
+        pick,
+        opinion: pick,
         confidence: 0,
         because,
         failOpen: false,
@@ -317,6 +332,10 @@ export async function jevExitGate(input: JevExitInput, deps: {
       ? 'Jev exit stays on Alpaca paper: logged, not acted'
       : 'per-bot jev exit is off: decision logged, position not changed';
     return logLocal(eff.reason, because);
+  }
+
+  if (deps.rth === false) {
+    return logLocal('rth_closed', 'Jev exit checks run in regular hours. Rails stay on.');
   }
 
   const spend = await loadJevSpend(deps.budgetIo);
@@ -385,7 +404,8 @@ export async function jevExitGate(input: JevExitInput, deps: {
     }, deps.logPath, deps.log);
     rememberCadence(key, now, {
       opinion: composed.opinion,
-      appliedExit: acted === 'exit' && eff.apply,
+      appliedExit: (acted === 'exit' || acted === 'partial') && eff.apply,
+      appliedPick: acted === 'partial' ? 'partial' : 'exit',
       because: gate.because,
     } satisfies ExitReplay);
     return gate;
