@@ -20,6 +20,7 @@ import { getClock } from '../market/clock.js';
 import type { OrderDraft } from './engine.js';
 import { resolveBotRisk } from './sizing.js';
 import { matchMonitorBot, occFromOrderRaw, planMonitorOpen, positiveId } from './monitorBot.js';
+import { BOT_MATCH_BUY_SQL, BOT_MATCH_SIGNAL_SQL } from './monitorList.js';
 import type { MonitorOrderCandidate, MonitorSignalCandidate } from './monitorBot.js';
 import type { TradingEnv } from '../config.js';
 
@@ -121,6 +122,8 @@ export async function checkMonitors(opts?: { reconcileOnly?: boolean }): Promise
         continue;
       }
     }
+    // reconcileOnly skips stop/trail/gain-lock. The worker must not set it
+    // while any monitor is open — after-hours gaps still need the exit ladder.
     if (opts?.reconcileOnly) continue;
 
     const pendingId = parsePendingExitOrderId(m.reason, m.pending_exit_order_id);
@@ -351,27 +354,16 @@ async function openMonitorRow(env: string, symbol: string, occ: string): Promise
 type BotMatchPool = { orders: MonitorOrderCandidate[]; signals: MonitorSignalCandidate[] };
 
 async function loadBotMatchPool(env: string): Promise<BotMatchPool> {
-  const orders = await q<any>(
-    `SELECT id, bot_id, symbol, side, raw FROM orders
-      WHERE (env=:env OR (env IS NULL AND :env='alpaca_paper'))
-        AND side='buy' AND bot_id IS NOT NULL
-        AND status NOT IN ('vetoed','rejected','canceled','observe_only')
-        AND created_at >= DATE_SUB(NOW(), INTERVAL 21 DAY)
-      ORDER BY id DESC LIMIT 400`,
-    { env },
-  );
-  const signals = await q<any>(
-    `SELECT bot_id, symbol, fired FROM signals
-      WHERE fired=1 AND bot_id IS NOT NULL
-        AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-      ORDER BY id DESC LIMIT 400`,
-  );
+  const orders = await q<any>(BOT_MATCH_BUY_SQL, { env });
+  const signals = await q<any>(BOT_MATCH_SIGNAL_SQL);
   return {
     orders: (orders || []).map((o) => ({
       id: o.id,
       bot_id: o.bot_id,
       symbol: o.symbol,
       side: o.side,
+      status: o.status,
+      bot_name: o.bot_name,
       occ: occFromOrderRaw(o.raw),
     })),
     signals: signals || [],

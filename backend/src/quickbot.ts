@@ -189,7 +189,7 @@ function simulatePlay(closes: number[], times: number[], snaps: any[], start: nu
       const oret = open.prem0 > 0 ? ((premNow - open.prem0) / open.prem0) * 100 : 0;
       open.peak = Math.max(open.peak, oret);
       // Exit ladder SHARED with the live monitor (risk/exitpolicy.ts): −10% hard stop,
-      // +10% gain-lock (floor 0), soft ~20% TP or ride the trail. Backtest and live
+      // +10% gain-lock (floor +1.5%), soft ~20% TP or ride the trail. Backtest and live
       // must agree or the backtest numbers are lies.
       let reason = exitReason(oret, open.peak, band) || '';
       if (!reason && held >= dte) reason = 'expiry';

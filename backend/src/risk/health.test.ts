@@ -61,11 +61,11 @@ describe('healthVerdict', () => {
 });
 
 describe('SWING_LAW /api/health snapshot', () => {
-  it('is 10 / 10 / 0 / 20 / 10 / dte 2–14', () => {
+  it('is 10 / 10 / 1.5 / 20 / 10 / dte 2–14', () => {
     assert.deepEqual(SWING_LAW, {
       hardStopPct: 10,
       gainLockArmPct: 10,
-      gainLockFloorPct: 0,
+      gainLockFloorPct: 1.5,
       softTakeProfitPct: 20,
       trailPct: 10,
       entryDteMin: 2,

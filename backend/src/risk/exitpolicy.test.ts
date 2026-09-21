@@ -16,15 +16,15 @@ import {
 } from './exitpolicy.js';
 
 describe('SWING_LAW constants (Eric locked)', () => {
-  it('matches −10% hard stop / +10% arm / 0 floor / ~20% soft TP / trail 10', () => {
+  it('matches −10% hard stop / +10% arm / +1.5% floor / ~20% soft TP / trail 10', () => {
     assert.equal(HARD_STOP_PCT, 10);
     assert.equal(GAIN_LOCK_ARM_PCT, 10);
-    assert.equal(GAIN_LOCK_FLOOR_PCT, 0);
+    assert.equal(GAIN_LOCK_FLOOR_PCT, 1.5);
     assert.equal(SOFT_TAKE_PROFIT_PCT, 20);
     assert.equal(SWING_TRAIL_PCT, 10);
     assert.equal(SWING_LAW.hardStopPct, 10);
     assert.equal(SWING_LAW.gainLockArmPct, 10);
-    assert.equal(SWING_LAW.gainLockFloorPct, 0);
+    assert.equal(SWING_LAW.gainLockFloorPct, 1.5);
     assert.equal(SWING_LAW.softTakeProfitPct, 20);
     assert.equal(SWING_LAW.trailPct, 10);
     assert.equal(SWING_LAW.entryDteMin, 2);
@@ -54,13 +54,20 @@ describe('exitReason — cut losers / winners ride', () => {
     assert.equal(exitReason(-9.9, 0, { tp: 20, sl: 35, trail: 40 }), null);
   });
 
-  it('arms gain-lock at +10% and floors at 0 (never round-trip to a loss)', () => {
+  it('arms gain-lock at +10% and floors at +1.5% so slip does not lock in red', () => {
+    // Trigger while still green. Floor 0 waited for breakeven and QQQ/SPY/IWM filled −1.5% / −5%.
+    assert.equal(exitReason(1.5, 10, band), 'gain-lock');
+    assert.equal(exitReason(1.4, 10, band), 'gain-lock');
+    assert.equal(exitReason(1.51, 10, band), null); // above the floor; trail width 10 has not fired
     assert.equal(exitReason(0, 10, band), 'gain-lock');
-    assert.equal(exitReason(-0.1, 12, band), 'gain-lock');
-    // +12% peak faded to +0.1% is a 11.9pt giveback — trail 10 fires before the floor.
-    assert.equal(exitReason(0.1, 12, band), 'trailing-stop');
+    assert.equal(exitReason(-1.5, 12, band), 'gain-lock');
+    // Above the floor, a 10pt giveback is still the trail.
+    assert.equal(exitReason(2, 12, band), 'trailing-stop');
     assert.equal(exitReason(3, 12, band), null); // inside the 10pt trail, still above floor
-    assert.equal(exitReason(-1, 9.9, band), null); // not armed yet; not yet −10%
+    assert.equal(exitReason(-1, 9.9, band), null); // arm stays +10%; not yet −10%
+    // Hard stop is unchanged and still wins over the gain-lock floor.
+    assert.equal(exitReason(-10, 15, band), 'stop-loss');
+    assert.equal(exitReason(-9.9, 0, { tp: 20, sl: 35, trail: 10 }), null);
   });
 
   it('soft TP ~20% closes when there is no trail, else trail keeps riding after +10% peak', () => {

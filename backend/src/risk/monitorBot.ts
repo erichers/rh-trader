@@ -2,7 +2,13 @@
  * Pure helpers for stamping bot_id on position monitors.
  * A reattached stop used to insert bot_id NULL, and a later bot fill then
  * bailed out because a monitor already existed. Muse cannot learn that close.
+ *
+ * Buy lookup uses filled / partially_filled rows only. A vetoed, canceled, or
+ * rejected order must not stamp a bot — that is how Index QuickBot (SPY/QQQ)
+ * landed on an open NVDA monitor. If no filled buy matches the OCC, bot_id
+ * stays null rather than inventing one from a vetoed Index draft.
  */
+import { INDEX_QUICKBOT_SYMBOLS, isIndexQuickbotName } from '../bots/indexUniverse.js';
 
 export type MonitorBotVia = 'draft' | 'order' | 'signal' | 'ambiguous' | 'none';
 
@@ -18,13 +24,30 @@ export type MonitorOrderCandidate = {
   symbol?: string | null;
   occ?: string | null;
   side?: string | null;
+  /** Missing status is not a fill. Only filled / partially_filled attribute. */
+  status?: string | null;
+  bot_name?: string | null;
 };
 
 export type MonitorSignalCandidate = {
   bot_id?: number | null;
   symbol?: string | null;
   fired?: number | boolean | null;
+  bot_name?: string | null;
 };
+
+const ATTRIBUTABLE_BUY_STATUSES = new Set(['filled', 'partially_filled']);
+
+export function isAttributableBuyStatus(status: unknown): boolean {
+  return ATTRIBUTABLE_BUY_STATUSES.has(String(status || '').trim().toLowerCase());
+}
+
+/** Index QuickBot may own SPY and QQQ only. Any other name is unrestricted. */
+export function botMayOwnSymbol(botName: unknown, symbol: string): boolean {
+  if (!isIndexQuickbotName(botName)) return true;
+  const sym = String(symbol || '').toUpperCase();
+  return (INDEX_QUICKBOT_SYMBOLS as readonly string[]).includes(sym);
+}
 
 export function positiveId(v: unknown): number | null {
   const n = typeof v === 'string' ? Number(v.trim()) : Number(v);
@@ -66,10 +89,12 @@ function fromOrder(o: MonitorOrderCandidate): MonitorBotMatch {
 }
 
 /**
- * Draft bot_id always wins (the fill that opened the position).
- * Otherwise the latest matching buy: exact OCC first (from raw.draft._contract.occSymbol),
- * then a buy that has no OCC stored (orders have no occ_symbol column).
- * A buy for a different contract is never used. No buy → one fired signal, else none.
+ * A usable draft bot_id wins (the fill that opened the position).
+ * A vetoed/canceled/rejected draft does not. Index QuickBot never owns NVDA.
+ * Otherwise the latest filled or partially_filled buy: exact OCC first
+ * (from raw.draft._contract.occSymbol), then a filled buy that has no OCC stored.
+ * A buy for a different contract is never used. No filled buy → one fired
+ * signal that may own the symbol, else none.
  * AI opens stay null because they have no draft bot_id and no bot buy.
  */
 export function matchMonitorBot(input: {
@@ -77,19 +102,26 @@ export function matchMonitorBot(input: {
   occ?: string | null;
   draftBotId?: number | null;
   draftOrderId?: number | null;
+  draftStatus?: string | null;
+  draftBotName?: string | null;
   orders?: MonitorOrderCandidate[];
   signals?: MonitorSignalCandidate[];
 }): MonitorBotMatch {
+  const sym = String(input.symbol || '').toUpperCase();
   const draft = positiveId(input.draftBotId);
-  if (draft) {
+  const draftStatus = input.draftStatus == null ? '' : String(input.draftStatus);
+  const draftBlocked = draftStatus !== '' && !isAttributableBuyStatus(draftStatus);
+  const draftOffUniverse = !botMayOwnSymbol(input.draftBotName, sym);
+  if (draft && !draftBlocked && !draftOffUniverse) {
     return { bot_id: draft, order_id: positiveId(input.draftOrderId), via: 'draft' };
   }
-  const sym = String(input.symbol || '').toUpperCase();
   const occ = normOcc(input.occ);
   const buys = (input.orders || [])
     .filter((o) => {
+      if (!isAttributableBuyStatus(o.status)) return false;
       if (String(o.side || 'buy').toLowerCase() !== 'buy') return false;
       if (String(o.symbol || '').toUpperCase() !== sym) return false;
+      if (!botMayOwnSymbol(o.bot_name, sym)) return false;
       return !!positiveId(o.bot_id);
     })
     .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
@@ -109,6 +141,7 @@ export function matchMonitorBot(input: {
   const sigs = (input.signals || []).filter((s) => {
     if (s.fired === 0 || s.fired === false) return false;
     if (String(s.symbol || '').toUpperCase() !== sym) return false;
+    if (!botMayOwnSymbol(s.bot_name, sym)) return false;
     return !!positiveId(s.bot_id);
   });
   const sigBots = uniqueIds(sigs.map((s) => s.bot_id));

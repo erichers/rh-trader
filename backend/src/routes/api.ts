@@ -37,6 +37,7 @@ import { getFutures, leadingFuture } from '../market/futures.js';
 import { runLearning, listRuns, listIdeas, learningStatus } from '../learning.js';
 import { armPaperFromBacktests } from '../paperArm.js';
 import { collectPaperHealth } from '../risk/health.js';
+import { MONITORS_LIST_SQL } from '../risk/monitorList.js';
 import { runBotsAutofix } from '../bots/autofix.js';
 import { jevPublicStatus } from '../risk/jev.js';
 import { saveJevSettings } from '../risk/jevSettings.js';
@@ -482,7 +483,7 @@ export async function registerRoutes(app: FastifyInstance) {
   // ── Live position monitors (trailing-stop / TP / SL enforcement) ──────────
   app.get('/api/monitors', async () => {
     const env = await getTradingEnv();
-    return q("SELECT * FROM position_monitors WHERE env=:env OR (env IS NULL AND :env='alpaca_paper') ORDER BY status ASC, opened_at DESC LIMIT 100", { env });
+    return q(MONITORS_LIST_SQL, { env });
   });
   app.post('/api/monitors/check', async () => (await import('../risk/monitor.js')).checkMonitors());
   app.get('/api/audit', async () => q('SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 150'));

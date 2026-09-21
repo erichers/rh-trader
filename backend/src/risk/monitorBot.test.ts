@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchMonitorBot, occFromOrderRaw, planMonitorOpen } from './monitorBot.js';
+import { matchMonitorBot, occFromOrderRaw, planMonitorOpen, type MonitorOrderCandidate } from './monitorBot.js';
+
+function filled(row: MonitorOrderCandidate): MonitorOrderCandidate {
+  return { status: 'filled', side: 'buy', ...row };
+}
 
 describe('monitor bot_id persistence', () => {
   it('persists the fill bot_id even when an open monitor was attached with null', () => {
@@ -57,9 +61,9 @@ describe('monitor bot_id persistence', () => {
       symbol: 'NVDA',
       occ,
       orders: [
-        { id: 10, bot_id: 39, symbol: 'NVDA', occ, side: 'buy' },
-        { id: 11, bot_id: 88, symbol: 'NVDA', occ, side: 'buy' },
-        { id: 12, bot_id: 4, symbol: 'NVDA', occ: 'NVDA260116C00190000', side: 'buy' },
+        filled({ id: 10, bot_id: 39, symbol: 'NVDA', occ }),
+        filled({ id: 11, bot_id: 88, symbol: 'NVDA', occ }),
+        filled({ id: 12, bot_id: 4, symbol: 'NVDA', occ: 'NVDA260116C00190000' }),
       ],
     });
     assert.equal(latest.via, 'order');
@@ -70,8 +74,8 @@ describe('monitor bot_id persistence', () => {
       symbol: 'NVDA',
       occ,
       orders: [
-        { id: 3, bot_id: 39, symbol: 'NVDA', side: 'buy' },
-        { id: 7, bot_id: 88, symbol: 'NVDA', occ: '', side: 'buy' },
+        filled({ id: 3, bot_id: 39, symbol: 'NVDA' }),
+        filled({ id: 7, bot_id: 88, symbol: 'NVDA', occ: '' }),
       ],
     });
     assert.equal(bare.bot_id, 88);
@@ -80,7 +84,7 @@ describe('monitor bot_id persistence', () => {
     const wrongContract = matchMonitorBot({
       symbol: 'NVDA',
       occ,
-      orders: [{ id: 9, bot_id: 4, symbol: 'NVDA', occ: 'NVDA260116C00190000', side: 'buy' }],
+      orders: [filled({ id: 9, bot_id: 4, symbol: 'NVDA', occ: 'NVDA260116C00190000' })],
     });
     assert.equal(wrongContract.via, 'none');
     assert.equal(wrongContract.bot_id, null);
@@ -103,5 +107,58 @@ describe('monitor bot_id persistence', () => {
   it('reads OCC from order raw and ignores a bare underlying', () => {
     assert.equal(occFromOrderRaw({ draft: { _contract: { occSymbol: 'NVDA260116C00180000' } } }), 'NVDA260116C00180000');
     assert.equal(occFromOrderRaw({ place: { symbol: 'NVDA' } }), '');
+  });
+
+  it('ignores vetoed, canceled, and rejected buys and does not stamp Index onto NVDA', () => {
+    const occ = 'NVDA260116C00180000';
+    const index = 'Index QuickBot — SPY & QQQ';
+    const vetoed = matchMonitorBot({
+      symbol: 'NVDA',
+      occ,
+      draftBotId: 39,
+      draftStatus: 'vetoed',
+      draftBotName: index,
+      orders: [
+        { id: 304, bot_id: 39, symbol: 'NVDA', occ, side: 'buy', status: 'vetoed', bot_name: index },
+        { id: 305, bot_id: 39, symbol: 'NVDA', occ, side: 'buy', status: 'canceled', bot_name: index },
+        { id: 306, bot_id: 39, symbol: 'NVDA', occ, side: 'buy', status: 'rejected', bot_name: index },
+        { id: 307, bot_id: 39, symbol: 'NVDA', occ, side: 'buy', status: 'draft', bot_name: index },
+      ],
+      signals: [{ bot_id: 39, symbol: 'NVDA', fired: 1, bot_name: index }],
+    });
+    assert.equal(vetoed.via, 'none');
+    assert.equal(vetoed.bot_id, null);
+    assert.equal(vetoed.order_id, null);
+
+    const realFill = matchMonitorBot({
+      symbol: 'NVDA',
+      occ,
+      orders: [
+        { id: 400, bot_id: 39, symbol: 'NVDA', occ, side: 'buy', status: 'vetoed', bot_name: index },
+        filled({ id: 210, bot_id: 88, symbol: 'NVDA', occ, bot_name: 'NVDA Momentum' }),
+      ],
+    });
+    assert.equal(realFill.via, 'order');
+    assert.equal(realFill.bot_id, 88);
+    assert.equal(realFill.order_id, 210);
+
+    const indexFillOnNvda = matchMonitorBot({
+      symbol: 'NVDA',
+      occ,
+      orders: [filled({ id: 60, bot_id: 39, symbol: 'NVDA', occ, bot_name: index })],
+    });
+    assert.equal(indexFillOnNvda.bot_id, null);
+    assert.equal(indexFillOnNvda.via, 'none');
+
+    const indexPartial = matchMonitorBot({
+      symbol: 'QQQ',
+      occ: 'QQQ260116C00500000',
+      orders: [{
+        id: 70, bot_id: 39, symbol: 'QQQ', occ: 'QQQ260116C00500000', side: 'buy',
+        status: 'partially_filled', bot_name: index,
+      }],
+    });
+    assert.equal(indexPartial.bot_id, 39);
+    assert.equal(indexPartial.order_id, 70);
   });
 });
