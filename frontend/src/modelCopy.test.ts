@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { JEV_CADENCE_FALLBACK, jevScopeFlags, jevScopeLabel, jevSkipLabel } from './modelCopy.ts';
+import { JEV_CADENCE_FALLBACK, JEV_EMPTY_PICK, jevScopeFlags, jevScopeLabel, jevSkipLabel } from './modelCopy.ts';
 
 describe('Jev desk copy', () => {
   it('translates skip codes into desk language', () => {
@@ -18,6 +18,11 @@ describe('Jev desk copy', () => {
     assert.deepEqual(jevScopeFlags('{"jev":{"exit":"true"}}'), { entry: false, exit: true });
     assert.equal(jevScopeLabel({ entry: false, exit: false }), 'off');
     assert.equal(jevScopeLabel({ entry: true, exit: true }), 'entry + exit');
+  });
+
+  it('uses the quiet-desk empty pick with no em dash', () => {
+    assert.equal(JEV_EMPTY_PICK, 'No last pick yet. Either the bots are quiet, or Jev is off and the rails are flying solo.');
+    assert.equal(JEV_EMPTY_PICK.includes('—'), false);
   });
 
   it('falls back to all four cadence bands', () => {

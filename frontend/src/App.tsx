@@ -5,6 +5,7 @@ import { Health, SetMode, SetKill, RhConnect, RhSync, SetEnv, RhAuthStart, Focus
 import { jevLastShort, jevLastText, museTuneText } from './modelCopy';
 import { readSidebarCollapsed, writeSidebarCollapsed } from './sidebarPref';
 import { showRobinhoodConnect } from './deskChrome';
+import DeskHealthStrip from './components/DeskHealthStrip';
 import MarketClock from './components/MarketClock';
 import AccountStrip from './components/AccountStrip';
 import Dashboard from './views/Dashboard';
@@ -164,6 +165,7 @@ export default function App() {
   const [pendingEnv, setPendingEnv] = useState<string | null>(null); // live-switch confirmation
   const [focus, setFocusState] = useState<any>({ enabled: false, symbol: 'SPY', tickers: ['SPY', 'QQQ'] });
   const [navCollapsed, setNavCollapsed] = useState(() => readSidebarCollapsed(typeof localStorage === 'undefined' ? null : localStorage));
+  const [phoneNav, setPhoneNav] = useState(false);
   const toggleNav = () => {
     setNavCollapsed((cur) => {
       const next = !cur;
@@ -236,7 +238,7 @@ export default function App() {
 
   return (
     <HashRouter>
-      <div className={`app${isLive ? ' live' : ''}${navCollapsed ? ' nav-collapsed' : ''}`}>
+      <div className={`app${isLive ? ' live' : ''}${navCollapsed ? ' nav-collapsed' : ''}${phoneNav ? ' phone-nav' : ''}`}>
         <aside className="sidebar">
           <div className="brand">
             <span className="brand-full">rh.tradingbot</span>
@@ -250,7 +252,7 @@ export default function App() {
               onClick={toggleNav}
             >{navCollapsed ? '›' : '‹'}</button>
           </div>
-          <nav className="nav">
+          <nav className="nav" onClick={() => setPhoneNav(false)}>
             {NAV.map((group, gi) => (
               <div className="nav-group" key={gi}>
                 {group.label && <div className="nav-group-label">{group.label}</div>}
@@ -305,6 +307,9 @@ export default function App() {
 
         <div className="main">
           <header className="topbar">
+            <button type="button" className="nav-burger" aria-expanded={phoneNav} aria-label={phoneNav ? 'Close menu' : 'Open menu'} onClick={() => setPhoneNav((v) => !v)}>
+              {phoneNav ? 'Close' : 'Menu'}
+            </button>
             <ModeSwitcher mode={health?.mode || 'observe'} onChange={changeMode} />
             <MarketClock />
             {showRobinhoodConnect(env, isLive) && rhStatus !== 'connected' && (
@@ -318,22 +323,27 @@ export default function App() {
               </select>
             </span>
             <div className="spacer" />
-            <span className={`env-badge ${isLive ? 'live' : 'paper'}`} title="Trading environment">
-              <span className="dot" />{ENV_LABELS[env] || env}
-            </span>
-            <select
-              aria-label="Trading environment"
-              value={env}
-              onChange={(e) => changeEnv(e.target.value, e.target.value !== 'alpaca_paper')}
-              title="Alpaca paper is the desk. Live still asks for confirmation here and on the server."
-            >
-              <option value="alpaca_paper">Paper (Alpaca)</option>
-              <option value="robinhood_live">Live — Robinhood</option>
-            </select>
-            <NavLink to="/models/ai" className="pill" title={health?.aiLabel}>{health?.aiShort || 'AI'}</NavLink>
-            <button className={health?.killSwitch ? 'primary' : 'danger'} onClick={toggleKill}>
-              {health?.killSwitch ? '● KILL ENGAGED — release' : 'KILL SWITCH'}
-            </button>
+            <div className="desk-lock">
+              <span className={`env-badge ${isLive ? 'live' : 'paper'}`} title="Trading environment">
+                <span className="dot" />{ENV_LABELS[env] || env}
+              </span>
+              <DeskHealthStrip health={health} apiDown={apiDown} />
+              <div className="desk-lock-row">
+                <select
+                  aria-label="Trading environment"
+                  value={env}
+                  onChange={(e) => changeEnv(e.target.value, e.target.value !== 'alpaca_paper')}
+                  title="Alpaca paper is the desk. Live still asks for confirmation here and on the server."
+                >
+                  <option value="alpaca_paper">Paper (Alpaca)</option>
+                  <option value="robinhood_live">Live — Robinhood</option>
+                </select>
+                <NavLink to="/models/ai" className="pill" title={health?.aiLabel}>{health?.aiShort || 'AI'}</NavLink>
+                <button className={`kill-lock ${health?.killSwitch ? 'primary' : 'danger'}`} onClick={toggleKill}>
+                  {health?.killSwitch ? 'KILL ENGAGED. Release' : 'KILL SWITCH'}
+                </button>
+              </div>
+            </div>
           </header>
           {apiDown && (
             <div className="api-down-banner">
@@ -383,7 +393,13 @@ export default function App() {
               <Route path="/settings" element={<Settings health={health} onChange={refresh} />} />
             </Routes>
           </div>
+          <nav className="phone-dock" aria-label="Desk shortcuts">
+            <NavLink to="/positions" onClick={() => setPhoneNav(false)}>Positions</NavLink>
+            <NavLink to="/bots" onClick={() => setPhoneNav(false)}>Bots</NavLink>
+          </nav>
         </div>
+
+        {phoneNav && <button type="button" className="phone-scrim" aria-label="Close menu" onClick={() => setPhoneNav(false)} />}
 
         {pendingEnv && (
           <div className="modal-overlay" onClick={() => setPendingEnv(null)}>

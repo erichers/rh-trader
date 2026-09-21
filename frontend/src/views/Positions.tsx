@@ -1,5 +1,6 @@
-import { Account, Positions } from '../api/client';
+import { Account, Monitors, Positions } from '../api/client';
 import { Card, money, num, signClass, useAsync, Sym, Live, posLast } from '../components/ui';
+import ExitPulseMark from '../components/ExitPulseMark';
 import './positions.css';
 
 /** Dollars shown as a quantity (cash is held in units of one dollar). */
@@ -8,7 +9,11 @@ const qtyFmt = (v: number) => v.toLocaleString('en-US', { minimumFractionDigits:
 export default function PositionsView({ health }: { health?: any }) {
   const { data, loading } = useAsync<any[]>(Positions, [], 6000);
   const acct = useAsync<any>(Account, [], 15000);
+  const mons = useAsync<any[]>(Monitors, [], 15000);
   const rows = data || [];
+  const openMons = (mons.data || []).filter((m) => m.status === 'open' && Number(m.qty) > 0);
+  const monitorFor = (p: any) => openMons.find((m) => m.occ_symbol && p.symbol === m.occ_symbol)
+    || openMons.find((m) => m.symbol && p.symbol === m.symbol);
 
   const a = acct.data;
   const cash = Number(a?.cash);
@@ -41,7 +46,7 @@ export default function PositionsView({ health }: { health?: any }) {
           {(hasCash || rows.length > 0) && (
             <table className="pos-table">
               <thead>
-                <tr><th>Symbol</th><th>Class</th><th>Qty</th><th>Avg Cost</th><th>Current</th><th>Market Value</th><th>Unrealized P/L</th></tr>
+                <tr><th>Symbol</th><th>Class</th><th>Qty</th><th>Avg Cost</th><th>Current</th><th>Market Value</th><th>Unrealized P/L</th><th>Exit pulse</th></tr>
               </thead>
               <tbody>
                 {hasCash && (
@@ -53,10 +58,12 @@ export default function PositionsView({ health }: { health?: any }) {
                     <td>{money(1)}</td>
                     <td>{money(cash)}</td>
                     <td className="muted">—</td>
+                    <td className="muted">—</td>
                   </tr>
                 )}
                 {rows.map((p) => {
                   const last = posLast(p);
+                  const mon = Number(p.qty) > 0 ? monitorFor(p) : null;
                   return (
                   <tr key={p.id}>
                     <td><Sym bold>{p.symbol}</Sym></td>
@@ -66,6 +73,7 @@ export default function PositionsView({ health }: { health?: any }) {
                     <td>{last != null ? money(last) : '—'}</td>
                     <td>{money(p.market_value)}</td>
                     <td className={signClass(p.unrealized_pl)}>{money(p.unrealized_pl)}</td>
+                    <td>{mon ? <ExitPulseMark row={mon} health={health} /> : <span className="muted">No exit watch</span>}</td>
                   </tr>
                   );
                 })}

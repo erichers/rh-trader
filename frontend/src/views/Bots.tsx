@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Bots, SetBotEnabled, SetBotMode, EvalBot, BacktestBot, Health, api } from '../api/client';
+import { Bots, SetBotEnabled, SetBotMode, SetBotJev, EvalBot, BacktestBot, Health, api } from '../api/client';
 import { Card, Badge, FleetBadge, useAsync, Sym } from '../components/ui';
 import { Icon } from '../components/icons';
 import { optionLabelFromAction } from '../lib/options';
-import { jevScopeFlags, jevScopeLabel } from '../modelCopy';
+import { jevScopeFlags } from '../modelCopy';
 import BotWizard, { type BotPreset } from '../components/BotWizard';
 import { PromotionModal } from '../components/quanttools';
 import { RiskCell } from '../components/risksizing';
@@ -223,9 +223,6 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
           {action.option_type && <Badge kind={action.option_type === 'call' ? 'green' : 'red'}>{action.option_type}</Badge>}
           {action._category && <span className="pill">{action._category}</span>}
           {probs.length > 0 && <Badge kind={probs.some(p=>p.kind==='red')?'red':'amber'}>{probs.length} issue{probs.length>1?'s':''}</Badge>}
-          <Link to="/models/jev" className={`pill${jev.entry || jev.exit ? ' on' : ''}`} title="Per-bot Jev. Default off." onClick={(e) => e.stopPropagation()}>
-            Jev {jevScopeLabel(jev)}
-          </Link>
         </div>
         <div className="row" onClick={(e) => e.stopPropagation()}>
           <span className="muted" style={{ fontSize: 11 }}>{symbols.join(', ')}</span>
@@ -242,6 +239,22 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
       <div className="row" style={{ marginTop: 8, gap: 8, alignItems: 'flex-start' }} onClick={(e) => e.stopPropagation()}>
         <span className="muted" style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.4px' }}>RISK</span>
         <RiskCell bot={bot} reload={reload} />
+      </div>
+      <div className="jev-cols" onClick={(e) => e.stopPropagation()}>
+        <div className="jev-col">
+          <span className="muted">Entry Jev</span>
+          <button type="button" className={`jev-switch${jev.entry ? ' on' : ''}`} aria-pressed={jev.entry} aria-label={`Entry Jev ${jev.entry ? 'on' : 'off'}`} onClick={async () => { try { await SetBotJev(bot.id, { entry: !jev.entry }); reload(); } catch (e: any) { setMsg('Error: ' + (e?.message || e)); } }}>
+            <span className="jev-switch-v">{jev.entry ? 'on' : 'off'}</span>
+          </button>
+        </div>
+        <div className="jev-col">
+          <span className="muted">Exit Jev</span>
+          <button type="button" className={`jev-switch${jev.exit ? ' on' : ''}`} aria-pressed={jev.exit} aria-label={`Exit Jev ${jev.exit ? 'on' : 'off'}`} onClick={async () => { try { await SetBotJev(bot.id, { exit: !jev.exit }); reload(); } catch (e: any) { setMsg('Error: ' + (e?.message || e)); } }}>
+            <span className="jev-switch-v">{jev.exit ? 'on' : 'off'}</span>
+          </button>
+          {!jev.exit && <span className="muted">logs when off</span>}
+          <Link to="/models/jev">log</Link>
+        </div>
       </div>
 
       {open && (
@@ -406,7 +419,7 @@ export default function BotsView() {
     <Card title={<span className="row" style={{ gap: 8 }}>Bots ({bots.length}) <FleetBadge env={env} /></span>} right={<span className="row" style={{ gap: 8 }}><button className="primary" onClick={() => setWizard({})}>+ New bot (wizard)</button><a href="#/quickbots" className="icon-btn"><Icon name="bolt" size={14} /> QuickBots</a><a href="#/strategies">Strategy Library</a></span>}>
       <div className="muted" style={{ marginBottom: 10 }}>
         Click a bot to expand: see how it works, edit every setting, run/backtest it, and enable it.
-        Jev stays off until you turn a scope on under Models → Jev.
+        Entry Jev and Exit Jev default off. Exit still logs when it is off.
         {broken > 0 && <span className="red"> {broken} bot(s) have issues that need fixing.</span>}
         {health.data && !health.data.broker?.alpacaConfigured && <span className="amber"> Alpaca market data is not configured — options bots can't get prices.</span>}
       </div>

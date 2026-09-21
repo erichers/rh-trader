@@ -7,6 +7,7 @@ import { DataTable, type Column } from '../components/datatable';
 import { BotModeControl, MODE_LEGEND } from '../components/botcontrols';
 import { Icon } from '../components/icons';
 import { jevLastText, museTuneText } from '../modelCopy';
+import ExitPulseMark from '../components/ExitPulseMark';
 
 const PNL_WINDOWS: { key: string; label: string }[] = [
   { key: 'day', label: 'Day' }, { key: 'week', label: 'Week' }, { key: 'month', label: 'Month' },
@@ -325,6 +326,7 @@ export default function Dashboard({ health }: { health: any }) {
           { key: 'peak_price', label: 'Peak', align: 'right', sortValue: (m) => Number(m.peak_price), render: (m) => money(m.peak_price) },
           { key: 'last_price', label: 'Last', align: 'right', sortValue: (m) => Number(m.last_price), render: (m) => money(m.last_price) },
           { key: 'pl', label: 'P/L', align: 'right', sortValue: (m) => m.entry_price ? (Number(m.last_price) - Number(m.entry_price)) / Number(m.entry_price) : 0, render: (m) => { const pl = m.entry_price ? ((Number(m.last_price) - Number(m.entry_price)) / Number(m.entry_price)) * 100 : 0; return <span className={signClass(pl)}>{pl >= 0 ? '+' : ''}{pl.toFixed(1)}%</span>; } },
+          { key: 'pulse', label: 'Exit pulse', sortable: false, render: (m) => <ExitPulseMark row={m} health={health} /> },
           { key: 'zone', label: 'Stop ◄►  Target', sortable: false, align: 'center', render: (m) => { const pl = m.entry_price ? ((Number(m.last_price) - Number(m.entry_price)) / Number(m.entry_price)) * 100 : 0; return <StopBar pl={pl} tp={Number(m.tp_pct)} sl={Number(m.sl_pct)} />; } },
           { key: 'totp', label: '→ TP', align: 'right', sortValue: (m) => { const pl = m.entry_price ? ((Number(m.last_price) - Number(m.entry_price)) / Number(m.entry_price)) * 100 : 0; return Number(m.tp_pct) > 0 ? Number(m.tp_pct) - pl : 999; }, render: (m) => { const pl = m.entry_price ? ((Number(m.last_price) - Number(m.entry_price)) / Number(m.entry_price)) * 100 : 0; return Number(m.tp_pct) > 0 ? <span className="green" title="gain still needed to hit take-profit">{Math.max(0, Number(m.tp_pct) - pl).toFixed(1)}%</span> : <span className="muted">—</span>; } },
           { key: 'tosl', label: '→ SL', align: 'right', sortValue: (m) => { const pl = m.entry_price ? ((Number(m.last_price) - Number(m.entry_price)) / Number(m.entry_price)) * 100 : 0; return Number(m.sl_pct) > 0 ? pl + Number(m.sl_pct) : 999; }, render: (m) => { const pl = m.entry_price ? ((Number(m.last_price) - Number(m.entry_price)) / Number(m.entry_price)) * 100 : 0; const buf = pl + Number(m.sl_pct); return Number(m.sl_pct) > 0 ? <span className={buf < 5 ? 'red' : 'amber'} title="buffer before stop-loss triggers">{buf.toFixed(1)}%</span> : <span className="muted">—</span>; } },

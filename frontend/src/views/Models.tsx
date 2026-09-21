@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useParams } from 'react-router-dom';
 import { AiModels, GetJev, GetMuse, SetBotJev, SetJev, SetMuse } from '../api/client';
-import { JEV_CADENCE_FALLBACK, jevLastText, jevSkipLabel, museTuneText } from '../modelCopy';
+import { JEV_CADENCE_FALLBACK, JEV_EMPTY_PICK, jevLastText, jevSkipLabel, museTuneText } from '../modelCopy';
 import { Badge, Card, fmtDateTime } from '../components/ui';
 
 export type ModelId = 'jev' | 'muse' | 'ai';
@@ -187,8 +187,8 @@ function JevDetail({ health, onChange }: { health: any; onChange: () => void }) 
         {j.degraded && <div className="amber" style={{ marginTop: 12, fontSize: 13 }}>Degraded: {j.reason || 'budget or payment'}. Entries size down. Exits stay on the rails.</div>}
         {!j.configured && cur === 'active' && <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>No key: active entries size down. Exits are logged and not sold.</div>}
         <div className="jev-picks">
-          <PickCard label="Last entry" last={entry} empty="No entry decision yet." />
-          <PickCard label="Last exit" last={exit} empty="No exit decision yet." />
+          <PickCard label="Entry Jev" last={entry} empty={JEV_EMPTY_PICK} />
+          <PickCard label="Exit Jev" last={exit} empty={JEV_EMPTY_PICK} />
         </div>
       </Card>
 
@@ -242,8 +242,8 @@ function JevDetail({ health, onChange }: { health: any; onChange: () => void }) 
         )}
       </Card>
 
-      <Card title="Decision log">
-        <p className="muted jev-help">Every check is kept, including ones skipped because that bot is off. Applied means global active, the scope was on, and the desk is on Alpaca paper.</p>
+      <Card title={decisions.length ? `Last ${decisions.length} decisions` : 'Last decisions'}>
+        <p className="muted jev-help">Exit Jev is a separate pick from entry. Applied means global active, that scope was on, and the desk is on Alpaca paper. Off still logs.</p>
         {!decisions.length && status === 'down' && <div className="muted">Decision log needs the API.</div>}
         {!decisions.length && status !== 'down' && <div className="muted">No decisions yet.</div>}
         {!!decisions.length && (

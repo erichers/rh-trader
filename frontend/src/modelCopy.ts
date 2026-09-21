@@ -71,6 +71,8 @@ export function jevScopeFlags(risk: unknown): { entry: boolean; exit: boolean } 
   return { entry: jevFlagOn(jev.entry), exit: jevFlagOn(jev.exit) };
 }
 
+export const JEV_EMPTY_PICK = 'No last pick yet. Either the bots are quiet, or Jev is off and the rails are flying solo.';
+
 export function jevScopeLabel(flags: { entry?: boolean; exit?: boolean } | null | undefined): string {
   const entry = !!flags?.entry;
   const exit = !!flags?.exit;
