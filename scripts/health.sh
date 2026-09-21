@@ -54,6 +54,10 @@ if (d.jev) {
   const j = d.jev;
   console.log(`jev ok=${j.ok} mode=${j.mode} spent=${j.spentUsd} budget=${j.budgetUsd} degraded=${j.degraded}${j.reason ? ' reason=' + j.reason : ''}`);
 }
+if (d.autofix) {
+  const a = d.autofix;
+  console.log(`autofix lastRun=${a.lastRun || ''} lastFixed=${a.lastFixedCount ?? ''} lastError=${a.lastError || ''}`);
+}
 if (d.swingLaw) {
   const s = d.swingLaw;
   console.log(`swingLaw hard=${s.hardStopPct} arm=${s.gainLockArmPct} floor=${s.gainLockFloorPct} tp=${s.softTakeProfitPct} trail=${s.trailPct} dte=${s.entryDteMin}-${s.entryDteMax} leaps=${s.leapsEligible}`);

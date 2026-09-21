@@ -101,6 +101,9 @@ export const config = {
   watch: {
     intervalMs: num(process.env.WATCH_INTERVAL_MS, 15 * 60_000),
   },
+  autofix: {
+    intervalMs: num(process.env.AUTOFIX_INTERVAL_MS, 20 * 60_000),
+  },
   alpaca: {
     apiKey: process.env.ALPACA_API_KEY || '',
     secretKey: process.env.ALPACA_SECRET_KEY || '',

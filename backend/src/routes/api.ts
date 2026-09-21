@@ -37,6 +37,7 @@ import { getFutures, leadingFuture } from '../market/futures.js';
 import { runLearning, listRuns, listIdeas, learningStatus } from '../learning.js';
 import { armPaperFromBacktests } from '../paperArm.js';
 import { collectPaperHealth } from '../risk/health.js';
+import { runBotsAutofix } from '../bots/autofix.js';
 
 /** Attach each bot's EFFECTIVE risk (bot value, else the global trade default, with the
  *  source of every field) to a bot list. Additive — no existing field changes. */
@@ -92,6 +93,7 @@ export async function registerRoutes(app: FastifyInstance) {
         model: aiS,
         watch: paper.watch,
         jev: paper.jev,
+        autofix: paper.autofix,
       };
     } catch (e: any) {
       // Fall back to the old shape if the collector throws — do not 500 the desk.
@@ -619,6 +621,10 @@ export async function registerRoutes(app: FastifyInstance) {
     const res = await resetFleet(env, { forceOrphan: b.force_orphan === true });
     if (res?.refused) return reply.code(409).send({ error: 'refused', env, ...res });
     return res;
+  });
+  app.post('/api/bots/autofix', async (req) => {
+    const dry = !!(req.body as any)?.dry_run;
+    return runBotsAutofix({ dryRun: dry });
   });
   app.post('/api/bots', async (req, reply) => {
     const b = req.body as any;

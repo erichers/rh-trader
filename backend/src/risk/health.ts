@@ -5,6 +5,7 @@ import { RISK_LAW } from './law.js';
 import { SWING_LAW } from './exitpolicy.js';
 import { museWatchStatus, type MuseWatchLamp } from '../muse/watch.js';
 import { jevHealth, type JevHealth } from './jevBudget.js';
+import { autofixHealth, type AutofixHealth } from '../bots/autofix.js';
 
 export type HealthFailure =
   | 'db_down'
@@ -33,6 +34,7 @@ export type PaperHealth = {
   limits: { maxPositionUsd: number; maxConcentrationPct: number; maxDailyLossPct: number; maxOrdersPerDay: number } | null;
   watch?: MuseWatchLamp;
   jev?: JevHealth;
+  autofix?: AutofixHealth;
 };
 
 /** Pure verdict used by /api/health and tests. Never throws. */
@@ -109,6 +111,8 @@ export async function collectPaperHealth(): Promise<PaperHealth> {
   try { watch = museWatchStatus(); } catch { /* lamp stays omitted */ }
   let jev: JevHealth | undefined;
   try { jev = await jevHealth(); } catch { /* optional */ }
+  let autofix: AutofixHealth | undefined;
+  try { autofix = autofixHealth(); } catch { /* optional */ }
 
   return {
     ok: db, // process answered; db is the minimum "API can persist"
@@ -124,6 +128,7 @@ export async function collectPaperHealth(): Promise<PaperHealth> {
     limits,
     watch,
     jev,
+    autofix,
     ...base,
   };
 }

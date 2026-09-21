@@ -18,6 +18,7 @@ import { embedPending } from './rag.js';
 import { learningTick } from './learning.js';
 import { config } from './config.js';
 import { runMuseWatchCycle } from './muse/watch.js';
+import { runBotsAutofix } from './bots/autofix.js';
 
 let timers: NodeJS.Timeout[] = [];
 
@@ -115,7 +116,15 @@ export function startWorker() {
   // Muse observe-only watcher: open positions + armed bots. Never places.
   const watch = loop('muse.watch', config.watch.intervalMs, async () => { await runMuseWatchCycle(); });
 
-  timers = [sync, bots, news, monitors, campaign, newsAi, review, focusLearn, alerts, models, embed, learning, watch];
+  // Standing bot autofix (paper only, kill switch off). Idempotent. Never widens live stops.
+  const autofix = loop('bots.autofix', config.autofix.intervalMs, async () => {
+    const env = await getTradingEnv();
+    if (env !== 'alpaca_paper') return;
+    if (await getKillSwitch()) return;
+    await runBotsAutofix({ env });
+  });
+
+  timers = [sync, bots, news, monitors, campaign, newsAi, review, focusLearn, alerts, models, embed, learning, watch, autofix];
   void (async () => {
     await probeProviders().catch(() => {}); // non-blocking at boot, before the first AI call
     if (await brokerReady()) await syncAll().catch(() => {});
@@ -127,6 +136,11 @@ export function startWorker() {
       newsMonitor().catch(() => {});
       getFocus().then((f) => { if (f.enabled) learnTicker(f.symbol).catch(() => {}); }).catch(() => {});
       runMuseWatchCycle().catch(() => {});
+      getTradingEnv().then(async (env) => {
+        if (env === 'alpaca_paper' && !(await getKillSwitch())) {
+          await runBotsAutofix({ env });
+        }
+      }).catch(() => {});
     }, 20_000);
   })();
 }

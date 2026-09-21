@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { healthVerdict } from './health.js';
 import { SWING_LAW } from './exitpolicy.js';
 import { museWatchLamp } from '../muse/watch.js';
+import { autofixHealth, resetAutofixForTests } from '../bots/autofix.js';
 
 describe('healthVerdict', () => {
   it('is ready only when db + alpaca_paper + alpaca reachable', () => {
@@ -70,6 +71,16 @@ describe('SWING_LAW /api/health snapshot', () => {
       entryDteMax: 14,
       leapsEligible: true,
     });
+  });
+});
+
+describe('health.autofix snapshot', () => {
+  it('exposes lastRun / lastFixedCount / lastError', () => {
+    resetAutofixForTests();
+    const a = autofixHealth();
+    assert.equal(a.lastRun, null);
+    assert.equal(a.lastFixedCount, 0);
+    assert.equal(a.lastError, null);
   });
 });
 
