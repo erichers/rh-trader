@@ -9,7 +9,7 @@ import {
 } from './autofix.js';
 
 describe('proposeBotAutofix', () => {
-  it('put → observe, stays enabled, watch-only', () => {
+  it('put → observe, disabled, clears last_result', () => {
     const p = proposeBotAutofix({
       id: 11,
       name: 'Long Put — Breakdown',
@@ -18,31 +18,38 @@ describe('proposeBotAutofix', () => {
       asset_class: 'option',
       action: { side: 'buy', option_type: 'put', expiration: 'weekly' },
       risk: { stop_loss_pct: 12, take_profit_pct: 30, trailing_stop_pct: 20 },
+      last_result: [{ symbol: 'SPY', skipped: 'puts_blocked' }],
     });
     assert.ok(p);
     assert.equal(classifyBotForAutofix({
       name: 'Long Put — Breakdown', action: { option_type: 'put' },
     }), 'put');
     assert.equal(p!.next.mode, 'observe');
+    assert.equal(p!.next.enabled, 0);
+    assert.equal(p!.next.clearLastResult, true);
     assert.equal(p!.next.action._observe_only, true);
     assert.equal(p!.next.action.option_type, 'put');
     assert.match(p!.reason, /put/);
   });
 
-  it('equity (no option_type) → observe', () => {
+  it('equity (no option_type) → observe + disabled, clears allowlist skip', () => {
     const p = proposeBotAutofix({
       id: 12,
       name: 'Donchian Breakout',
-      mode: 'full_auto',
+      enabled: 1,
+      mode: 'observe',
       asset_class: 'equity',
       action: { side: 'buy', qty: 10 },
       risk: {},
+      last_result: [{ symbol: 'AAPL', skipped: "'equity' not in allowlist [option]" }],
     });
     assert.ok(p);
     assert.equal(classifyBotForAutofix({
       name: 'Donchian Breakout', action: { side: 'buy' }, asset_class: 'equity',
     }), 'equity');
     assert.equal(p!.next.mode, 'observe');
+    assert.equal(p!.next.enabled, 0);
+    assert.equal(p!.next.clearLastResult, true);
     assert.equal(p!.next.action._observe_only, true);
   });
 
@@ -119,7 +126,37 @@ describe('proposeBotAutofix', () => {
     });
     assert.ok(p);
     assert.equal(p!.next.mode, 'observe');
+    assert.equal(p!.next.enabled, 0);
     assert.match(p!.reason, /sell|covered/i);
+  });
+
+  it('already-disabled equity with no last_result is a no-op', () => {
+    assert.equal(proposeBotAutofix({
+      id: 19,
+      name: 'Donchian Breakout',
+      enabled: 0,
+      mode: 'observe',
+      asset_class: 'equity',
+      action: { side: 'buy', _observe_only: true },
+      risk: { stop_loss_pct: 10, take_profit_pct: 20, trailing_stop_pct: 10, hold_overnight: true, hold_over_weekend: true },
+      last_result: null,
+    }), null);
+  });
+
+  it('disabled equity still clears a stale allowlist last_result', () => {
+    const p = proposeBotAutofix({
+      id: 20,
+      name: 'Donchian Breakout',
+      enabled: 0,
+      mode: 'observe',
+      asset_class: 'equity',
+      action: { side: 'buy', _observe_only: true },
+      risk: { stop_loss_pct: 10, take_profit_pct: 20, trailing_stop_pct: 10, hold_overnight: true, hold_over_weekend: true },
+      last_result: [{ symbol: 'MSFT', skipped: "'equity' not in allowlist [option]" }],
+    });
+    assert.ok(p);
+    assert.equal(p!.next.enabled, 0);
+    assert.equal(p!.next.clearLastResult, true);
   });
 
   it('observe stub is not promoted to full_auto', () => {

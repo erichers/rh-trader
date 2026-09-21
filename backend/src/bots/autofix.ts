@@ -12,7 +12,7 @@ import {
   SOFT_TAKE_PROFIT_PCT,
   SWING_TRAIL_PCT,
 } from '../risk/exitpolicy.js';
-import { isObserveOnlyBot, parseJsonish } from '../risk/observe.js';
+import { OBSERVE_STUB_KEYS, OBSERVE_STUB_NAMES, parseJsonish } from '../risk/observe.js';
 import { isShortDtePrivileged, SHORT_DTE_BAND, SHORT_DTE_RAILS } from '../risk/shortdte.js';
 
 export const AUTOFIX_TRAIL_MIN = 8;
@@ -27,9 +27,11 @@ export type AutofixProposal = {
   changes: AutofixChange[];
   next: {
     mode: Mode;
+    enabled: number;
     asset_class: string;
     action: Record<string, any>;
     risk: Record<string, any>;
+    clearLastResult: boolean;
   };
 };
 
@@ -73,6 +75,18 @@ function eq(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+function hasLastResult(v: unknown): boolean {
+  if (v == null || v === '') return false;
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (!s || s === 'null' || s === '[]' || s === '{}') return false;
+    return true;
+  }
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === 'object') return Object.keys(v as object).length > 0;
+  return true;
+}
+
 function strategyKey(action: any, risk: any): string {
   return String(action?._strategy || action?.strategy || action?._play?.key || risk?._strategy || '').trim();
 }
@@ -107,16 +121,25 @@ export type AutofixClass =
   | 'long_call'
   | 'ok';
 
+function isLibraryWatchStub(bot: any, action: any, risk: any): boolean {
+  const name = String(bot?.name || '').trim().toLowerCase();
+  if (name && (OBSERVE_STUB_NAMES as readonly string[]).some((n) => n.toLowerCase() === name)) return true;
+  const key = strategyKey(action, risk).toLowerCase();
+  return !!(key && (OBSERVE_STUB_KEYS as readonly string[]).includes(key));
+}
+
 export function classifyBotForAutofix(bot: any): AutofixClass {
   const action = parseJsonish(bot?.action) ?? bot?.action ?? {};
   const risk = parseJsonish(bot?.risk) ?? bot?.risk ?? {};
   const name = String(bot?.name || '');
   const key = strategyKey(action, risk);
-  if (isObserveOnlyBot(bot)) return 'observe_stub';
+  // Off-rails first. A prior autofix may have stamped `_observe_only` on equity/puts —
+  // those are not library watch stubs and must still disable + clear last_result.
   if (looksLikePut(action, name)) return 'put';
   if (looksLikeCoveredOrSell(action, name)) return 'sell';
   const privileged = isShortDtePrivileged({ key, name, keys: [action?._play?.key, action?._strategy] });
   if (explicitShortDte(action, risk) && !privileged) return 'short_dte';
+  if (isLibraryWatchStub(bot, action, risk)) return 'observe_stub';
   const leaps = isLeapsTrade({
     expiration: action?.expiration,
     name,
@@ -201,10 +224,10 @@ function clampPlayLists(action: Record<string, any>): void {
 
 const CLASS_REASON: Record<AutofixClass, string> = {
   observe_stub: 'observe-only stub — stay watch, never promote',
-  put: 'put → observe (watch only)',
-  equity: 'equity (no option_type) → observe',
-  sell: 'covered-call / option sell → observe',
-  short_dte: 'explicit 0–1 DTE (not on allowlist) → observe',
+  put: 'put → observe + disabled (clear last_result)',
+  equity: 'equity (no option_type) → observe + disabled (clear last_result)',
+  sell: 'covered-call / option sell → observe + disabled (clear last_result)',
+  short_dte: 'explicit 0–1 DTE (not on allowlist) → observe + disabled (clear last_result)',
   leaps: 'long-call LEAPS → full_auto call buy',
   long_call: 'long call → full_auto call buy',
   ok: 'exit clamp only',
@@ -223,10 +246,19 @@ export function proposeBotAutofix(bot: any): AutofixProposal | null {
 
   let mode = String(bot?.mode || 'observe') as Mode;
   let asset_class = String(bot?.asset_class || 'equity');
+  const wasEnabled = bot?.enabled === true || bot?.enabled === 1 || bot?.enabled === '1';
+  let enabled = wasEnabled ? 1 : 0;
+  let clearLastResult = false;
+  const offRails = klass === 'put' || klass === 'equity' || klass === 'sell' || klass === 'short_dte';
 
-  if (klass === 'observe_stub' || klass === 'put' || klass === 'equity' || klass === 'sell' || klass === 'short_dte') {
+  if (klass === 'observe_stub' || offRails) {
     mode = 'observe';
-    if (klass !== 'observe_stub') action._observe_only = true;
+    if (offRails) {
+      enabled = 0;
+      action._observe_only = true;
+      // Stale allowlist skips on last_result paint the Bots banner red even after observe.
+      if (hasLastResult(bot?.last_result)) clearLastResult = true;
+    }
   } else if (klass === 'leaps' || klass === 'long_call') {
     mode = 'full_auto';
     asset_class = 'option';
@@ -248,11 +280,13 @@ export function proposeBotAutofix(bot: any): AutofixProposal | null {
 
   const changes: AutofixChange[] = [];
   if (mode !== String(bot?.mode || '')) changes.push({ field: 'mode', from: bot?.mode ?? null, to: mode });
+  if (enabled !== (wasEnabled ? 1 : 0)) changes.push({ field: 'enabled', from: wasEnabled ? 1 : 0, to: enabled });
   if (asset_class !== String(bot?.asset_class || '')) {
     changes.push({ field: 'asset_class', from: bot?.asset_class ?? null, to: asset_class });
   }
   if (!eq(origAction, action)) changes.push({ field: 'action', from: origAction, to: action });
   if (!eq(origRisk, risk)) changes.push({ field: 'risk', from: origRisk, to: risk });
+  if (clearLastResult) changes.push({ field: 'last_result', from: bot?.last_result ?? null, to: null });
   if (!changes.length) return null;
 
   return {
@@ -260,7 +294,7 @@ export function proposeBotAutofix(bot: any): AutofixProposal | null {
     name,
     reason: CLASS_REASON[klass],
     changes,
-    next: { mode, asset_class, action, risk },
+    next: { mode, enabled, asset_class, action, risk, clearLastResult },
   };
 }
 
@@ -315,10 +349,12 @@ export async function runBotsAutofix(opts: {
           await opts.saveBot(proposal, env);
         } else if (proposal.id != null) {
           await exec(
-            `UPDATE bots SET mode=:mode, asset_class=:ac, action=CAST(:action AS JSON), risk=CAST(:risk AS JSON)
+            `UPDATE bots SET mode=:mode, enabled=:enabled, asset_class=:ac, action=CAST(:action AS JSON), risk=CAST(:risk AS JSON)
+             ${proposal.next.clearLastResult ? ', last_result=NULL' : ''}
              WHERE id=:id AND env=:env`,
             {
               mode: proposal.next.mode,
+              enabled: proposal.next.enabled,
               ac: proposal.next.asset_class,
               action: JSON.stringify(proposal.next.action),
               risk: JSON.stringify(proposal.next.risk),
