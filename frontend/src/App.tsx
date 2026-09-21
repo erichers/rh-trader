@@ -28,6 +28,7 @@ import JournalView from './views/Journal';
 import AlertsView from './views/Alerts';
 import QuantLab from './views/QuantLab';
 import LearningView from './views/Learning';
+import ModelsView from './views/Models';
 
 type NavItem = { to: string; label: string; icon: IconName; end?: boolean };
 const NAV: { label?: string; items: NavItem[] }[] = [
@@ -64,6 +65,7 @@ const NAV: { label?: string; items: NavItem[] }[] = [
   ] },
   { label: 'System', items: [
     { to: '/activity', label: 'Activity & Risk', icon: 'activity' },
+    { to: '/models', label: 'Models', icon: 'chat' },
     { to: '/settings', label: 'Settings', icon: 'settings' },
   ] },
 ];
@@ -241,23 +243,29 @@ export default function App() {
             <div className="row" style={{ marginTop: 4 }}>
               <span className={`dot ${rhDot}`} /> Robinhood: {apiDown ? 'unknown' : rhStatus}
             </div>
-            <div className="row" style={{ marginTop: 4 }}>
-              <span className={`dot ${apiDown ? 'gray' : (health?.ai ? 'green' : 'gray')}`} /> AI: {apiDown ? 'unknown' : (health?.ai ? (health?.aiShort || 'ready') : 'no key')}
-            </div>
+            <NavLink to="/models/ai" className="status-link" title={health?.aiLabel || 'AI research + chat'}>
+              <span className={`dot ${apiDown ? 'gray' : (health?.ai ? 'green' : 'gray')}`} />
+              <span className="status-text">AI: {apiDown ? 'unknown' : (health?.ai ? (health?.aiShort || 'ready') : 'no key')}</span>
+            </NavLink>
             <div className="row" style={{ marginTop: 4 }}>
               <span className={`dot ${apiDown ? 'red' : (health?.db ? 'green' : 'red')}`} /> DB: {apiDown ? 'unknown' : (health?.db ? 'up' : 'down')}
             </div>
-            <div className="row" style={{ marginTop: 4 }} title={health?.watch?.note || 'Muse never places orders.'}>
-              <span className={`dot ${museWatchDot(apiDown, health)}`} /> Muse: {museWatchLabel(apiDown, health)}
-            </div>
-            <div className="row" style={{ marginTop: 4, gap: 6 }} title={jevTitle(health)}>
-              <span className={`dot ${jevDot(apiDown, health)}`} />
-              <span>Jev: {jevLabel(apiDown, health)}</span>
+            <NavLink to="/models/muse" className="status-link" title={health?.watch?.note || 'Muse never places orders.'}>
+              <span className={`dot ${museWatchDot(apiDown, health)}`} />
+              <span className="status-text">Muse: {museWatchLabel(apiDown, health)}</span>
+            </NavLink>
+            <div className="row status-link" style={{ marginTop: 4, gap: 6 }}>
+              <NavLink to="/models/jev" className="status-link" style={{ marginTop: 0, flex: 1 }} title={jevTitle(health)}>
+                <span className={`dot ${jevDot(apiDown, health)}`} />
+                <span className="status-text">Jev: {jevLabel(apiDown, health)}</span>
+              </NavLink>
               <button
                 style={{ fontSize: 10, padding: '1px 6px', marginLeft: 'auto' }}
                 disabled={apiDown}
                 title={health?.jev?.enabled && health?.jev?.mode !== 'off' ? 'Turn Jev off (fail-open, no TypeSafe calls)' : 'Enable Jev in shadow (log, never block)'}
-                onClick={async () => {
+                onClick={async (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
                   const on = !!(health?.jev?.enabled && health?.jev?.mode !== 'off');
                   await SetJev(on ? { enabled: false, mode: 'off' } : { enabled: true, mode: 'shadow' });
                   refresh();
@@ -294,7 +302,7 @@ export default function App() {
               <option value="alpaca_paper">Paper (Alpaca)</option>
               <option value="robinhood_live">Live — Robinhood</option>
             </select>
-            <span className="pill" title={health?.aiLabel}>{health?.aiShort || 'AI'}</span>
+            <NavLink to="/models/ai" className="pill" title={health?.aiLabel}>{health?.aiShort || 'AI'}</NavLink>
             <button className={health?.killSwitch ? 'primary' : 'danger'} onClick={toggleKill}>
               {health?.killSwitch ? '● KILL ENGAGED — release' : 'KILL SWITCH'}
             </button>
@@ -342,6 +350,8 @@ export default function App() {
               <Route path="/news" element={<NewsView />} />
               <Route path="/chat" element={<ChatView />} />
               <Route path="/activity" element={<Activity />} />
+              <Route path="/models" element={<ModelsView health={health} onChange={refresh} />} />
+              <Route path="/models/:which" element={<ModelsView health={health} onChange={refresh} />} />
               <Route path="/settings" element={<Settings health={health} onChange={refresh} />} />
             </Routes>
           </div>

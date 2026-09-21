@@ -251,6 +251,26 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
   font-size: 11px; padding: 2px 9px; border-radius: var(--radius-pill);
   background: var(--panel2); color: var(--muted); border: 1px solid var(--border); font-weight: 600;
 }
+.pill.on { color: var(--text); border-color: var(--accent); background: var(--green-tint); }
+
+.status-link {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  color: inherit; margin-top: 4px; cursor: pointer;
+}
+.status-link:hover { color: var(--text); }
+.status-link.active { color: var(--text); }
+.status-link .status-text { flex: 1; min-width: 0; }
+
+.model-brief { max-width: 720px; }
+.model-brief p { margin: 0 0 10px; line-height: 1.55; font-size: 14px; }
+.model-brief p:last-child { margin-bottom: 0; }
+.model-tape {
+  display: inline-block; margin-bottom: 10px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.7px; text-transform: uppercase;
+  color: var(--accent); border-left: 3px solid var(--accent); padding: 2px 0 2px 10px;
+}
+a.model-hub-card { color: inherit; display: block; }
+a.model-hub-card:hover { border-color: var(--border-strong); color: inherit; }
 
 /* ════════════════════════ Environment indicator (SAFETY) ════════════════════════ */
 .env-badge {

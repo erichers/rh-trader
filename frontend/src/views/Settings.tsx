@@ -99,7 +99,7 @@ export default function Settings({ health, onChange }: { health: any; onChange: 
         </div>
       </Card>
 
-      <Card title="Jev — post-signal override">
+      <Card title="Jev — post-signal override" right={<a href="#/models/jev">Open Jev page →</a>}>
         <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
           Lightning panel after a bot fires. Hard rails (kill, DTE, puts, max $) always win.
           <b> off</b> never calls TypeSafe (fail-open). <b> shadow</b> logs and never blocks.
@@ -124,7 +124,7 @@ export default function Settings({ health, onChange }: { health: any; onChange: 
         {health?.jev?.last?.because && <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{health.jev.last.because}</div>}
       </Card>
 
-      <Card title="Muse — auditor + improver">
+      <Card title="Muse — auditor + improver" right={<a href="#/models/muse">Open Muse page →</a>}>
         <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
           Muse never places orders. <b>observe</b> watches only.
           <b> improve</b> (paper default) clamps SL≤10 / TP toward 20 / trail 8–15 and may nudge min_matches / cooldown.
@@ -145,6 +145,14 @@ export default function Settings({ health, onChange }: { health: any; onChange: 
           {health?.watch?.note || 'Muse never places.'}
           {health?.watch?.lastTune?.name ? ` · last tune ${health.watch.lastTune.name}` : ''}
         </div>
+      </Card>
+
+      <Card title="AI research + chat" right={<a href="#/models/ai">Open AI page →</a>}>
+        <div className="muted" style={{ fontSize: 12 }}>
+          Sidebar label: <b>{health?.aiShort || 'no key'}</b>. Research vs chat comes from the live
+          provider chain (usually Kimi + Groq). Keys stay in <code>.env</code> — this page never shows them.
+        </div>
+        <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>{health?.aiLabel || 'AI label unavailable until the API is up.'}</div>
       </Card>
 
       <TradeSizingCard />

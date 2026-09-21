@@ -40,6 +40,7 @@ export const GetJev = () => api.get('/jev');
 export const SetJev = (body: { enabled?: boolean; mode?: 'off' | 'shadow' | 'active' }) => api.put('/jev', body);
 export const GetMuse = () => api.get('/muse');
 export const SetMuse = (body: { mode?: 'observe' | 'improve' }) => api.put('/muse', body);
+export const AiModels = () => api.get('/ai/models');
 export const RhStatus = () => api.get('/rh/status');
 export const RhConnect = () => api.post('/rh/connect');
 export const RhAuthStart = () => api.post('/rh/auth/start');
