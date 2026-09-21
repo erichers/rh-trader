@@ -32,11 +32,12 @@ export type StrategyTemplate = {
 
 const SWING = (o: Partial<StrategyTemplate> & Pick<StrategyTemplate, 'key' | 'name' | 'description' | 'rules'>): StrategyTemplate => ({
   category: 'swing',
-  asset_class: 'equity',
+  asset_class: 'option',
   timeframe: '1d',
   education: '',
   ai_gate: { enabled: false },
-  action: { side: 'buy', qty: 1, order_type: 'market' },
+  // Monday rails: new entries are 2–14 DTE calls. Put templates override option_type.
+  action: { side: 'buy', qty: 1, order_type: 'market', option_type: 'call', strike_target: 'atm', expiration: 'weekly' },
   default_symbols: ['AAPL', 'MSFT', 'NVDA', 'SPY', 'QQQ'],
   ...o,
 });

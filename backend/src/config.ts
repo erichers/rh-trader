@@ -80,6 +80,12 @@ export const config = {
     port: num(process.env.PORT, 8011),
     basePath: process.env.BASE_PATH || '/grokbot/grokbot-rh-trader',
   },
+  typesafe: {
+    // Optional Jev / System One. Unset → paper entries fail-open (no live call).
+    apiKey: process.env.TYPESAFE_API_KEY || '',
+    baseUrl: process.env.TYPESAFE_BASE_URL || 'https://api.typesafe.ai',
+    model: process.env.TYPESAFE_MODEL || 'jev-latest',
+  },
   alpaca: {
     apiKey: process.env.ALPACA_API_KEY || '',
     secretKey: process.env.ALPACA_SECRET_KEY || '',

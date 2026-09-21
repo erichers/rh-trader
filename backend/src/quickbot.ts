@@ -2,7 +2,8 @@ import { snapshot } from './market/indicators.js';
 import { dteToExpiration } from './market/expirations.js';
 import { isShortDtePrivileged, SHORT_DTE_BAND } from './risk/dte.js';
 import { evalRules, reentryGate, claimEntrySlot, releaseEntrySlot } from './bots/engine.js';
-import { exitReason } from './risk/exitpolicy.js';
+import { exitReason, HARD_STOP_PCT, SOFT_TAKE_PROFIT_PCT, SWING_TRAIL_PCT } from './risk/exitpolicy.js';
+import { callsOnlyBuyCheck } from './risk/callsonly.js';
 import { alpacaData } from './brokers/alpaca.js';
 import { q, exec, getTradingEnv, audit } from './db.js';
 import { executeDraft } from './execute.js';
@@ -39,11 +40,11 @@ export const DTE_BANDS: Record<number, { tp: number; sl: number; trail: number; 
   // Live entry still vetoes these for every other bot.
   0: { ...SHORT_DTE_BAND },
   1: { ...SHORT_DTE_BAND },
-  2: { tp: 25, sl: 10, trail: 12, max_position_usd: 900, qty: 1 },
-  3: { tp: 25, sl: 10, trail: 12, max_position_usd: 1100, qty: 1 },
-  4: { tp: 25, sl: 10, trail: 12, max_position_usd: 1400, qty: 1 },
-  7: { tp: 25, sl: 10, trail: 12, max_position_usd: 2000, qty: 1 },
-  14: { tp: 25, sl: 10, trail: 12, max_position_usd: 2500, qty: 1 },
+  2: { tp: SOFT_TAKE_PROFIT_PCT, sl: HARD_STOP_PCT, trail: SWING_TRAIL_PCT, max_position_usd: 900, qty: 1 },
+  3: { tp: SOFT_TAKE_PROFIT_PCT, sl: HARD_STOP_PCT, trail: SWING_TRAIL_PCT, max_position_usd: 1100, qty: 1 },
+  4: { tp: SOFT_TAKE_PROFIT_PCT, sl: HARD_STOP_PCT, trail: SWING_TRAIL_PCT, max_position_usd: 1400, qty: 1 },
+  7: { tp: SOFT_TAKE_PROFIT_PCT, sl: HARD_STOP_PCT, trail: SWING_TRAIL_PCT, max_position_usd: 2000, qty: 1 },
+  14: { tp: SOFT_TAKE_PROFIT_PCT, sl: HARD_STOP_PCT, trail: SWING_TRAIL_PCT, max_position_usd: 2500, qty: 1 },
 };
 export const QUICK_DTES = [2, 3, 4, 7, 14]; // live entry window 2–14 DTE for the fleet
 const SHORT_QUICK_DTES = [1, ...QUICK_DTES]; // allowlisted high-certainty plays may also train 1DTE
@@ -188,7 +189,7 @@ function simulatePlay(closes: number[], times: number[], snaps: any[], start: nu
       const oret = open.prem0 > 0 ? ((premNow - open.prem0) / open.prem0) * 100 : 0;
       open.peak = Math.max(open.peak, oret);
       // Exit ladder SHARED with the live monitor (risk/exitpolicy.ts): −10% hard stop,
-      // +10% gain-lock (floor 0), soft ~25% TP or ride the trail. Backtest and live
+      // +10% gain-lock (floor 0), soft ~20% TP or ride the trail. Backtest and live
       // must agree or the backtest numbers are lies.
       let reason = exitReason(oret, open.peak, band) || '';
       if (!reason && held >= dte) reason = 'expiry';
@@ -615,6 +616,11 @@ export async function evaluateQuickbot(botRow: any): Promise<any[]> {
               allow_0_1_dte: privileged,
             },
           };
+          const callsRail = callsOnlyBuyCheck(draft, { mode: botRow.mode, env: botRow.env || env });
+          if (!callsRail.pass) {
+            fireSummaries.push({ play: play.name, skipped: `${callsRail.reason} — Monday rails skip put/equity buys` });
+            continue;
+          }
           // SIZING: the play's band qty is a floor of 1 contract, not a deliberate pin — so the
           // effective amount per trade (bot override, else the global trade default) decides how
           // many contracts, capped by the band's own max_position_usd inside sizeDraft.

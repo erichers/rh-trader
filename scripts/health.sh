@@ -50,6 +50,10 @@ if (alpaca.configured != null || alpaca.ok != null) {
   console.log(`alpaca configured=${alpaca.configured} ok=${alpaca.ok}${alpaca.error ? ' error=' + alpaca.error : ''}`);
 }
 console.log(`watch available=${watch.available} running=${watch.running} observeOnly=${watch.observeOnly}`);
+if (d.swingLaw) {
+  const s = d.swingLaw;
+  console.log(`swingLaw hard=${s.hardStopPct} arm=${s.gainLockArmPct} floor=${s.gainLockFloorPct} tp=${s.softTakeProfitPct} trail=${s.trailPct} dte=${s.entryDteMin}-${s.entryDteMax}`);
+}
 if (failures.length) console.log(`failures=${failures.join(',')}`);
 
 if (d.live || d.env === 'robinhood_live') {

@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { healthVerdict } from './health.js';
+import { SWING_LAW } from './exitpolicy.js';
 
 describe('healthVerdict', () => {
   it('is ready only when db + alpaca_paper + alpaca reachable', () => {
@@ -53,5 +54,19 @@ describe('healthVerdict', () => {
     assert.equal(v.ready, false);
     assert.ok(v.failures.includes('live_env'));
     assert.ok(v.failures.includes('not_paper'));
+  });
+});
+
+describe('SWING_LAW /api/health snapshot', () => {
+  it('is 10 / 10 / 0 / 20 / 10 / dte 2–14', () => {
+    assert.deepEqual(SWING_LAW, {
+      hardStopPct: 10,
+      gainLockArmPct: 10,
+      gainLockFloorPct: 0,
+      softTakeProfitPct: 20,
+      trailPct: 10,
+      entryDteMin: 2,
+      entryDteMax: 14,
+    });
   });
 });

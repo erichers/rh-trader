@@ -10,6 +10,7 @@ import { refreshBars } from '../brokers/index.js';
 import { sizeDraft } from '../risk/sizing.js';
 import { isObserveOnlyBot, observeOnlySkipWhy } from '../risk/observe.js';
 import { allowlistSkipReason, assignInferredAssetClass, botClassSkipReason, looksLikeOptionPlay } from '../risk/optionPrice.js';
+import { callsOnlyBuyCheck, convertEquityDraftToCall, shouldConvertEquityBot } from '../risk/callsonly.js';
 
 export type Bot = {
   id: number;
@@ -346,7 +347,13 @@ export async function evaluateBot(botRow: any): Promise<any> {
   // Fri 8028140: equity ORB on an option-only desk. Stop emission here — do not
   // convert to a made-up option, and do not open equity live / insert a veto row.
   const classSkip = botClassSkipReason(bot, config.trading.allowedAssetClasses);
-  if (classSkip) {
+  if (classSkip && !shouldConvertEquityBot({
+    classSkip,
+    optionAllowed: config.trading.allowedAssetClasses.includes('option'),
+    mode: bot.mode,
+    env: bot.env,
+    observeOnly: isObserveOnlyBot(bot),
+  })) {
     const skipped = [{ skipped: classSkip, why: `${classSkip} — not submitted.` }];
     await exec('UPDATE bots SET last_evaluated_at=NOW(), last_result=CAST(:r AS JSON) WHERE id=:id AND env=:env', {
       r: JSON.stringify(skipped), id: bot.id, env: bot.env,
@@ -431,8 +438,23 @@ export async function evaluateBot(botRow: any): Promise<any> {
           source: 'bot',
           bot_id: bot.id,
         };
+        if (bot.action?.option_type === 'put' || bot.action?.option_type === 'call') {
+          draft.option_type = bot.action.option_type;
+        }
         if (isObserveOnlyBot(bot) || bot.action?._observe_only) draft._observe_only = true;
-        if (isOption) {
+        const callsRail = callsOnlyBuyCheck(draft, { mode: bot.mode, env: bot.env });
+        if (!callsRail.pass && callsRail.reason === 'puts_blocked') {
+          results.push({
+            symbol, fired: true, skipped: 'puts_blocked', checks: ev.checks,
+            why: `${ev.why} puts_blocked — Monday full_auto paper is calls-only (observe/skip).`,
+          });
+          continue;
+        }
+        if (callsRail.convertToCall) {
+          convertEquityDraftToCall(draft);
+        }
+        const tradeOption = looksLikeOptionPlay(draft);
+        if (tradeOption) {
           // Option bots MUST carry the contract spec so executeDraft resolves a REAL contract
           // and sizes off its PREMIUM. Two bugs lived here: (1) these fields were dropped, so the
           // option never resolved; (2) est_price was seeded with snap.last — the UNDERLYING price —

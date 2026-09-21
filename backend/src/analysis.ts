@@ -30,7 +30,7 @@ function suggestFor(t: { pl: number; peak: number; reason: string; status: strin
   if (status === 'open') return `Open — managed live (stop −${t.sl}%, trail ${t.trail}pts${t.tp > 0 ? `, cap +${t.tp}%` : ', no cap'}).`;
   const giveback = peak - pl;
   if (reason === 'gain-lock' || reason === 'breakeven-lock') return `Gain-lock: peaked +${r1(peak)}% and the +${GAIN_LOCK_ARM_PCT}% lock closed at floor ${GAIN_LOCK_FLOOR_PCT}% (breakeven) instead of a loss.`;
-  if (reason === 'take-profit') return `Booked the soft +${r1(pl)}% take-profit goal. With a trail armed, winners keep riding past ~25%.`;
+  if (reason === 'take-profit') return `Booked the soft +${r1(pl)}% take-profit goal. With a trail armed, winners keep riding past ~20%.`;
   if (pl < 0 && peak >= GAIN_LOCK_ARM_PCT) return `Was up +${r1(peak)}% but closed ${r1(pl)}%. The gain-lock (live now) makes this impossible going forward — a +${GAIN_LOCK_ARM_PCT}% trade can no longer close below ${GAIN_LOCK_FLOOR_PCT}%.`;
   if (pl < 0 && (reason === 'stop-loss' || reason === 'trailing-stop') && peak < 12) return `Clean cut: thesis failed fast (peaked only +${r1(peak)}%), exited ${r1(pl)}%. This is the "small loss" half of the design — keep it.`;
   if (pl < 0 && reason === 'expiry') return `Held to expiry for ${r1(pl)}% — theta ate it. The stop should have acted earlier; verify the monitor covered this position all session.`;

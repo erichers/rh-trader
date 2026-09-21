@@ -5,6 +5,7 @@ import { isShortDtePrivileged, syncPlayDteToContract } from './risk/dte.js';
 import { applyResolvedPremium, assignInferredAssetClass } from './risk/optionPrice.js';
 import { placeOrder as brokerPlace } from './brokers/index.js';
 import { execObserveBlock } from './risk/observe.js';
+import { applyJevSizeDown, jevEntryGate } from './risk/jev.js';
 import { releaseBuyNotional, reserveBuyNotional } from './risk/exposure.js';
 import { mapBrokerOrderStatus } from './risk/exitlifecycle.js';
 
@@ -121,6 +122,45 @@ export async function executeDraft(
   }
 
   const decision = await decideExecution(draft, mode, env);
+
+  // Optional Jev Choice on fired bot/AI entries only. Exits stay deterministic.
+  // No key / API error → paper fail-open (allow). A real skip still vetoes.
+  if (decision.action === 'execute' && draft.side === 'buy' && (draft.source === 'bot' || draft.source === 'ai')) {
+    const paper = env === 'alpaca_paper';
+    const gate = await jevEntryGate({
+      symbol: draft.symbol,
+      bot: botRow?.name,
+      why: opts.rationale,
+      dte: draft._play?.dte ?? draft._contract?.expiration,
+      premium: draft.est_price,
+      side: draft.side,
+      source: draft.source,
+    }, { paper });
+    decision.risk.checks.jev_entry = {
+      pass: gate.pick !== 'skip' || gate.failOpen,
+      detail: gate.because,
+    };
+    decision.risk.computed.jev_fail_open = gate.failOpen ? 1 : 0;
+    await audit('jev.entry', `${draft.symbol} ${gate.pick}${gate.failOpen ? ' (fail-open)' : ''}`, {
+      bot_id: draft.bot_id ?? null,
+      env,
+      pick: gate.pick,
+      because: gate.because,
+      called: gate.called,
+    });
+    if (gate.pick === 'skip' && !gate.failOpen) {
+      decision.action = 'veto';
+      decision.risk.ok = false;
+      decision.risk.reason = `jev: skip — ${gate.because}`;
+    } else if (gate.pick === 'size_down' && !gate.failOpen) {
+      const before = Number(draft.qty || 1);
+      draft.qty = applyJevSizeDown(before);
+      decision.risk.computed.jev_size_down_from = before;
+      decision.risk.computed.jev_size_down_to = draft.qty;
+      decision.risk.checks.jev_entry.detail = `${gate.because}; qty ${before}→${draft.qty}`;
+    }
+  }
+
   await logRiskEvent(draft, decision.risk);
 
   // Reserve only after a passing buy so the next bot in this cycle sees the

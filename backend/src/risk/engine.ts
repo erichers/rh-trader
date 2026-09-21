@@ -4,6 +4,7 @@ import { evaluateSymbolCaps, openSymbolExposureUsd, reservedBuyNotional, splitIn
 import { RISK_LAW, applyFullAutoSoftBypass, clampRiskLawDailyLossPct, clampRiskLawPositionUsd } from './law.js';
 import { optionEntryDteCheck, SHORT_DTE_RAILS } from './dte.js';
 import { assignInferredAssetClass, draftNotionalUsd } from './optionPrice.js';
+import { callsOnlyBuyCheck } from './callsonly.js';
 
 export type OrderDraft = {
   symbol: string;
@@ -98,8 +99,9 @@ export function resolveCaps(botRisk: any, play: OrderDraft['_play'] | undefined,
  *  allowlist, no-short / no-naked-write, daily-loss breaker (≤50%), per-ticket and
  *  same-symbol book cap (≤$10k), 25% concentration, and the 2–14 DTE entry window
  *  (never 0DTE/1DTE except an explicit high-certainty allowlist with tight SL/TP;
- *  LEAPS waived). full_auto may bypass only the orders/day throttle. Monday paper
- *  arms `full_auto`; those book rails still bind. */
+ *  LEAPS waived). Monday full_auto paper also vetoes put and leftover equity buys
+ *  (`calls_only` / `puts_blocked`). full_auto may bypass only the orders/day
+ *  throttle. Book rails still bind. */
 export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode): Promise<RiskResult> {
   const checks: RiskResult['checks'] = {};
   const computed: Record<string, number> = {};
@@ -156,6 +158,15 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
   checks.asset_class = {
     pass: allowed,
     detail: allowed ? ac : `'${ac}' not in allowlist [${t.allowedAssetClasses.join(',')}]`,
+  };
+
+  // 3a. Monday full_auto paper: new buys are calls only. Puts and leftover
+  //     equity tickets veto here (engine converts equity templates before size).
+  const callsRail = callsOnlyBuyCheck(draft, { mode, env });
+  checks.calls_only = { pass: callsRail.pass, detail: callsRail.detail };
+  checks.puts_blocked = {
+    pass: callsRail.reason !== 'puts_blocked',
+    detail: callsRail.reason === 'puts_blocked' ? callsRail.detail : 'ok',
   };
 
   // 3b. Option entry DTE — never 0DTE/1DTE unless the bot is on the high-certainty
