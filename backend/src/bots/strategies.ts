@@ -19,7 +19,7 @@ export type StrategyTemplate = {
     order_type: 'market' | 'limit';
     option_type?: 'call' | 'put';
     strike_target?: 'itm' | 'atm' | 'otm';
-    expiration?: 'weekly' | 'monthly';
+    expiration?: 'weekly' | 'monthly' | 'leaps' | string;
     allow_0_1_dte?: boolean;
     _dte?: number;
   };
@@ -135,11 +135,11 @@ export const STRATEGY_LIBRARY: StrategyTemplate[] = [
     default_symbols: ['NVDA', 'TSLA', 'AMD', 'META'],
   },
   {
-    ...SWING({ key: 'leaps-call', name: 'Long Call — Trend (dated)', description: 'Buy longer-dated ITM calls on golden cross.', rules: { golden_cross: true } }),
+    ...SWING({ key: 'leaps-call', name: 'Long Call — LEAPS', description: 'Buy longer-dated ITM LEAPS calls on golden cross.', rules: { golden_cross: true } }),
     category: 'options-calls',
     asset_class: 'option',
-    education: 'ITM, longer-dated calls behave like leveraged shares with less theta decay.',
-    action: { side: 'buy', qty: 1, order_type: 'market', option_type: 'call', strike_target: 'itm', expiration: 'monthly' },
+    education: 'ITM LEAPS (≥180 DTE) behave like leveraged shares with less theta. Far expiration is intentional — the 2–14 DTE window does not apply.',
+    action: { side: 'buy', qty: 1, order_type: 'market', option_type: 'call', strike_target: 'itm', expiration: 'leaps' },
     default_symbols: ['AAPL', 'MSFT', 'SPY'],
   },
 

@@ -29,6 +29,7 @@ describe('SWING_LAW constants (Eric locked)', () => {
     assert.equal(SWING_LAW.trailPct, 10);
     assert.equal(SWING_LAW.entryDteMin, 2);
     assert.equal(SWING_LAW.entryDteMax, 14);
+    assert.equal(SWING_LAW.leapsEligible, true);
     assert.equal(BREAKEVEN_ARM_PCT, GAIN_LOCK_ARM_PCT);
     assert.equal(BREAKEVEN_FLOOR_PCT, GAIN_LOCK_FLOOR_PCT);
   });

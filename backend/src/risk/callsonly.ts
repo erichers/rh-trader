@@ -1,16 +1,22 @@
 /**
- * Monday full_auto paper rails: new buys are 2–14 DTE calls only.
+ * Monday full_auto paper rails: new buys are long calls.
+ *
+ * Non-LEAPS option entries stay in the 2–14 DTE window. Long-call LEAPS
+ * (label / `expiration: 'leaps'` / ≥180 DTE) remain full_auto-eligible —
+ * far expiration is intentional and must not be parked or vetoed here.
  *
  * Puts stay in the strategy library (observe / skip). Equity templates are
  * converted to ATM weekly calls at emit time so Donchian / ORB / RSI still
  * trade — they do not open shares. Risk vetoes any leftover put or equity
- * buy that reaches the gate.
+ * buy that reaches the gate. Covered-call selling is not this file (naked
+ * write stays blocked in the risk engine).
  *
  * Sells / flatten are not this rail (deterministic swing law).
  */
 
 import type { Mode, TradingEnv } from '../config.js';
 import { ENTRY_DTE_MAX, ENTRY_DTE_MIN } from './exitpolicy.js';
+import { LEAPS_DTE_MIN, isLeapsTrade } from './dte.js';
 import { inferAssetClass } from './optionPrice.js';
 
 export const CALLS_ONLY_REASON = 'calls_only';
@@ -25,7 +31,8 @@ export type CallsOnlyHint = {
   qty?: number;
   est_price?: number | null;
   _contract?: { type?: string | null; occSymbol?: string | null } | null;
-  _play?: { dte?: number | null; tag?: string | null; key?: string | null } | null;
+  _play?: { dte?: number | null; tag?: string | null; key?: string | null; name?: string | null } | null;
+  name?: string | null;
 };
 
 export type CallsOnlyOpts = {
@@ -78,44 +85,74 @@ export function callsOnlyBuyCheck(draft: CallsOnlyHint, opts: CallsOnlyOpts = {}
     return {
       pass: false,
       reason: PUTS_BLOCKED_REASON,
-      detail: 'puts_blocked — Monday full_auto paper buys calls only (2–14 DTE)',
+      detail: 'puts_blocked — Monday full_auto paper buys long calls only (LEAPS ok; puts blocked)',
       convertToCall: false,
     };
   }
 
   if (ac === 'option' && (ot === 'call' || ot === '')) {
-    return { pass: true, reason: 'ok', detail: 'call option — calls-only ok', convertToCall: false };
+    const leaps = isLeapsTrade({
+      expiration: draft.expiration,
+      dte: draft._play?.dte,
+      name: draft.name || draft._play?.name,
+      key: draft._play?.key || draft._play?.tag,
+    });
+    return {
+      pass: true,
+      reason: 'ok',
+      detail: leaps
+        ? 'long-call LEAPS — full_auto eligible (2–14 DTE window does not apply)'
+        : 'call option — calls-only ok (2–14 DTE unless privileged 0–1)',
+      convertToCall: false,
+    };
   }
 
   // Equity / ETF template: convert at emit (qty 1, drop share price). If a
   // leftover equity ticket still reaches riskCheck, veto — do not convert a
-  // sized share lot into N contracts.
+  // sized share lot into N contracts. Do not convert a LEAPS-labeled row to weekly.
   return {
     pass: false,
     reason: CALLS_ONLY_REASON,
-    detail: `calls_only — ${ac || 'equity'} buy blocked; convert to a 2–14 DTE call or skip`,
+    detail: `calls_only — ${ac || 'equity'} buy blocked; convert to a call (2–14 DTE or LEAPS) or skip`,
     convertToCall: true,
   };
 }
 
-/** Rewrite an equity (or unlabeled) buy into an ATM weekly call spec. Idempotent for calls. */
+/** Rewrite an equity (or unlabeled) buy into an ATM weekly call spec. Idempotent for calls.
+ *  LEAPS drafts keep their far expiration / ≥180 DTE — never clamp into 2–14. */
 export function convertEquityDraftToCall<T extends CallsOnlyHint>(draft: T): T {
   const ot = optionTypeOf(draft);
   if (ot === 'put') return draft;
   draft.asset_class = 'option';
   draft.option_type = 'call';
   if (!draft.strike_target) draft.strike_target = 'atm';
-  if (!draft.expiration) draft.expiration = 'weekly';
   // Never carry a share last-price as option premium, and never keep a 13-share lot.
   draft.est_price = undefined;
   if (!(Number(draft.qty) > 0) || Number(draft.qty) > 4) draft.qty = 1;
   const play = draft._play && typeof draft._play === 'object' ? { ...draft._play } : {};
+  const leaps = isLeapsTrade({
+    expiration: draft.expiration,
+    dte: play.dte,
+    name: draft.name || play.name,
+    key: play.key || play.tag,
+  });
+  if (leaps) {
+    if (!draft.expiration) draft.expiration = 'leaps';
+    if (play.dte == null || !Number.isFinite(Number(play.dte)) || Number(play.dte) < LEAPS_DTE_MIN) {
+      play.dte = LEAPS_DTE_MIN;
+    }
+    if (!play.tag) play.tag = 'call-leaps';
+    if (!play.key) play.key = play.key || 'leaps-call';
+    draft._play = play;
+    return draft;
+  }
+  if (!draft.expiration) draft.expiration = 'weekly';
   if (play.dte == null || !Number.isFinite(Number(play.dte))) {
     play.dte = 7;
   } else {
     const d = Number(play.dte);
     if (d < ENTRY_DTE_MIN) play.dte = ENTRY_DTE_MIN;
-    if (d > ENTRY_DTE_MAX && d < 180) play.dte = ENTRY_DTE_MAX;
+    if (d > ENTRY_DTE_MAX && d < LEAPS_DTE_MIN) play.dte = ENTRY_DTE_MAX;
   }
   if (!play.tag) play.tag = 'call-7';
   if (!play.key) play.key = 'calls_only';

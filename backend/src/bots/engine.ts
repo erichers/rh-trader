@@ -2,7 +2,7 @@ import { q, exec, audit, getTradingEnv } from '../db.js';
 import { config, isCryptoSymbol, type Mode, type TradingEnv } from '../config.js';
 import { snapshot } from '../market/indicators.js';
 import { dteToExpiration } from '../market/expirations.js';
-import { isLeapsTrade, isShortDtePrivileged } from '../risk/dte.js';
+import { calendarDte, isLeapsTrade, isShortDtePrivileged, LEAPS_DTE_MIN } from '../risk/dte.js';
 import { analyzeSymbol, aiReady } from '../ai/claude.js';
 import { executeDraft } from '../execute.js';
 import type { OrderDraft } from '../risk/engine.js';
@@ -441,8 +441,18 @@ export async function evaluateBot(botRow: any): Promise<any> {
         if (bot.action?.option_type === 'put' || bot.action?.option_type === 'call') {
           draft.option_type = bot.action.option_type;
         }
+        if (bot.action?.expiration) draft.expiration = bot.action.expiration;
         if (isObserveOnlyBot(bot) || bot.action?._observe_only) draft._observe_only = true;
-        const callsRail = callsOnlyBuyCheck(draft, { mode: bot.mode, env: bot.env });
+        const callsRail = callsOnlyBuyCheck({
+          ...draft,
+          name: bot.name,
+          _play: {
+            ...(draft._play || {}),
+            name: bot.name,
+            key: bot.action?._strategy || bot.action?._key,
+            dte: Number(bot.action?._dte) || draft._play?.dte,
+          },
+        }, { mode: bot.mode, env: bot.env });
         if (!callsRail.pass && callsRail.reason === 'puts_blocked') {
           results.push({
             symbol, fired: true, skipped: 'puts_blocked', checks: ev.checks,
@@ -466,16 +476,22 @@ export async function evaluateBot(botRow: any): Promise<any> {
           const privileged = isShortDtePrivileged({ key, name: bot.name, keys: [bot.action?._strategy, bot.action?._key] });
           const leaps = isLeapsTrade({ expiration: bot.action?.expiration, name: bot.name, key });
           const rawDte = Number(bot.action?._dte);
-          const targetDte = Number.isFinite(rawDte)
-            ? ((!privileged && rawDte < 2) ? 2 : rawDte)
-            : (bot.action?.expiration === 'monthly' ? 14 : 7);
+          const isoExp = String(bot.action?.expiration || '');
+          const isoDte = /^\d{4}-\d{2}-\d{2}$/.test(isoExp) ? calendarDte(isoExp) : null;
+          // LEAPS: keep the far date / ≥180 DTE. Do not clamp into the 2–14 window.
+          const targetDte = leaps
+            ? (isoDte != null && isoDte >= LEAPS_DTE_MIN
+              ? isoDte
+              : (Number.isFinite(rawDte) && rawDte >= LEAPS_DTE_MIN ? rawDte : LEAPS_DTE_MIN))
+            : (Number.isFinite(rawDte)
+              ? ((!privileged && rawDte < 2) ? 2 : rawDte)
+              : (bot.action?.expiration === 'monthly' ? 14 : 7));
           // Resolve DTE → expiration date at EVAL time (never bake a date at bot creation).
-          // LEAPS keep their explicit far date. Everyone else gets a calendar target; the
-          // contract picker then snaps to a listed expiry in the allowed window (2–14, or
-          // 0–1 only if this bot is on the high-certainty allowlist).
-          draft.expiration = leaps && bot.action?.expiration
-            ? bot.action.expiration
-            : (Number.isFinite(rawDte) || !/^\d{4}-\d{2}-\d{2}$/.test(String(bot.action?.expiration || ''))
+          // LEAPS keep their explicit far date or the `leaps` pref (picker takes furthest ≥180).
+          // Everyone else gets a calendar target in 2–14 (or 0–1 if allowlisted).
+          draft.expiration = leaps
+            ? (bot.action?.expiration || 'leaps')
+            : (Number.isFinite(rawDte) || !/^\d{4}-\d{2}-\d{2}$/.test(isoExp)
               ? dteToExpiration(targetDte)
               : bot.action.expiration);
           draft._play = {

@@ -101,6 +101,26 @@ describe('option entry DTE window', () => {
     }, monday);
     assert.equal(leaps.ok, true);
     assert.equal(leaps.leaps, true);
+
+    // Far ISO date with no "LEAPS" in the name is still a LEAPS (≥180 DTE).
+    const far = optionEntryDteCheck({
+      asset_class: 'option',
+      side: 'buy',
+      option_type: 'call',
+      _contract: { expiration: '2027-03-19' },
+    } as any, monday);
+    assert.equal(far.ok, true);
+    assert.equal(far.leaps, true);
+    assert.ok((far.dte ?? 0) >= LEAPS_DTE_MIN);
+
+    // Mid-dated unlabeled call is still outside the 2–14 window.
+    const mid = optionEntryDteCheck({
+      asset_class: 'option',
+      side: 'buy',
+      _contract: { expiration: '2026-10-30' },
+    }, monday);
+    assert.equal(mid.ok, false);
+    assert.equal(mid.leaps, false);
   });
 
   it('does not apply the window to sells or shares', () => {

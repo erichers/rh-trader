@@ -98,10 +98,11 @@ export function resolveCaps(botRisk: any, play: OrderDraft['_play'] | undefined,
  *  Hard rails in EVERY mode (including full_auto): kill switch, no-crypto, asset
  *  allowlist, no-short / no-naked-write, daily-loss breaker (≤50%), per-ticket and
  *  same-symbol book cap (≤$10k), 25% concentration, and the 2–14 DTE entry window
- *  (never 0DTE/1DTE except an explicit high-certainty allowlist with tight SL/TP;
- *  LEAPS waived). Monday full_auto paper also vetoes put and leftover equity buys
- *  (`calls_only` / `puts_blocked`). full_auto may bypass only the orders/day
- *  throttle. Book rails still bind. */
+ *  for non-LEAPS (never 0DTE/1DTE except an explicit high-certainty allowlist with
+ *  tight SL/TP). Long-call LEAPS (≥180 DTE) stay eligible. Monday full_auto paper
+ *  also vetoes put and leftover equity buys (`calls_only` / `puts_blocked`).
+ *  Covered-call / naked writes stay blocked. full_auto may bypass only the
+ *  orders/day throttle. Book rails still bind. */
 export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode): Promise<RiskResult> {
   const checks: RiskResult['checks'] = {};
   const computed: Record<string, number> = {};

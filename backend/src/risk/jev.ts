@@ -57,7 +57,7 @@ export function typesafeConfigured(override?: string | null): boolean {
 export function jevEntryQuestion() {
   return {
     type: 'choice' as const,
-    instructions: 'Should this Alpaca paper bot open a new long call (2–14 DTE unless privileged short-DTE)?',
+    instructions: 'Should this Alpaca paper bot open a new long call? 2–14 DTE is the fleet window; long-call LEAPS (≥180 DTE / far expiration) are intentionally allowed. Privileged short-DTE 0–1 only on the allowlist. Puts and equity buys are blocked.',
     criteria: {
       enter: 'Take the trade at the proposed size',
       skip: 'Do not enter — skip this signal',
@@ -186,7 +186,7 @@ export async function jevEntryGate(input: JevEntryState & {
       dte: input.dte ?? null,
       premium_estimate: input.premium ?? null,
       desk: 'alpaca_paper',
-      rails: 'calls-only 2-14 DTE; swing law 10/10/0/20/10',
+      rails: 'calls-only; non-LEAPS 2-14 DTE; long-call LEAPS eligible; swing law 10/10/0/20/10',
     };
     const res = await resolved.client.systemOne({
       state,

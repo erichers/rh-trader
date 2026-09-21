@@ -119,5 +119,6 @@ describe('full_auto rails stay hard (Mac hotfix / PR#9)', () => {
     assert.equal(SWING_LAW.trailPct, 10);
     assert.equal(SWING_LAW.entryDteMin, 2);
     assert.equal(SWING_LAW.entryDteMax, 14);
+    assert.equal(SWING_LAW.leapsEligible, true);
   });
 });

@@ -14,6 +14,20 @@ import {
 const paperAuto = { mode: 'full_auto' as const, env: 'alpaca_paper' as const };
 
 describe('callsOnlyBuyCheck — full_auto paper', () => {
+  it('lets a long-call LEAPS through (far DTE is intentional)', () => {
+    const v = callsOnlyBuyCheck({
+      side: 'buy',
+      asset_class: 'option',
+      option_type: 'call',
+      expiration: '2027-03-19',
+      name: 'MU LEAPS core',
+      _play: { dte: 182, key: 'leaps-call', name: 'MU LEAPS core' },
+    }, paperAuto);
+    assert.equal(v.pass, true);
+    assert.equal(v.convertToCall, false);
+    assert.match(v.detail, /LEAPS/);
+  });
+
   it('lets a 2–14 DTE call through', () => {
     const v = callsOnlyBuyCheck({
       side: 'buy', asset_class: 'option', option_type: 'call', expiration: 'weekly',
@@ -79,6 +93,20 @@ describe('convertEquityDraftToCall', () => {
     assert.equal(d._play?.dte, 7);
   });
 
+  it('does not clamp a LEAPS draft into 2–14 DTE', () => {
+    const d = convertEquityDraftToCall({
+      side: 'buy',
+      asset_class: 'option',
+      option_type: 'call',
+      expiration: '2027-03-19',
+      qty: 1,
+      _play: { dte: 182, key: 'leaps-call', name: 'MU LEAPS core' },
+    } as CallsOnlyHint);
+    assert.equal(d.expiration, '2027-03-19');
+    assert.equal(d._play?.dte, 182);
+    assert.equal(d.option_type, 'call');
+  });
+
   it('does not rewrite a put', () => {
     const d = convertEquityDraftToCall({
       asset_class: 'option', option_type: 'put' as const, qty: 1,
@@ -112,6 +140,13 @@ describe('STRATEGY_LIBRARY — prefer call, keep puts in the catalog', () => {
     assert.equal(rsi?.action.option_type, 'call');
     const orb = STRATEGY_LIBRARY.find((s) => s.key === 'opening-breakout');
     assert.equal(orb?.action.option_type, 'call');
+  });
+
+  it('library LEAPS template is a far-dated long call, not a 14 DTE monthly', () => {
+    const leaps = STRATEGY_LIBRARY.find((s) => s.key === 'leaps-call');
+    assert.equal(leaps?.action.option_type, 'call');
+    assert.equal(leaps?.action.expiration, 'leaps');
+    assert.match(String(leaps?.name), /LEAPS/i);
   });
 
   it('does not delete put strategies — they stay in the library', () => {

@@ -11,7 +11,7 @@ Swing law (enforced in `exitpolicy.ts` + the live monitor — full_auto closes w
 - Hard stop **−10%** from entry
 - Gain-lock arms at **+10%**, floor **0** (breakeven)
 - Soft take-profit goal **~20%** (close when hit *or* trail keeps riding; trail **10**, armed only after **+10%** peak)
-- Never **0DTE/1DTE** for the fleet; entry window **2–14 DTE** (LEAPS excepted). Only `ai-catalyst-call` and `accel_dual_momentum_call` may take 0–1, and only with tight SL/TP (sl ≤5, tp 6–12) and size ≤$400.
+- Never **0DTE/1DTE** for the fleet; entry window **2–14 DTE** for non-LEAPS. **Long-call LEAPS stay full_auto-eligible** (far expiration / ≥180 DTE is intentional — do not park or veto them). Only `ai-catalyst-call` and `accel_dual_momentum_call` may take 0–1, and only with tight SL/TP (sl ≤5, tp 6–12) and size ≤$400. Covered-call selling stays blocked.
 - No overnight / no weekend holds except **LEAPS** bots
 
 Exit lifecycle (Monday live bugs):
@@ -88,7 +88,7 @@ If you need a restart after merging this branch: `./scripts/stop.sh && ./scripts
 - A working Alpaca sell still `new` must **not** close the monitor. NVDA/SPY-style stuck exits cancel+retry or escalate.
 - Flat META/GOOGL: one orphan, zero extra veto rows.
 - Every open long has an open monitor (`swingLaw` sl 10 / trail 10 / tp 20). Trail does not fire until peak ≥ +10%.
-- New full_auto buys are **calls only** (2–14 DTE). Puts skip/veto (`puts_blocked`). Equity templates convert to ATM weekly calls — they do not open shares.
+- New full_auto buys are **long calls**. Non-LEAPS stay **2–14 DTE**. **LEAPS long calls remain eligible** (do not park). Puts skip/veto (`puts_blocked`). Equity templates convert to ATM weekly calls — they do not open shares. Covered-call selling stays blocked.
 - Optional Jev (`TYPESAFE_API_KEY`): Choice `enter|skip|size_down` on bot entries. Unset/error fail-opens on paper. Exits never call Jev.
 - Kill switch: new buys stop; exits still flatten. Non-LEAPS flatten before the close.
 

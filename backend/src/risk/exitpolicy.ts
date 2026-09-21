@@ -20,7 +20,8 @@ export const SWING_TRAIL_PCT = 10;
 export const ENTRY_DTE_MIN = 2;
 export const ENTRY_DTE_MAX = 14;
 
-/** Desk-facing snapshot of the locked swing law (health + tests). */
+/** Desk-facing snapshot of the locked swing law (health + tests).
+ *  2–14 DTE is the non-LEAPS entry window. Long-call LEAPS (≥180 DTE) stay eligible. */
 export const SWING_LAW = {
   hardStopPct: HARD_STOP_PCT,
   gainLockArmPct: GAIN_LOCK_ARM_PCT,
@@ -29,6 +30,7 @@ export const SWING_LAW = {
   trailPct: SWING_TRAIL_PCT,
   entryDteMin: ENTRY_DTE_MIN,
   entryDteMax: ENTRY_DTE_MAX,
+  leapsEligible: true,
 } as const;
 
 /** Default band the monitor / factory inherit when a bot does not pin exits. */

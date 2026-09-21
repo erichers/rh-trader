@@ -67,6 +67,7 @@ describe('SWING_LAW /api/health snapshot', () => {
       trailPct: 10,
       entryDteMin: 2,
       entryDteMax: 14,
+      leapsEligible: true,
     });
   });
 });

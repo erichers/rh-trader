@@ -42,6 +42,16 @@ describe('decidePaperArm', () => {
     assert.match(d.reason, /modeled-only/);
   });
 
+  it('still arms a long-call LEAPS even when the backtest is modeled', () => {
+    const d = decidePaperArm({
+      ...winner,
+      name: 'MU LEAPS core',
+      modeled: true,
+    }, false);
+    assert.equal(d.action, 'trade');
+    assert.match(d.reason, /18\.4%/);
+  });
+
   it('skips backtest errors', () => {
     const d = decidePaperArm({ bot_id: 9, name: 'Broken', error: 'no bars' }, false);
     assert.equal(d.action, 'skip');

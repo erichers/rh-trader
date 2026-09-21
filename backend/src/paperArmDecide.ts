@@ -1,3 +1,5 @@
+import { isLeapsLabel } from './risk/dte.js';
+
 /** Minimum closed backtest trades before a bot may auto-trade paper. */
 export const PAPER_ARM_MIN_TRADES = 8;
 
@@ -54,7 +56,7 @@ export function decidePaperArm(row: ScanRow, observeOnly: boolean): ArmDecision 
   if (!(ret > 0)) {
     return { bot_id, name, action: 'skip', reason: `non-positive backtest return ${ret}%` };
   }
-  if (row.modeled) {
+  if (row.modeled && !isLeapsLabel(name)) {
     return { bot_id, name, action: 'skip', reason: 'modeled-only option backtest — not real-priced' };
   }
   return {

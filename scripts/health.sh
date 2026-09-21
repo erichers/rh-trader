@@ -52,7 +52,7 @@ if (alpaca.configured != null || alpaca.ok != null) {
 console.log(`watch available=${watch.available} running=${watch.running} observeOnly=${watch.observeOnly}`);
 if (d.swingLaw) {
   const s = d.swingLaw;
-  console.log(`swingLaw hard=${s.hardStopPct} arm=${s.gainLockArmPct} floor=${s.gainLockFloorPct} tp=${s.softTakeProfitPct} trail=${s.trailPct} dte=${s.entryDteMin}-${s.entryDteMax}`);
+  console.log(`swingLaw hard=${s.hardStopPct} arm=${s.gainLockArmPct} floor=${s.gainLockFloorPct} tp=${s.softTakeProfitPct} trail=${s.trailPct} dte=${s.entryDteMin}-${s.entryDteMax} leaps=${s.leapsEligible}`);
 }
 if (failures.length) console.log(`failures=${failures.join(',')}`);
 
