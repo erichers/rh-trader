@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { Bots, SetBotEnabled, SetBotMode, EvalBot, BacktestBot, Health, api } from '../api/client';
+import { Link, useSearchParams } from 'react-router-dom';
+import { Bots, SetBotEnabled, SetBotMode, SetBotJev, EvalBot, BacktestBot, Health, api } from '../api/client';
 import { Card, Badge, FleetBadge, useAsync, Sym } from '../components/ui';
 import { Icon } from '../components/icons';
 import { optionLabelFromAction } from '../lib/options';
+import { jevScopeFlags } from '../modelCopy';
+import { deleteBotConfirm, promoteLiveOpen } from '../deskChrome';
 import BotWizard, { type BotPreset } from '../components/BotWizard';
 import { PromotionModal } from '../components/quanttools';
 import { RiskCell } from '../components/risksizing';
@@ -70,7 +72,7 @@ function issues(bot: any, health: any): { msg: string; cta?: string; href?: stri
     out.push({ kind: 'amber', msg: 'Options need market data — Alpaca not configured.', cta: 'Open Settings', href: '#/settings' });
   }
   if (bot.enabled && health?.env === 'robinhood_live' && health?.rh?.status !== 'connected') {
-    out.push({ kind: 'amber', msg: 'Live env selected but Robinhood is not connected.', cta: 'Connect Robinhood', href: '#/settings' });
+    out.push({ kind: 'amber', msg: 'Live env selected and the broker is not set up.', cta: 'Open Settings', href: '#/settings' });
   }
   // QuickBots fire from action.plays, not `rules` — the generic "no rules" check doesn't
   // apply (it would falsely flag a working bot). They're managed on the QuickBots page.
@@ -142,11 +144,14 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
   };
 
   const symbols = J(bot.symbols, []);
+  const jev = jevScopeFlags(bot.risk);
   const action = J(bot.action, {});
   const rules = J(bot.rules, {});
   const aiGate = J(bot.ai_gate, { enabled: false });
   const lr = J(bot.last_result, null);
   const probs = issues(bot, health);
+  const blocked = probs.some((p) => p.kind === 'red');
+  const paperDesk = !promoteLiveOpen(health?.env, health?.live);
 
   const startEdit = () => setEdit({
     name: bot.name,
@@ -169,6 +174,12 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
     take_profit_pct: J(bot.risk, {}).take_profit_pct ?? bot.effective_risk?.take_profit_pct ?? 0,
     rules: JSON.stringify(rules, null, 2),
   });
+  const fix = () => { setOpen(true); startEdit(); };
+  const remove = async () => {
+    if (!window.confirm(deleteBotConfirm(String(bot.name || 'bot')))) return;
+    try { await api.del(`/bots/${bot.id}`); reload(); }
+    catch (e: any) { setMsg('Error: ' + (e?.message || e)); }
+  };
 
   // Deep-link target (e.g. "Edit" from the dashboard): expand, scroll into view, and
   // optionally open the edit form. Runs once when this row is the focused bot.
@@ -229,7 +240,15 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
               <button key={m} className={bot.mode === m ? `on ${m}` : ''} onClick={async () => { await SetBotMode(bot.id, m); reload(); }}>{m === 'full_auto' ? 'full' : m.slice(0, 4)}</button>
             ))}
           </div>
-          <button className={shownEnabled ? 'primary' : ''} disabled={busy} onClick={() => setEnabled(!shownEnabled)}>{busy ? '…' : shownEnabled ? 'ON' : 'off'}</button>
+          {blocked ? (
+            <div className="bot-sticky">
+              <button type="button" onClick={fix}>Fix</button>
+              <button type="button" className={shownEnabled ? 'primary' : ''} disabled={busy} onClick={() => setEnabled(!shownEnabled)}>{busy ? '…' : shownEnabled ? 'ON' : 'off'}</button>
+              <button type="button" className="danger" onClick={remove}>Delete</button>
+            </div>
+          ) : (
+            <button className={shownEnabled ? 'primary' : ''} disabled={busy} onClick={() => setEnabled(!shownEnabled)}>{busy ? '…' : shownEnabled ? 'ON' : 'off'}</button>
+          )}
         </div>
       </div>
 
@@ -238,10 +257,31 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
         <span className="muted" style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.4px' }}>RISK</span>
         <RiskCell bot={bot} reload={reload} />
       </div>
+      <div className="jev-cols" onClick={(e) => e.stopPropagation()}>
+        <div className="jev-col">
+          <span className="muted">Entry Jev</span>
+          <button type="button" className={`jev-switch${jev.entry ? ' on' : ''}`} aria-pressed={jev.entry} aria-label={`Entry Jev ${jev.entry ? 'on' : 'off'}`} onClick={async () => { try { await SetBotJev(bot.id, { entry: !jev.entry }); reload(); } catch (e: any) { setMsg('Error: ' + (e?.message || e)); } }}>
+            <span className="jev-switch-v">{jev.entry ? 'on' : 'off'}</span>
+          </button>
+        </div>
+        <div className="jev-col">
+          <span className="muted">Exit Jev</span>
+          <button type="button" className={`jev-switch${jev.exit ? ' on' : ''}`} aria-pressed={jev.exit} aria-label={`Exit Jev ${jev.exit ? 'on' : 'off'}`} onClick={async () => { try { await SetBotJev(bot.id, { exit: !jev.exit }); reload(); } catch (e: any) { setMsg('Error: ' + (e?.message || e)); } }}>
+            <span className="jev-switch-v">{jev.exit ? 'on' : 'off'}</span>
+          </button>
+          {!jev.exit && <span className="muted">logs when off</span>}
+          <Link to="/models/jev">log</Link>
+        </div>
+      </div>
 
       {open && (
         <div style={{ marginTop: 12 }}>
           <div style={{ marginBottom: 10 }}><b className="muted">How it works:</b> {explain(rules, action, aiGate)}</div>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Jev is {jev.entry ? 'on for entries' : 'off for entries'} and {jev.exit ? 'on for exits' : 'off for exits'}.{' '}
+            <Link to="/models/jev">Change it on Models → Jev</Link>.
+            Off still logs a shadow decision and does not call TypeSafe. The hard stop and +1.5% gain-lock still run.
+          </p>
 
           {action._quickbot && (
             <div className="row" style={{ justifyContent: 'space-between', padding: '8px 10px', borderRadius: 7, marginBottom: 10, background: 'rgba(0,208,156,.08)', border: '1px solid rgba(0,208,156,.25)' }}>
@@ -267,7 +307,7 @@ function BotRow({ bot, health, reload, defaultOpen = false, focus = false, autoE
               <button onClick={startEdit}>Edit settings</button>
               <button onClick={runEval}>Run now</button>
               <button onClick={runBt}>Backtest 90d</button>
-              <button className="icon-btn" onClick={() => setPromote(true)} title="Run the paper→live graduation checklist">{action._graduated ? <><Icon name="check" size={14} /> Graduated</> : <><Icon name="shield" size={14} /> Promote to live</>}</button>
+              <button className="icon-btn" disabled={paperDesk} title={paperDesk ? 'Promote stays closed on the paper desk.' : 'Run the graduation checklist'} onClick={() => { if (!paperDesk) setPromote(true); }}>{action._graduated ? <><Icon name="check" size={14} /> Graduated</> : <><Icon name="shield" size={14} /> Promote to live</>}</button>
             </div>
           ) : (
             <div className="grid" style={{ gap: 8, gridTemplateColumns: '1fr 1fr' }}>
@@ -396,6 +436,7 @@ export default function BotsView() {
     <Card title={<span className="row" style={{ gap: 8 }}>Bots ({bots.length}) <FleetBadge env={env} /></span>} right={<span className="row" style={{ gap: 8 }}><button className="primary" onClick={() => setWizard({})}>+ New bot (wizard)</button><a href="#/quickbots" className="icon-btn"><Icon name="bolt" size={14} /> QuickBots</a><a href="#/strategies">Strategy Library</a></span>}>
       <div className="muted" style={{ marginBottom: 10 }}>
         Click a bot to expand: see how it works, edit every setting, run/backtest it, and enable it.
+        Entry Jev and Exit Jev default off. Exit still logs when it is off.
         {broken > 0 && <span className="red"> {broken} bot(s) have issues that need fixing.</span>}
         {health.data && !health.data.broker?.alpacaConfigured && <span className="amber"> Alpaca market data is not configured — options bots can't get prices.</span>}
       </div>

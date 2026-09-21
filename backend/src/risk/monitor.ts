@@ -2,6 +2,9 @@ import { q, exec, audit, getTradingEnv, getExitPolicy } from '../db.js';
 import { raiseAlert } from '../alerts.js';
 import { effectiveHardStop, exitReason, overnightFlattenReason, swingExitBand } from './exitpolicy.js';
 import { isLeapsTrade, calendarDte, SHORT_DTE_RAILS } from './dte.js';
+import { jevExitGate } from './jevExit.js';
+import { jevCadenceKey, parseJevBotFlags, rememberCadence, resolveMonitorExit } from './jevScope.js';
+import { jevExitFlagForWave, jevExitOrder, jevPartialRemain } from './jevWave1.js';
 import {
   exitPlacementOutcome,
   heldZeroDecision,
@@ -96,11 +99,20 @@ export async function checkMonitors(opts?: { reconcileOnly?: boolean }): Promise
   const backfill = await backfillNullMonitorBotIds(env).catch(() => ({ open: new Map<number, number>(), newestClosed: null as any }));
   const attached = await ensureMonitorsForOpenPositions(env);
   const open = await q<any>("SELECT * FROM position_monitors WHERE status='open' AND (env=:env OR (env IS NULL AND :env='alpaca_paper'))", { env });
+  const botById = new Map<number, { name?: string; risk?: unknown; action?: unknown }>();
+  if (env === 'alpaca_paper') {
+    try {
+      const bots = await q<any>('SELECT id, name, risk, action FROM bots WHERE env=:env', { env });
+      for (const b of bots) botById.set(Number(b.id), b);
+    } catch { /* exit panel can still log with default-off flags */ }
+  }
 
   const policy = await getExitPolicy();
   let minsToClose = Infinity, longGap = false;
+  let marketOpen: boolean | undefined;
   try {
     const clk = await getClock();
+    marketOpen = !!clk.is_open;
     if (clk.is_open && clk.next_close) {
       minsToClose = (Date.parse(clk.next_close) - Date.now()) / 60000;
       if (clk.next_open) longGap = (Date.parse(clk.next_open) - Date.parse(clk.next_close)) > 1.6 * 864e5;
@@ -131,7 +143,7 @@ export async function checkMonitors(opts?: { reconcileOnly?: boolean }): Promise
       const settled = await settlePendingExit(m, pendingId, env);
       if (settled === 'closed') { closed++; continue; }
       if (settled === 'orphaned') { orphaned++; continue; }
-      if (settled === 'pending' || settled === 'escalated') continue;
+      if (settled === 'pending' || settled === 'escalated' || settled === 'reduced') continue;
       // 'cleared' → fall through and maybe re-fire
     }
 
@@ -144,10 +156,80 @@ export async function checkMonitors(opts?: { reconcileOnly?: boolean }): Promise
     const peakFav = ((peak - entry) / entry) * 100;
     await exec('UPDATE position_monitors SET last_price=:p, peak_price=:pk, trough_price=:tr WHERE id=:id', { p: price, pk: peak, tr: trough, id: m.id });
 
-    let reason = exitReason(fav, peakFav, { tp: Number(m.tp_pct) || 0, sl: Number(m.sl_pct) || 0, trail: Number(m.trail_pct) || 0 }) || '';
+    const slPct = Number(m.sl_pct) || 0;
+    const tpPct = Number(m.tp_pct) || 0;
+    let trailPct = Number(m.trail_pct) || 0;
+    // Rails first. Jev still logs on the health cadence when a rail already owns the sell.
+    let reason = exitReason(fav, peakFav, { tp: tpPct, sl: slPct, trail: trailPct }) || '';
     if (!reason && nearClose) {
       reason = await flattenReasonFor(m, env, { nearClose, longGap }) || '';
     }
+    let jevAdvice: { pick: 'hold' | 'exit' | 'tighten' | 'partial'; applied: boolean } | null = null;
+    if (env === 'alpaca_paper' && isOption && m.occ_symbol) {
+      try {
+        const bot = botById.get(Number(m.bot_id));
+        const exp = occToContract(m.occ_symbol)?.expiration || '';
+        const dte = exp ? calendarDte(exp) : null;
+        const leaps = isLeapsTrade({ expiration: exp, dte });
+        const flags = parseJevBotFlags(bot?.risk);
+        flags.exit = jevExitFlagForWave(flags.exit, { id: m.bot_id, name: bot?.name, action: bot?.action, dte });
+        const gate = await jevExitGate({
+          symbol: m.symbol,
+          bot_id: m.bot_id,
+          bot_name: bot?.name ?? null,
+          bot: bot?.name ?? null,
+          occ: m.occ_symbol,
+          monitor_id: m.id,
+          dte,
+          dte_or_leaps: leaps && dte != null ? `leaps:${dte}` : dte,
+          leaps,
+          fav,
+          peak: peakFav,
+          trail_pct: trailPct,
+          sl_pct: slPct,
+          entry_price: entry,
+          last_price: price,
+          qty: Number(m.qty),
+          asset_class: m.asset_class,
+          expiration: exp || null,
+          source: 'bot',
+        }, {
+          paper: true,
+          botFlags: flags,
+          rth: marketOpen,
+          railReason: reason || null,
+          minutesToClose: marketOpen && Number.isFinite(minsToClose) ? minsToClose : null,
+        });
+        jevAdvice = { pick: gate.pick, applied: gate.applied };
+        if (gate.skipped !== 'cadence' && gate.skipped !== 'global_off') {
+          await audit('jev.exit', `${m.occ_symbol || m.symbol} ${gate.opinion} applied=${gate.applied}`, {
+            id: m.id,
+            bot_id: m.bot_id ?? null,
+            pick: gate.opinion,
+            acted: gate.pick,
+            applied: gate.applied,
+            skipped: gate.skipped,
+            called: gate.called,
+          });
+        }
+      } catch (e: any) {
+        await audit('jev.exit_error', `exit panel skipped for ${m.symbol}: ${e?.message || e}`, { id: m.id });
+      }
+    }
+    const resolved = resolveMonitorExit({
+      railReason: reason || null,
+      jev: jevAdvice,
+      trailPct,
+      slPct,
+      tpPct,
+      fav,
+      peak: peakFav,
+    });
+    if (resolved.trailPct > 0 && resolved.trailPct < trailPct) {
+      trailPct = resolved.trailPct;
+      await exec('UPDATE position_monitors SET trail_pct=:t WHERE id=:id', { t: trailPct, id: m.id });
+    }
+    reason = resolved.reason || '';
 
     const held = await heldQtyForMonitor(m);
     const exact = await exactOpenQty(m);
@@ -161,9 +243,21 @@ export async function checkMonitors(opts?: { reconcileOnly?: boolean }): Promise
     if (!reason) continue;
     if (Number(m.exit_attempts) >= MAX_EXIT_ATTEMPTS && /EXIT STUCK/i.test(String(m.reason || ''))) continue;
 
+    const heldQty = Number(m.qty);
+    let sellQty = heldQty;
+    if (reason === 'jev-partial') {
+      const sized = jevExitOrder('partial', heldQty);
+      if (!sized) continue;
+      sellQty = sized.qty;
+    } else if (reason === 'jev-exit') {
+      const sized = jevExitOrder('exit', heldQty);
+      if (!sized) continue;
+      sellQty = sized.qty;
+    }
+
     try {
       const { executeDraft } = await import('../execute.js');
-      const draft: OrderDraft = { env: (m.env || 'alpaca_paper') as TradingEnv, symbol: m.symbol, asset_class: m.asset_class, side: 'sell', qty: Number(m.qty), order_type: 'market', source: 'bot', bot_id: m.bot_id };
+      const draft: OrderDraft = { env: (m.env || 'alpaca_paper') as TradingEnv, symbol: m.symbol, asset_class: m.asset_class, side: 'sell', qty: sellQty, order_type: 'market', source: 'bot', bot_id: m.bot_id };
       if (isOption && m.occ_symbol) {
         const c = occToContract(m.occ_symbol);
         if (c) draft._contract = { occSymbol: m.occ_symbol, type: c.type, strike: c.strike, expiration: c.expiration, mid: price };
@@ -174,9 +268,18 @@ export async function checkMonitors(opts?: { reconcileOnly?: boolean }): Promise
         status: res.status,
         fillPrice: res.fillPrice,
         filledQty: res.filledQty,
-        orderQty: Number(m.qty),
+        orderQty: sellQty,
       });
-      if (outcome === 'filled') {
+      if (reason === 'jev-partial' && outcome === 'filled') {
+        const sold = Number(res.filledQty) > 0 ? Number(res.filledQty) : sellQty;
+        const book = jevPartialRemain(heldQty, sold);
+        if (book.applied && book.closeAll) {
+          await closeMonitorFilled(m, reason, Number(res.fillPrice) > 0 ? Number(res.fillPrice) : price, price, !!res.fillPrice);
+          closed++;
+        } else if (book.applied) {
+          await shrinkMonitorAfterPartial(m, book.remain, sold, Number(res.fillPrice) > 0 ? Number(res.fillPrice) : price);
+        }
+      } else if (outcome === 'filled') {
         await closeMonitorFilled(m, reason, Number(res.fillPrice) > 0 ? Number(res.fillPrice) : price, price, !!res.fillPrice);
         closed++;
       } else if (outcome === 'pending' && res.orderId > 0) {
@@ -242,7 +345,7 @@ export async function ensureMonitorsForOpenPositions(env: TradingEnv): Promise<n
   return attached;
 }
 
-async function settlePendingExit(m: any, orderId: number, env: TradingEnv): Promise<'closed' | 'orphaned' | 'pending' | 'cleared' | 'escalated'> {
+async function settlePendingExit(m: any, orderId: number, env: TradingEnv): Promise<'closed' | 'orphaned' | 'pending' | 'cleared' | 'escalated' | 'reduced'> {
   const [ord] = await q<any>('SELECT * FROM orders WHERE id=:id', { id: orderId });
   let status = String(ord?.status || '');
   let fill = Number(ord?.filled_price) || 0;
@@ -258,6 +361,22 @@ async function settlePendingExit(m: any, orderId: number, env: TradingEnv): Prom
         s: status, fp: fill || null, fq: filledQty || null, raw: JSON.stringify(bro), id: orderId,
       });
     }
+  }
+  const partial = /jev-partial/i.test(String(m.reason || ''));
+  if (partial && (isTerminalFillStatus(status) || (fill > 0 && filledQty > 0))) {
+    const sold = filledQty > 0 ? filledQty : Number(ord?.qty) || 0;
+    const book = jevPartialRemain(Number(m.qty), sold);
+    if (book.applied && !book.closeAll) {
+      await shrinkMonitorAfterPartial(m, book.remain, sold, fill || Number(m.last_price) || Number(m.entry_price));
+      return 'reduced';
+    }
+    if (book.applied && book.closeAll) {
+      const px = fill || Number(m.last_price) || Number(m.entry_price);
+      await closeMonitorFilled(m, String(m.reason || 'jev-partial').replace(/^EXIT PENDING \[exiting\][^\s]*\s*/, ''), px, px, fill > 0);
+      return 'closed';
+    }
+    await clearPending(m, 'jev-partial fill qty missing, will retry');
+    return 'reduced';
   }
   if (isTerminalFillStatus(status) || (fill > 0 && filledQty + 1e-9 >= Number(m.qty))) {
     const px = fill || Number(m.last_price) || Number(m.entry_price);
@@ -462,6 +581,25 @@ async function findInflightExit(env: string, symbol: string, occ: string): Promi
     if (!rawOcc || rawOcc === occ) return Number(r.id);
   }
   return null;
+}
+
+function disarmJevExitReplay(m: any): void {
+  rememberCadence(jevCadenceKey('exit', {
+    botId: m.bot_id,
+    symbol: m.symbol,
+    occ: m.occ_symbol,
+    monitorId: m.id,
+  }), Date.now(), { opinion: 'partial', appliedExit: false, because: 'partial filled' });
+}
+
+async function shrinkMonitorAfterPartial(m: any, remain: number, sold: number, last: number): Promise<void> {
+  disarmJevExitReplay(m);
+  const reason = `jev-partial sold ${sold}, ${remain} left`;
+  await exec(
+    'UPDATE position_monitors SET qty=:q, pending_exit_order_id=NULL, reason=:r, last_price=:p WHERE id=:id',
+    { q: remain, r: reason.slice(0, 250), p: last, id: m.id },
+  );
+  await audit('monitor.partial', `${reason} ${m.symbol}`, { id: m.id, bot_id: m.bot_id ?? null });
 }
 
 async function markExiting(m: any, orderId: number, why: string): Promise<void> {

@@ -234,6 +234,21 @@ describe('runBotsAutofix', () => {
     assert.ok(logs.some((l) => l.startsWith('bot.autofix.delete:')));
     assert.match(out.summary, /deleted 1 equity, fixed 1/);
   });
+
+  it('keeps per-bot Jev flags when it clamps exits', () => {
+    const p = proposeBotAutofix({
+      id: 41,
+      name: 'NVDA call',
+      mode: 'full_auto',
+      enabled: 1,
+      asset_class: 'option',
+      action: { option_type: 'call', side: 'buy' },
+      risk: { stop_loss_pct: 18, take_profit_pct: 40, trailing_stop_pct: 25, jev: { entry: false, exit: true } },
+    });
+    assert.ok(p);
+    assert.deepEqual(p!.next.risk.jev, { entry: false, exit: true });
+    assert.equal(p!.next.risk.stop_loss_pct, 10);
+  });
 });
 
 describe('chronic null bot_id closes', () => {

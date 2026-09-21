@@ -79,7 +79,7 @@ export default function TickerDetail() {
         <div className="grid" style={{ gap: 14 }}>
           {/* Fundamentals (Robinhood) */}
           <Card title="Fundamentals">
-            {!f ? <div className="muted" style={{ fontSize: 13 }}>Connect Robinhood for fundamentals (market cap, P/E, 52-wk range, sector…).</div> : (
+            {!f ? <div className="muted" style={{ fontSize: 13 }}>Fundamentals are not loaded for this symbol (market cap, P/E, 52-week range, sector).</div> : (
               <div className="grid cols-2" style={{ gap: 6, fontSize: 13 }}>
                 <KV k="Market cap" v={bn(f.market_cap)} />
                 <KV k="P/E" v={num(f.pe_ratio)} />

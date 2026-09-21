@@ -38,6 +38,7 @@ export function wsUrl(): string {
 export const Health = () => api.get('/health');
 export const GetJev = () => api.get('/jev');
 export const SetJev = (body: { enabled?: boolean; mode?: 'off' | 'shadow' | 'active' }) => api.put('/jev', body);
+export const SetBotJev = (id: number, body: { entry?: boolean; exit?: boolean }) => api.put(`/bots/${id}/jev`, body);
 export const GetMuse = () => api.get('/muse');
 export const SetMuse = (body: { mode?: 'observe' | 'improve' }) => api.put('/muse', body);
 export const AiModels = () => api.get('/ai/models');

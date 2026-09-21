@@ -6,6 +6,7 @@ import { applyResolvedPremium, assignInferredAssetClass } from './risk/optionPri
 import { placeOrder as brokerPlace } from './brokers/index.js';
 import { execObserveBlock } from './risk/observe.js';
 import { appendJevJsonl, applyJevSizeDown, jevEntryGate, jevUniverseBlock } from './risk/jev.js';
+import { parseJevBotFlags } from './risk/jevScope.js';
 import { cachedJevEffective } from './risk/jevSettings.js';
 import { museAuditAfterFire } from './muse/auditor.js';
 import { cachedMuseMode } from './muse/settings.js';
@@ -129,10 +130,10 @@ export async function executeDraft(
   let jevPick: string | null = null;
   let jevFailOpen = false;
 
-  // Optional Jev post-signal panel on fired bot/AI entries only. Exits stay
-  // deterministic. Shadow logs and never blocks. Active may skip or size_down.
-  // Active + weak Choice conf / API error / unset key sizes down (not full size).
-  // A stored bot universe does not gate a different underlying. Hard rails already ran.
+  // Optional Jev entry panel on fired bot/AI buys. Exits use jevExit.ts from the
+  // monitor, after the hard stop. Shadow logs and never blocks. Active may skip
+  // or size down only when this bot's entry scope is on (default off) and the
+  // desk is Alpaca paper. A stored universe does not gate a different underlying.
   if (decision.action === 'execute' && draft.side === 'buy' && (draft.source === 'bot' || draft.source === 'ai')) {
     const universeBlock = draft.bot_id
       ? jevUniverseBlock(botRow?.symbols, draft.symbol, botRow?.name ? String(botRow.name) : null)
@@ -199,6 +200,7 @@ export async function executeDraft(
       source: draft.source,
     }, {
       paper,
+      botFlags: draft.bot_id ? parseJevBotFlags(botRow?.risk) : undefined,
       llmReview: async (system, user) => {
         try {
           const { llmJSON, providerFor } = await import('./ai/llm.js');

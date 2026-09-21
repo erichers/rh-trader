@@ -4,6 +4,7 @@ import { RISK_FIELDS, fmtField, sizingLine } from '../components/risksizing';
 import { Card, Badge, useAsync, Info, money } from '../components/ui';
 import { Icon } from '../components/icons';
 import { jevLastText, museTuneText } from '../modelCopy';
+import { KILL_ENGAGE_CONFIRM, killEngageNeedsConfirm } from '../deskChrome';
 
 const MODE_DESC: [string, string, string][] = [
   ['observe', 'Observe', 'Logs what every bot/Claude would do. Places NO real orders.'],
@@ -38,38 +39,28 @@ export default function Settings({ health, onChange }: { health: any; onChange: 
         </div>
       </Card>
 
-      <Card title="Robinhood connection">
-        <div className="row">
-          <span className={`dot ${rh.data?.status === 'connected' ? 'green' : rh.data?.status === 'needs_auth' ? 'amber' : 'red'}`} />
-          <b>{rh.data?.status || '…'}</b>
-          <span className="muted">{rh.data?.tools?.length || 0} tools</span>
-          <button className="primary" disabled={busy} onClick={async () => {
-            const paper = (health?.env || 'alpaca_paper') !== 'robinhood_live';
-            const ok = window.confirm(paper
-              ? 'Connect Robinhood? This starts live-account OAuth. The paper desk does not need it.'
-              : 'Connect Robinhood and start OAuth for the live account?');
-            if (!ok) return;
-            setBusy(true);
-            try {
-              const r: any = await RhAuthStart();
-              if (r?.authUrl) window.open(r.authUrl, '_blank');
-              else if (r?.alreadyConnected) await RhSync();
-            } finally { setBusy(false); setTimeout(() => { rh.reload(); onChange(); }, 1500); }
-          }}>{busy ? 'Opening…' : 'Connect / set up Robinhood'}</button>
-          <button disabled={busy} onClick={async () => { setBusy(true); await RhSync(); setBusy(false); }}>Sync now</button>
-        </div>
-        <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
-          Clicking <b>Connect</b> opens Robinhood's authorization page in a new tab. After you approve, the app
-          finishes setup automatically (it catches the redirect on <code>localhost:7321</code>) and links your
-          Robinhood Agentic account. You can also run <code>npm run rh:auth</code> in /backend.
-        </div>
-        {rh.data?.lastError && <div className="red" style={{ marginTop: 6 }}>{rh.data.lastError}</div>}
-        {(rh.data?.tools || []).length > 0 && (
-          <div style={{ marginTop: 10 }}>
-            <div className="muted">Available MCP tools:</div>
-            <div className="row" style={{ marginTop: 4 }}>
-              {rh.data.tools.map((t: any) => <span key={t.name} className="pill">{t.name}</span>)}
-            </div>
+      <Card title="Broker">
+        {env !== 'robinhood_live' ? (
+          <div className="muted" style={{ fontSize: 13, lineHeight: 1.45 }}>
+            Alpaca paper. The book syncs from Alpaca. Live broker setup stays off this desk.
+          </div>
+        ) : (
+          <div className="muted" style={{ fontSize: 13, lineHeight: 1.45 }}>
+            <span className={`dot ${rh.data?.status === 'connected' ? 'green' : rh.data?.status === 'needs_auth' ? 'amber' : 'red'}`} />
+            {' '}{rh.data?.status || '…'}
+            {' · '}
+            <button type="button" className="quiet-link" disabled={busy} onClick={async () => {
+              const ok = window.confirm('Open live broker setup? This starts account authorization.');
+              if (!ok) return;
+              setBusy(true);
+              try {
+                const r: any = await RhAuthStart();
+                if (r?.authUrl) window.open(r.authUrl, '_blank');
+                else if (r?.alreadyConnected) await RhSync();
+              } finally { setBusy(false); setTimeout(() => { rh.reload(); onChange(); }, 1500); }
+            }}>{busy ? 'Opening…' : 'Broker setup'}</button>
+            {' · '}
+            <button type="button" className="quiet-link" disabled={busy} onClick={async () => { setBusy(true); await RhSync(); setBusy(false); }}>Sync</button>
           </div>
         )}
       </Card>
@@ -90,8 +81,13 @@ export default function Settings({ health, onChange }: { health: any; onChange: 
 
       <Card title="Safety">
         <div className="row">
-          <button className={health?.killSwitch ? 'primary' : 'danger'} onClick={async () => { await SetKill(!health?.killSwitch); onChange(); }}>
-            {health?.killSwitch ? '● Release kill switch' : 'Engage KILL SWITCH'}
+          <button className={health?.killSwitch ? 'primary' : 'danger'} onClick={async () => {
+            const engaged = !!health?.killSwitch;
+            if (killEngageNeedsConfirm(engaged) && !window.confirm(KILL_ENGAGE_CONFIRM)) return;
+            await SetKill(!engaged);
+            onChange();
+          }}>
+            {health?.killSwitch ? 'Release kill switch' : 'Engage KILL SWITCH'}
           </button>
           <span className="muted">Kill switch blocks ALL order placement regardless of mode.</span>
         </div>
@@ -105,11 +101,13 @@ export default function Settings({ health, onChange }: { health: any; onChange: 
         </div>
       </Card>
 
-      <Card title="Jev: post-signal override" right={<a href="#/models/jev">Open Jev page →</a>}>
+      <Card title="Jev: entry and exit panel" right={<a href="#/models/jev">Open Jev page →</a>}>
         <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
-          Lightning panel after a bot fires. Hard rails (kill, DTE, puts, max $) always win.
-          <b> off</b> never calls TypeSafe and leaves the risk-engine size. <b> shadow</b> logs and never blocks.
-          <b> active</b> may skip or size down. Weak confidence, a missing key, or an API error sizes down.
+          Lightning panel after a bot fires, and on open paper options when that bot's exit scope is on.
+          Hard rails (kill switch, hard stop, gain-lock, trail) always win.
+          <b> off</b> never calls TypeSafe. <b> shadow</b> logs and does not change the order.
+          <b> active</b> may skip or size down an entry, or exit or tighten, only if that bot is switched on.
+          Each bot defaults off. Weak confidence, a missing key, or an API error sizes an entry down and does not sell.
         </div>
         <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
           {(['off', 'shadow', 'active'] as const).map((m) => {

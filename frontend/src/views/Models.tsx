@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useParams } from 'react-router-dom';
-import { AiModels, GetJev, GetMuse, SetJev, SetMuse } from '../api/client';
-import { jevLastText, museTuneText } from '../modelCopy';
+import { AiModels, GetJev, GetMuse, SetBotJev, SetJev, SetMuse } from '../api/client';
+import { JEV_CADENCE_FALLBACK, JEV_EMPTY_PICK, jevLastText, jevSkipLabel, museTuneText } from '../modelCopy';
+import { museLamp } from '../museLamp';
+import { jevChipStale } from '../deskChrome';
 import { Badge, Card, fmtDateTime } from '../components/ui';
 
 export type ModelId = 'jev' | 'muse' | 'ai';
@@ -11,7 +13,7 @@ const MODELS: { id: ModelId; title: string; role: string; blurb: string }[] = [
     id: 'jev',
     title: 'Jev',
     role: 'Post-signal panel',
-    blurb: 'TypeSafe lightning check after a bot fires. It can say enter, skip, or size down. Hard rails always win.',
+    blurb: 'TypeSafe check after a bot fires, and on open paper options when that bot allows it. Hard rails always win.',
   },
   {
     id: 'muse',
@@ -85,17 +87,17 @@ function ModelsHub({ health }: { health: any }) {
   return (
     <>
       <p className="muted" style={{ marginTop: 0, maxWidth: 640, lineHeight: 1.5 }}>
-        Three optional helpers sit beside the rails. Click a name in the sidebar — Jev, Muse, or AI —
+        Three optional helpers sit beside the rails. Click a name in the sidebar, Jev, Muse, or AI,
         to tune it here. None of them can place a live order. Options-only law is unchanged.
       </p>
       <div className="grid cols-3">
         <HubCard to="/models/jev" title="Jev" role="Post-signal panel"
-          dot={!j || !j.enabled || j.mode === 'off' ? 'gray' : j.degraded ? 'red' : j.mode === 'active' && j.ok ? 'green' : 'amber'}
-          status={!j || !j.enabled || j.mode === 'off' ? 'off' : `${j.mode} · $${Number(j.spentUsd || 0).toFixed(2)}/$${j.budgetUsd ?? 5}`}
-          body="After a bot fires, Jev scores the setup. Off never calls TypeSafe. Shadow logs. Active may skip or size down." />
+          dot={!j || !j.enabled || j.mode === 'off' ? 'gray' : j.degraded ? 'red' : jevChipStale(j.last?.at) ? 'amber' : j.mode === 'active' && j.ok ? 'green' : 'amber'}
+          status={!j || !j.enabled || j.mode === 'off' ? 'off' : `${j.mode} · $${Number(j.spentUsd || 0).toFixed(2)}/$${j.budgetUsd ?? 5}${jevChipStale(j.last?.at) ? ' · stale' : ''}`}
+          body="After a bot fires, Jev can enter, skip, or size down. On an open option it can CLOSE, PARTIAL, HOLD, or TIGHTEN_TRAIL when that bot's exit switch is on. Off never calls TypeSafe." />
         <HubCard to="/models/muse" title="Muse" role="Auditor / improver"
-          dot={w?.lastError ? 'amber' : (w?.mode === 'improve' && (w.ok || w.running || w.lastCycle) ? (w.running ? 'green' : 'amber') : (w?.available && w?.running ? 'green' : 'gray'))}
-          status={`${w?.mode || 'improve'} · ${w?.via || 'local'}${museTuneText(w?.lastTune) ? ` · ${museTuneText(w?.lastTune)}` : ''}`}
+          dot={museLamp(w).dot}
+          status={`${museLamp(w).text}${museTuneText(w?.lastTune) ? ` · ${museTuneText(w?.lastTune)}` : ''}`}
           body="Muse reviews packets and can clamp paper stops toward the swing law. It never sends an order." />
         <HubCard to="/models/ai" title="AI" role="Research + chat"
           dot={health?.ai ? 'green' : 'gray'}
@@ -122,61 +124,172 @@ function HubCard({ to, title, role, dot, status, body }: { to: string; title: st
 
 function JevDetail({ health, onChange }: { health: any; onChange: () => void }) {
   const [live, setLive] = useState<any>(null);
-  useEffect(() => { GetJev().then(setLive).catch(() => setLive(null)); }, [health?.jev]);
+  const [err, setErr] = useState('');
+  const [status, setStatus] = useState<'loading' | 'ok' | 'down'>('loading');
+  const reload = () => GetJev().then((row) => { setLive(row); setErr(''); setStatus('ok'); }).catch(() => { setLive(null); setStatus('down'); });
+  useEffect(() => { reload(); }, [health?.jev]);
   const j = live || health?.jev || {};
   const cur = jevModeOf({ jev: j });
-  const last = j.last || health?.jev?.last;
+  const entry = j.lastEntry || (j.last?.kind === 'exit' ? null : j.last);
+  const exit = j.lastExit || null;
+  const bots = Array.isArray(j.bots) ? j.bots : [];
+  const decisions = Array.isArray(j.decisions) ? j.decisions : [];
+  const cadence = Array.isArray(j.cadence) && j.cadence.length ? j.cadence : JEV_CADENCE_FALLBACK;
 
   const setMode = async (m: 'off' | 'shadow' | 'active') => {
     await SetJev(m === 'off' ? { enabled: false, mode: 'off' } : { enabled: true, mode: m });
     onChange();
+    reload();
+  };
+
+  const setBot = async (bot: any, patch: { entry?: boolean; exit?: boolean }) => {
+    setErr('');
+    const next = { entry: !!bot.jev?.entry, exit: !!bot.jev?.exit, ...patch };
+    setLive((curLive: any) => {
+      if (!curLive?.bots) return curLive;
+      return {
+        ...curLive,
+        bots: curLive.bots.map((b: any) => b.id === bot.id ? { ...b, jev: next } : b),
+      };
+    });
+    try {
+      await SetBotJev(bot.id, patch);
+      onChange();
+      reload();
+    } catch (e: any) {
+      setErr(String(e?.message || e).slice(0, 180));
+      GetJev().then((row) => { setLive(row); setStatus('ok'); }).catch(() => setStatus('down'));
+    }
   };
 
   return (
-    <>
+    <div className="jev-page">
       <Card>
         <div className="model-brief">
-          <span className="model-tape">TypeSafe · post-signal</span>
+          <span className="model-tape">TypeSafe · entry and exit</span>
           <p>
-            Jev is a lightning panel that runs <b>after</b> a bot already fired a long-call signal.
-            It is not a price predictor and not an exit engine. One System One call asks whether
-            the setup is coherent, crowded, and worth full size.
+            Jev advises a new long call (enter, skip, or size down) and, when that bot's exit scope is on,
+            an open paper option (CLOSE, PARTIAL, HOLD, or TIGHTEN_TRAIL). It is not a price predictor.
           </p>
           <p>
-            Hard rails always win: kill switch, options-only, calls-only, DTE / LEAPS, and max $.
-            <b> off</b> never calls TypeSafe and leaves the risk-engine size. <b> shadow</b> logs and never blocks.
-            <b> active</b> may skip or size down. Weak confidence, a missing key, or an API error sizes down instead of full size.
-            A bot scoped to SPY and QQQ does not gate a different underlying. A $5 prepaid budget
-            degrades to local decide. The desk keeps running.
+            The hard stop and the +1.5% gain-lock always win. Global mode is off, shadow, or active.
+            Each bot defaults off. Jev acts only on Alpaca paper, and only when global mode is active
+            and that scope is on. Off still logs a shadow decision and does not call TypeSafe.
           </p>
         </div>
       </Card>
 
       <Card title="Live status" right={<Badge kind={cur === 'off' ? 'gray' : j.degraded ? 'red' : cur === 'active' ? 'green' : 'amber'}>{cur}</Badge>}>
-        <div className="grid cols-3" style={{ gap: 12 }}>
+        <div className="jev-stats">
           <Stat label="Mode" value={cur} />
           <Stat label="Spend" value={`$${Number(j.spentUsd || 0).toFixed(4)} / $${j.budgetUsd ?? 5}`} />
-          <Stat label="TypeSafe key" value={j.configured ? 'configured' : 'not set. Active mode sizes down.'} />
+          <Stat label="TypeSafe key" value={j.configured ? 'configured' : 'not set'} />
+          <Stat label="Acts on" value="Alpaca paper" />
         </div>
-        {j.degraded && <div className="amber" style={{ marginTop: 10, fontSize: 13 }}>Degraded: {j.reason || 'budget or payment'}</div>}
-        {(last?.pick || last?.symbol || last?.bot || last?.because) && (
-          <div style={{ marginTop: 12, padding: 12, background: 'var(--panel2)', borderRadius: 10 }}>
-            <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6 }}>Last pick</div>
-            <div style={{ marginTop: 4 }}>{jevLastText(last)}</div>
-            {last.at && <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>{fmtDateTime(last.at)}</div>}
+        {j.degraded && <div className="amber" style={{ marginTop: 12, fontSize: 13 }}>Degraded: {j.reason || 'budget or payment'}. Entries size down. Exits stay on the rails.</div>}
+        {!j.configured && cur === 'active' && <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>No key: active entries size down. Exits are logged and not sold.</div>}
+        <div className="jev-picks">
+          <PickCard label="Entry Jev" last={entry} empty={JEV_EMPTY_PICK} />
+          <PickCard label="Exit Jev" last={exit} empty={JEV_EMPTY_PICK} />
+        </div>
+      </Card>
+
+      <div className="jev-split">
+        <Card title="Global mode">
+          <p className="muted jev-help">off never calls TypeSafe. shadow logs and does not change size or exits. active may act only for bots you switch on.</p>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            {(['off', 'shadow', 'active'] as const).map((m) => (
+              <button key={m} className={cur === m ? 'primary' : ''} onClick={() => setMode(m)}>{m}</button>
+            ))}
           </div>
+        </Card>
+        <Card title="Check cadence">
+          <p className="muted jev-help">Entry and exit share these bands. A fresh decision inside the window skips the next TypeSafe call. The hard stop still runs on the monitor loop.</p>
+          <div className="jev-bands">
+            {cadence.map((b: any) => (
+              <div key={b.band} className="jev-band">
+                <div className="muted">{String(b.dte).includes('DTE') ? b.dte : `${b.dte} DTE`}</div>
+                <b>{b.every}</b>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      <Card title="Per bot" right={<span className="muted" style={{ fontSize: 12 }}>Default off</span>}>
+        <p className="muted jev-help">Off still logs a shadow decision on cadence and does not call TypeSafe. On can spend the $5 budget when a check is due. Entry and exit are separate.</p>
+        {err && <div className="amber" style={{ marginBottom: 8 }}>{err}</div>}
+        {!bots.length && status === 'loading' && <div className="muted">Loading bots…</div>}
+        {!bots.length && status === 'down' && <div className="muted">API is down, so bot switches are not loaded. They stay off until the desk answers.</div>}
+        {!bots.length && status === 'ok' && <div className="muted">No bots on this account yet. Add one on Bots, then turn a scope on here.</div>}
+        {!!bots.length && (
+          <table className="jev-bots">
+            <thead>
+              <tr><th>Bot</th><th>Symbols</th><th>Entry</th><th>Exit</th></tr>
+            </thead>
+            <tbody>
+              {bots.map((b: any) => (
+                <tr key={b.id}>
+                  <td>
+                    <b><Link to={`/bots?bot=${b.id}`}>{b.name}</Link></b>
+                    {!b.enabled && <span className="muted"> · bot off</span>}
+                  </td>
+                  <td className="muted">{(b.symbols || []).slice(0, 4).join(', ') || 'any'}</td>
+                  <td><ScopeToggle on={!!b.jev?.entry} label="Entry" onClick={() => setBot(b, { entry: !b.jev?.entry })} /></td>
+                  <td><ScopeToggle on={!!b.jev?.exit} label="Exit" onClick={() => setBot(b, { exit: !b.jev?.exit })} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </Card>
 
-      <Card title="Tune">
-        <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>Same controls as Settings. Changes persist in the DB.</div>
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-          {(['off', 'shadow', 'active'] as const).map((m) => (
-            <button key={m} className={cur === m ? 'primary' : ''} onClick={() => setMode(m)}>{m}</button>
-          ))}
-        </div>
+      <Card title={decisions.length ? `Last ${decisions.length} decisions` : 'Last decisions'}>
+        <p className="muted jev-help">Exit picks are CLOSE, PARTIAL, HOLD, or TIGHTEN_TRAIL. Wave-1 stays off until you turn a candidate on. Paper only. Applied means global active, that scope was on, and the desk is on Alpaca paper. Off still logs.</p>
+        {!decisions.length && status === 'down' && <div className="muted">Decision log needs the API.</div>}
+        {!decisions.length && status !== 'down' && <div className="muted">No decisions yet.</div>}
+        {!!decisions.length && (
+          <table className="jev-log">
+            <thead>
+              <tr><th>When</th><th>Kind</th><th>Pick</th><th>Symbol</th><th>Bot</th><th>Acted</th></tr>
+            </thead>
+            <tbody>
+              {decisions.map((d: any, i: number) => (
+                <tr key={`${d.at}-${i}`}>
+                  <td className="muted">{d.at ? fmtDateTime(d.at) : ''}</td>
+                  <td>{d.kind || ''}</td>
+                  <td><b>{d.pick || 'none'}</b></td>
+                  <td>{d.symbol || ''}</td>
+                  <td className="muted">{d.bot || ''}</td>
+                  <td>{d.applied ? <span className="green">yes</span> : <span className="muted">{jevSkipLabel(d.skipped)}</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </Card>
-    </>
+    </div>
+  );
+}
+
+function PickCard({ label, last, empty }: { label: string; last: any; empty: string }) {
+  const text = jevLastText(last);
+  return (
+    <div className="jev-pick">
+      <div className="muted jev-kicker">{label}</div>
+      {text ? <div className="jev-pick-body">{text}</div> : <div className="muted">{empty}</div>}
+      {last?.applied === false && <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>Logged, not applied{last?.skipped ? ` (${jevSkipLabel(last.skipped)})` : ''}.</div>}
+      {last?.at && <div className="muted" style={{ marginTop: 6, fontSize: 11 }}>{fmtDateTime(last.at)}</div>}
+    </div>
+  );
+}
+
+function ScopeToggle({ on, label, onClick }: { on: boolean; label: string; onClick: () => void }) {
+  return (
+    <button type="button" className={`jev-switch${on ? ' on' : ''}`} aria-pressed={on} aria-label={`${label} ${on ? 'on' : 'off'}`} onClick={onClick}>
+      <span>{label}</span>
+      <span className="jev-switch-v">{on ? 'on' : 'off'}</span>
+    </button>
   );
 }
 
@@ -185,6 +298,7 @@ function MuseDetail({ health, onChange }: { health: any; onChange: () => void })
   useEffect(() => { GetMuse().then(setLive).catch(() => setLive(null)); }, [health?.watch]);
   const w = live?.watch || health?.watch || {};
   const mode = (live?.mode || w.mode || 'improve') === 'observe' ? 'observe' : 'improve';
+  const lamp = museLamp({ ...w, mode });
   const tune = live?.lastTune || w.lastTune;
 
   return (
@@ -205,7 +319,7 @@ function MuseDetail({ health, onChange }: { health: any; onChange: () => void })
         </div>
       </Card>
 
-      <Card title="Live status" right={<Badge kind={w.lastError ? 'amber' : mode === 'improve' ? 'green' : 'gray'}>{mode}</Badge>}>
+      <Card title="Live status" right={<Badge kind={lamp.kind}>{lamp.text}</Badge>}>
         <div className="grid cols-3" style={{ gap: 12 }}>
           <Stat label="Mode" value={mode} />
           <Stat label="Via" value={w.via === 'muse' && w.available ? 'Muse API' : 'local heuristic'} />
