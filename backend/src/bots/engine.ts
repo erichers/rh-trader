@@ -446,6 +446,7 @@ export async function evaluateBot(botRow: any): Promise<any> {
           source: 'bot',
           bot_id: bot.id,
         };
+        if (bot.action?._strict_price === true || bot.risk?._strict_price === true) draft._strict_price = true;
         if (bot.action?.option_type === 'put' || bot.action?.option_type === 'call') {
           draft.option_type = bot.action.option_type;
         }

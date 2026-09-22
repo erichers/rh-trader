@@ -189,45 +189,8 @@ export const STRATEGY_LIBRARY: StrategyTemplate[] = [
     risk: { allow_0_1_dte: true, stop_loss_pct: 5, take_profit_pct: 10, trailing_stop_pct: 4, max_position_usd: 400 },
   },
 
-  // ── AI boom (paper). Full auto stays off until desk rank sees closed trades. ──
-  {
-    ...SWING({
-      key: 'ai-boom-watch',
-      name: 'AI Boom Watch',
-      description: 'Watch chips, power, and datacenter names. Observe only.',
-      rules: { price_above_sma20: true, _observe_only: true },
-    }),
-    category: 'ai',
-    observe_only: true,
-    education: 'Paper watch for the AI buildout. It logs. It does not place.',
-    default_symbols: ['AVGO', 'TSM', 'ASML', 'ARM', 'SMCI', 'MU', 'AMD', 'NVDA', 'MRVL', 'ANET', 'CRDO', 'VST', 'CEG', 'NRG', 'VRT', 'GEV', 'EQIX', 'DLR', 'CCI'],
-  },
-  {
-    ...SWING({
-      key: 'avgo-call',
-      name: 'AVGO Broadcom Call',
-      description: 'Long call on Broadcom, 2-14 DTE. Off until you enable it.',
-      rules: { breakout_high: true, price_above_sma20: true, require_all: true },
-    }),
-    category: 'options-calls',
-    education: 'AVGO was missing from the Mag-7 fleet. This bot stays off full auto until closed trades support it. Jev exit stays off.',
-    action: { side: 'buy', qty: 1, order_type: 'market', option_type: 'call', strike_target: 'atm', expiration: 'weekly', _ai_boom: true, _liquidity: 'listed' },
-    risk: { override: true, max_position_usd: 900, stop_loss_pct: 10, take_profit_pct: 20, trailing_stop_pct: 10, hold_overnight: true, hold_over_weekend: true, jev: { entry: false, exit: false }, _ai_boom: true, _liquidity: 'listed' },
-    default_symbols: ['AVGO'],
-  },
-  {
-    ...SWING({
-      key: 'avgo-leaps',
-      name: 'AVGO LEAPS Call',
-      description: 'ITM LEAPS call on Broadcom. Same LEAPS shape as the library bot.',
-      rules: { golden_cross: true },
-    }),
-    category: 'options-calls',
-    education: 'Far-dated ITM call. The 2-14 DTE window does not apply. Still off full auto until you arm it. Jev exit stays off.',
-    action: { side: 'buy', qty: 1, order_type: 'market', option_type: 'call', strike_target: 'itm', expiration: 'leaps', _ai_boom: true, _liquidity: 'listed' },
-    risk: { override: true, max_position_usd: 900, stop_loss_pct: 10, take_profit_pct: 20, trailing_stop_pct: 10, hold_overnight: true, hold_over_weekend: true, jev: { entry: false, exit: false }, _ai_boom: true, _liquidity: 'listed' },
-    default_symbols: ['AVGO'],
-  },
+  // Fox wait-for-signal bots are inserted by ensureAiBoomPacks, not this library.
+  // A fresh seed must not recreate AI Boom Watch or the AVGO call / LEAPS rows.
 
   // ── Observe-only watch stubs (signal + journal only — never an order row) ──
   {

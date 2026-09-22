@@ -20,19 +20,23 @@ Shadow logs the choice and still runs the work. `USAGE_ROUTER_MODE=active` may s
 
 Lanes `post`, `spend`, and `retry` always choose do. A stuck sell consults the gate and still retries. The gate does not place orders, does not block a buy or a sell, and does not turn Jev exit on.
 
-## AI boom packs (paper)
+## Fox wait-for-signal adds (paper)
 
-The in-repo check is the symbol census, not a dumped trade tape. The Mag-7 fleet does not include AVGO. Power and datacenter names are absent from the quickbot universe. On Alpaca paper, `ensureAiBoomPacks` adds the missing rows and leaves them off full auto:
+The AI boom pack is Fox's wait-for-signal list. On Alpaca paper, `ensureAiBoomPacks` inserts one bot per name and leaves it off (`enabled` 0, mode observe). It also retires the earlier boom rows (AI Boom Watch, the AVGO call and LEAPS bots, and the chips, power, and datacenter packs) when those rows have no orders.
 
-- AI Boom Watch (observe, no orders), including thin names CRDO and GEV
-- AI Chips Call Pack, AVGO first, then TSM, ASML, ARM, SMCI, MU, AMD, NVDA, MRVL, ANET. Calls, 7 DTE inside the 2-14 window, size $900, off
-- AI Power Call Pack: VST, CEG, NRG, VRT
-- AI Datacenter Call Pack: EQIX, DLR, CCI, liquidity unverified, observe
-- AVGO Broadcom Call (2-14 DTE) and AVGO LEAPS Call (same LEAPS shape as the library bot)
+Twelve bots, calls, 2-14 DTE, size $900, Jev exit off:
 
-GOOGL stays GOOGL. These packs do not add GOOG.
+TSM, ASML, ANET, VRT, ARM, MRVL, CEG, VST, EQIX, ORCL, ETN, SMCI.
 
-Closed monitors plus the latest backtest row can demote a chronic loser to observe, cut size on a stop-heavy bot, or promote a listed winner to paper full auto. Unverified names are not promoted. The hard stop and the +1.5% gain-lock are not loosened. Jev exit stays off and still logs. Autofix will not lift an AI boom bot to full auto until that rank sets `_full_auto_ok`.
+SMCI is strict. A buy needs a two-sided mid or an ask. Last and close do not pick the strike and do not size the order.
+
+Deferred, not seeded: DLR, NRG, INTC, CLS, COHR.
+
+Not added again: NVDA, AMD, AVGO, MU, META, MSFT, AMZN, TSLA, EOSE, RKLB.
+
+GOOGL stays GOOGL. These bots do not add GOOG.
+
+Closed monitors plus the latest backtest row can still demote a chronic loser to observe, cut size on a stop-heavy bot, or promote a listed winner to paper full auto. A wait-for-signal bot is held off that promote until you arm it. The hard stop and the +1.5% gain-lock are not loosened. Jev exit stays off and still logs. Autofix will not lift an `_ai_boom` bot to full auto until rank sets `_full_auto_ok`, and rank does not set that flag on a wait-for-signal bot.
 
 Models and Bots show the pack with those badges.
 

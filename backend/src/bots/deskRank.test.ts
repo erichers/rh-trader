@@ -81,14 +81,21 @@ describe('desk rank', () => {
     assert.match(put.reason, /puts/);
   });
 
-  it('holds a watch stub and a short sample', () => {
+  it('holds a watch stub, a wait-for-signal bot, and a short sample', () => {
     const watch = rankDeskBot(
-      { id: 8, name: 'AI Boom Watch', observeOnly: true, action: { _observe_only: true }, risk: {} },
+      { id: 8, name: 'Mean-Revert Watch', observeOnly: true, action: { _observe_only: true }, risk: {} },
       closes(8, -20, 'stop-loss'),
     );
     assert.equal(watch.action, 'hold');
+    const waiting = rankDeskBot(
+      { id: 11, name: 'TSM wait for signal', action: { option_type: 'call', _wait_for_signal: true, _ai_boom: true }, risk: {} },
+      closes(6, 9, 'trail'),
+      { num_trades: 10, total_return_pct: 20 },
+    );
+    assert.equal(waiting.action, 'hold');
+    assert.match(waiting.reason, /wait for signal/);
     const thin = rankDeskBot(
-      { id: 9, name: 'AVGO Broadcom Call', action: { option_type: 'call' }, risk: {} },
+      { id: 9, name: 'Donchian Breakout', action: { option_type: 'call' }, risk: {} },
       closes(2, -5, 'stop-loss'),
     );
     assert.equal(thin.action, 'hold');

@@ -105,6 +105,9 @@ export function rankDeskBot(bot: RankBot, closes: RankClose[], backtest?: RankBa
   if (bot.observeOnly || action._observe_only === true) {
     return { ...base, action: 'hold', reason: 'watch stub stays observe' };
   }
+  if (action._wait_for_signal === true) {
+    return { ...base, action: 'hold', reason: 'wait for signal stays off until you arm it' };
+  }
   if (stamped === 'demote') {
     return { ...base, action: 'hold', reason: 'already demoted from closed trades' };
   }

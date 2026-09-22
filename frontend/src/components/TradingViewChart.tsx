@@ -10,6 +10,7 @@ const TV_SYMBOL: Record<string, string> = {
   SMCI: 'NASDAQ:SMCI', MRVL: 'NASDAQ:MRVL', ANET: 'NYSE:ANET', CRDO: 'NASDAQ:CRDO',
   VST: 'NYSE:VST', NRG: 'NYSE:NRG', VRT: 'NYSE:VRT', GEV: 'NYSE:GEV',
   EQIX: 'NASDAQ:EQIX', DLR: 'NYSE:DLR', CCI: 'NYSE:CCI',
+  ORCL: 'NASDAQ:ORCL', ETN: 'NYSE:ETN',
   // Continuous futures (real overnight charts) — leading indicators for the ETFs.
   'ES=F': 'CME_MINI:ES1!', 'NQ=F': 'CME_MINI:NQ1!', 'YM=F': 'CBOT_MINI:YM1!',
   'RTY=F': 'CME_MINI:RTY1!', 'CL=F': 'NYMEX:CL1!', 'GC=F': 'COMEX:GC1!',

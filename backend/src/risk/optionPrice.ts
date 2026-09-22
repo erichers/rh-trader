@@ -107,7 +107,7 @@ export function strikeTargetPrice(spot: number, type: 'call' | 'put', strikeTarg
  * Sizing waterfall for one contract. Buys prefer mid → ask → last → close.
  * A one-sided bid is not a buyable offer. Missing everything fails closed.
  */
-export function optionPremium(fields: OptionQuoteFields, side: 'buy' | 'sell' = 'buy'): OptionPremium {
+export function optionPremium(fields: OptionQuoteFields, side: 'buy' | 'sell' = 'buy', opts?: { strict?: boolean }): OptionPremium {
   const bid = pos(fields.bid);
   const ask = pos(fields.ask);
   const last = pos(fields.last);
@@ -131,6 +131,24 @@ export function optionPremium(fields: OptionQuoteFields, side: 'buy' | 'sell' = 
 
   if (mid != null) return pick(mid, 'mid', 'two-sided mid', true);
   if (side === 'buy' && ask != null) return pick(ask, 'ask', 'ask (one-sided)', true);
+  if (opts?.strict && side === 'buy') {
+    const decision = decideGo({
+      answers: [gate({
+        id: 'option_premium',
+        pick: FAIL,
+        because: 'strict price: need a two-sided mid or an ask',
+        evidence,
+      })],
+    });
+    return {
+      price: null,
+      source: null,
+      reason: 'strict price: need a two-sided mid or an ask',
+      placeable: false,
+      evidence,
+      decision,
+    };
+  }
   if (side === 'sell' && bid != null) return pick(bid, 'bid', 'bid (one-sided)', true);
   if (last != null) return pick(last, 'last', 'last trade', false);
   if (close != null) return pick(close, 'close', 'prior close', false);
@@ -193,12 +211,18 @@ export function pickNearestContract<T extends { strike: number }>(
   targetStrike: number,
   fieldsOf: (c: T) => OptionQuoteFields,
   side: 'buy' | 'sell' = 'buy',
+  opts?: { strict?: boolean },
 ): T | null {
   if (!list.length) return null;
   const scored = list.map((c) => {
-    const prem = optionPremium(fieldsOf(c), side);
+    const prem = optionPremium(fieldsOf(c), side, { strict: opts?.strict === true });
     return { c, prem, dist: Math.abs(Number(c.strike) - targetStrike) };
   });
+  if (opts?.strict) {
+    const placeable = scored.filter((x) => x.prem.placeable && x.prem.price != null);
+    if (!placeable.length) return null;
+    return placeable.reduce((best, x) => (x.dist < best.dist ? x : best)).c;
+  }
   const sizeable = scored.filter((x) => x.prem.price != null);
   const pool = sizeable.length ? sizeable : scored;
   return pool.reduce((best, x) => {
@@ -285,18 +309,34 @@ export function draftNotionalUsd(draft: AssetClassHint & {
   qty?: number;
   est_price?: number | null;
   limit_price?: number | null;
+  /** SMCI-style: last and close are not a buy price. */
+  strictPrice?: boolean;
+  _contract?: { mid?: number | null; ask?: number | null; bid?: number | null; last?: number | null; close?: number | null } | null;
 }): DraftNotional {
   const assetClass = inferAssetClass(draft);
-  const price = pos(draft.est_price) ?? pos(draft.limit_price) ?? 0;
+  const strict = draft.strictPrice === true && assetClass === 'option' && draft.side === 'buy';
+  const strictPrem = strict
+    ? optionPremium({
+      mid: draft._contract?.mid,
+      ask: draft._contract?.ask,
+      bid: draft._contract?.bid,
+      last: draft._contract?.last,
+      close: draft._contract?.close,
+    }, 'buy', { strict: true })
+    : null;
+  const price = strict
+    ? (strictPrem?.placeable ? Number(strictPrem.price) : 0)
+    : (pos(draft.est_price) ?? pos(draft.limit_price) ?? 0);
   const qty = Number(draft.qty);
   const haveQty = Number.isFinite(qty) && qty > 0;
   const mult = assetClass === 'option' ? CONTRACT_MULT : 1;
   const raw = price > 0 && haveQty ? price * qty * mult : 0;
   const notional = Math.round(raw * 100) / 100;
-  const unpriceableOptionBuy = assetClass === 'option' && draft.side === 'buy' && !(notional > 0);
+  const unpriceableOptionBuy = assetClass === 'option' && draft.side === 'buy' && (strict ? !strictPrem?.placeable : !(notional > 0));
   let reason = '';
   if (unpriceableOptionBuy) {
-    if (!haveQty) reason = 'option buy not priceable — qty is 0';
+    if (strict) reason = strictPrem?.reason || 'strict price: need a two-sided mid or an ask';
+    else if (!haveQty) reason = 'option buy not priceable — qty is 0';
     else if (!(price > 0)) reason = 'option buy not priceable — no mid/ask/last/close (notional_usd: 0)';
     else reason = 'option buy not priceable — cannot size';
   }
@@ -308,8 +348,14 @@ export function applyResolvedPremium<T extends {
   side?: string;
   est_price?: number;
   _contract?: { mid?: number | null; ask?: number | null; bid?: number | null; last?: number | null; close?: number | null };
-}>(draft: T, quote: OptionQuoteFields): OptionPremium {
-  const prem = optionPremium(quote, draft.side === 'sell' ? 'sell' : 'buy');
+  _strict_price?: boolean;
+}>(draft: T, quote: OptionQuoteFields, opts?: { strict?: boolean }): OptionPremium {
+  const strict = opts?.strict === true || draft._strict_price === true;
+  const prem = optionPremium(quote, draft.side === 'sell' ? 'sell' : 'buy', { strict });
+  if (strict && !prem.placeable) {
+    draft.est_price = undefined;
+    return prem;
+  }
   if (!(Number(draft.est_price) > 0) && prem.price != null) draft.est_price = prem.price;
   return prem;
 }

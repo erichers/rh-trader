@@ -4,16 +4,17 @@ import { MAG7, UNIVERSE } from '../quickbot.js';
 import { FOCUS_TICKERS } from '../focus.js';
 import { STRATEGY_LIBRARY } from './strategies.js';
 import {
-  AI_BOOM_SYMBOLS,
-  AI_BOOM_WATCH_NAME,
+  FOX_DEFER,
+  FOX_SKIP,
+  FOX_WAIT,
   aiBoomInserts,
   aiBoomPacks,
+  aiBoomPublic,
   coveragePrior,
-  symbolsFor,
-  watchSymbols,
+  foxBotName,
 } from './aiBoom.js';
 
-describe('AI boom coverage', () => {
+describe('Fox wait-for-signal pack', () => {
   const prior = coveragePrior({
     mag7: MAG7,
     universe: UNIVERSE,
@@ -24,54 +25,61 @@ describe('AI boom coverage', () => {
   it('keeps GOOGL and does not add GOOG', () => {
     assert.equal(prior.googlInMag7, true);
     assert.equal(prior.googPresent, false);
-    assert.equal(AI_BOOM_SYMBOLS.some((s) => s.symbol === 'GOOG'), false);
+    assert.equal(FOX_WAIT.includes('GOOG' as never), false);
     assert.equal(MAG7.includes('GOOGL'), true);
   });
 
-  it('treats missing AVGO and power or datacenter names as the gap', () => {
-    assert.equal(prior.avgoInMag7, false);
-    assert.equal(prior.avgoInUniverse, false);
-    assert.deepEqual(prior.powerInUniverse, []);
-    assert.deepEqual(prior.datacenterInUniverse, []);
-    assert.match(prior.note, /does not include AVGO/);
-    assert.match(prior.note, /off full auto/);
+  it('uses the twelve names and leaves the skip and defer lists off the bots', () => {
+    assert.deepEqual([...FOX_WAIT], ['TSM', 'ASML', 'ANET', 'VRT', 'ARM', 'MRVL', 'CEG', 'VST', 'EQIX', 'ORCL', 'ETN', 'SMCI']);
+    for (const symbol of FOX_SKIP) assert.equal(FOX_WAIT.includes(symbol as never), false, symbol);
+    for (const symbol of FOX_DEFER) assert.equal(FOX_WAIT.includes(symbol as never), false, symbol);
     assert.equal(prior.note.includes('—'), false);
+    assert.match(prior.note, /stay off/);
+    assert.match(prior.note, /SMCI/);
+    assert.ok(prior.alreadyOnDesk.includes('CEG'));
+    assert.equal(STRATEGY_LIBRARY.some((s) => /AI Boom Watch|AVGO Broadcom|AVGO LEAPS/.test(s.name)), false);
   });
 
-  it('puts AVGO on the chips pack and leaves thin names off the listed packs', () => {
-    const chips = symbolsFor('chips', 'listed');
-    assert.equal(chips[0], 'AVGO');
-    assert.equal(chips.includes('CRDO'), false);
-    assert.equal(symbolsFor('power', 'listed').includes('GEV'), false);
-    assert.deepEqual(symbolsFor('datacenter'), ['EQIX', 'DLR', 'CCI']);
-    assert.ok(watchSymbols().includes('AVGO'));
-    assert.ok(watchSymbols().includes('CRDO'));
-    assert.ok(watchSymbols().includes('GEV'));
-  });
-
-  it('seeds packs off, calls or LEAPS, Jev exit off', () => {
-    for (const pack of aiBoomPacks()) {
+  it('seeds each name off, calls 2-14, Jev exit off, SMCI strict', () => {
+    const packs = aiBoomPacks();
+    assert.equal(packs.length, 1);
+    assert.deepEqual(packs[0].symbols, [...FOX_WAIT]);
+    for (const pack of packs) {
       assert.equal(pack.fullAuto, false);
       assert.equal(pack.jevExit, false);
       assert.equal(pack.enabled, false);
       assert.ok(pack.badges.includes('Jev exit off'));
-      assert.ok(pack.badges.includes('not full auto') || pack.badges.includes('watch only') || pack.kind === 'watch');
+      assert.ok(pack.badges.includes('wait for signal'));
+      assert.ok(pack.badges.includes('SMCI strict price'));
       for (const badge of pack.badges) assert.equal(badge.includes('—'), false);
     }
     const rows = aiBoomInserts();
-    assert.equal(rows.some((r) => r.name === AI_BOOM_WATCH_NAME), true);
+    assert.equal(rows.length, FOX_WAIT.length);
+    assert.deepEqual(rows.map((r) => r.name), FOX_WAIT.map(foxBotName));
     for (const row of rows) {
       assert.equal(row.enabled, 0);
-      assert.notEqual(row.mode, 'full_auto');
+      assert.equal(row.mode, 'observe');
       assert.equal(row.asset_class, 'option');
+      assert.equal(row.action.option_type, 'call');
+      assert.equal(row.action.expiration, 'weekly');
+      assert.equal(row.action._wait_for_signal, true);
+      assert.equal(row.action._observe_only, undefined);
+      assert.equal(row.risk.max_position_usd, 900);
       const jev = row.risk.jev as { entry: boolean; exit: boolean };
       assert.equal(jev.exit, false);
       assert.equal(jev.entry, false);
-      const plays = row.action.plays as { direction?: string }[] | undefined;
-      if (plays) assert.ok(plays.every((p) => p.direction === 'call'));
+      const symbol = row.symbols[0];
+      if (symbol === 'SMCI') {
+        assert.equal(row.action._strict_price, true);
+        assert.equal(row.risk._strict_price, true);
+      } else {
+        assert.equal(row.action._strict_price, undefined);
+      }
     }
-    const watch = STRATEGY_LIBRARY.find((s) => s.name === AI_BOOM_WATCH_NAME);
-    assert.deepEqual(watch?.default_symbols, watchSymbols());
-    assert.equal(watch?.observe_only, true);
+    const pub = aiBoomPublic(prior.note);
+    assert.deepEqual(pub.deferred, [...FOX_DEFER]);
+    assert.deepEqual(pub.skipped, [...FOX_SKIP]);
+    assert.equal(pub.note.includes('—'), false);
+    assert.equal(rows.some((r) => FOX_SKIP.includes(r.symbols[0] as never)), false);
   });
 });

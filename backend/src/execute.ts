@@ -37,6 +37,7 @@ export async function resolveDraftContract(draft: OrderDraft, env: TradingEnv): 
   if ((draft.asset_class || '').toLowerCase() !== 'option' || !draft.option_type) return;
   // A contract already on the draft still needs a premium. Early sizeDraft
   // used to set `_contract` and skip the second pass, leaving est_price empty.
+  const strict = draft._strict_price === true;
   if (draft._contract) {
     applyResolvedPremium(draft, {
       mid: draft._contract.mid,
@@ -44,7 +45,7 @@ export async function resolveDraftContract(draft: OrderDraft, env: TradingEnv): 
       bid: draft._contract.bid,
       last: draft._contract.last,
       close: draft._contract.close,
-    });
+    }, { strict });
     return;
   }
   try {
@@ -61,6 +62,7 @@ export async function resolveDraftContract(draft: OrderDraft, env: TradingEnv): 
       }),
       name: draft._play?.name,
       key: draft._play?.key,
+      strictPrice: strict,
     };
     const c = brokerKind(env) === 'robinhood'
       ? await resolveContractRH(draft.symbol, draft.option_type, draft.strike_target || 'atm', draft.expiration || 'weekly', pickOpts)
@@ -71,7 +73,7 @@ export async function resolveDraftContract(draft: OrderDraft, env: TradingEnv): 
         mid: c.mid, ask: c.ask, bid: c.bid, last: c.last, close: c.close,
         readable: c.readable, instrumentId: c.instrumentId,
       };
-      applyResolvedPremium(draft, { mid: c.mid, ask: c.ask, bid: c.bid, last: c.last, close: c.close });
+      applyResolvedPremium(draft, { mid: c.mid, ask: c.ask, bid: c.bid, last: c.last, close: c.close }, { strict });
       syncPlayDteToContract(draft);
     }
   } catch { /* unresolved → risk vetoes the unpriceable buy / unmatched sell */ }

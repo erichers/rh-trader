@@ -166,17 +166,29 @@ describe('proposeBotAutofix', () => {
     assert.equal(p!.next.enabled, 0);
   });
 
-  it('AI boom calls stay off full auto until rank marks them', () => {
+  it('Fox wait-for-signal calls stay off full auto', () => {
     const p = proposeBotAutofix({
       id: 40,
-      name: 'AVGO Broadcom Call',
-      mode: 'cautious',
+      name: 'TSM wait for signal',
+      mode: 'observe',
       enabled: 0,
       asset_class: 'option',
-      action: { side: 'buy', option_type: 'call', expiration: 'weekly', _ai_boom: true, _strategy: 'avgo-call' },
+      action: { side: 'buy', option_type: 'call', expiration: 'weekly', _ai_boom: true, _wait_for_signal: true, _strategy: 'fox-wait-tsm' },
       risk: { stop_loss_pct: 10, take_profit_pct: 20, trailing_stop_pct: 10, hold_overnight: true, hold_over_weekend: true, max_position_usd: 900, jev: { entry: false, exit: false } },
     });
     assert.equal(p, null);
+    const armed = proposeBotAutofix({
+      id: 41,
+      name: 'SMCI wait for signal',
+      mode: 'full_auto',
+      enabled: 1,
+      asset_class: 'option',
+      action: { side: 'buy', option_type: 'call', expiration: 'weekly', _ai_boom: true, _wait_for_signal: true, _strict_price: true, _strategy: 'fox-wait-smci' },
+      risk: { stop_loss_pct: 10, take_profit_pct: 20, trailing_stop_pct: 10, hold_overnight: true, hold_over_weekend: true, max_position_usd: 900, jev: { entry: false, exit: false }, _strict_price: true },
+    });
+    assert.ok(armed);
+    assert.equal(armed!.next.mode, 'cautious');
+    assert.notEqual(armed!.next.mode, 'full_auto');
   });
 
   it('observe stub is not promoted to full_auto', () => {
