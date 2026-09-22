@@ -101,4 +101,58 @@ describe('desk rank', () => {
     assert.equal(thin.action, 'hold');
     assert.match(thin.reason, /Need 5/);
   });
+
+  it('does not lift _ai_boom or a human-unarmed winner to full auto', () => {
+    const boom = rankDeskBot(
+      { id: 12, name: 'ORCL call', mode: 'cautious', enabled: 0, action: { option_type: 'call', _ai_boom: true, _full_auto_ok: true }, risk: { jev: { exit: false } } },
+      closes(6, 9, 'trail'),
+      { num_trades: 10, total_return_pct: 20 },
+    );
+    assert.notEqual(boom.action, 'promote');
+    assert.notEqual(boom.mode, 'full_auto');
+    assert.equal(boom.blockAuto, true);
+    const forged = actionAfterRank(
+      { option_type: 'call', _ai_boom: true, _full_auto_ok: true },
+      { ...boom, action: 'promote', mode: 'full_auto', enabled: 1 },
+    );
+    assert.equal(forged?._full_auto_ok, false);
+    const risk = riskAfterRank({ jev: { entry: false, exit: false } }, { ...boom, action: 'promote', blockAuto: true });
+    assert.equal(risk?._full_auto_ok, false);
+    assert.equal(risk?.jev.exit, false);
+    const trading = rankDeskBot(
+      { id: 13, name: 'VRT wait for signal', mode: 'full_auto', enabled: 1, action: { option_type: 'call', _wait_for_signal: true }, risk: {} },
+      closes(6, 9, 'trail'),
+      { num_trades: 12, total_return_pct: 20 },
+    );
+    assert.equal(trading.action, 'demote');
+    assert.equal(trading.mode, 'observe');
+    assert.equal(trading.enabled, 0);
+    const armed = rankDeskBot(
+      { id: 14, name: 'CEG wait for signal', mode: 'cautious', enabled: 0, action: { _ai_boom: true, _human_armed: true, _arm_reason: 'desk arm after checklist' }, risk: {} },
+      closes(6, 9, 'trail'),
+      { num_trades: 12, total_return_pct: 20 },
+    );
+    assert.equal(armed.action, 'hold');
+    assert.notEqual(armed.mode, 'full_auto');
+  });
+
+  it('flags 0-DTE as a demote and does not auto-promote bot 84', () => {
+    const live = rankDeskBot(
+      { id: 84, name: 'SPY scalp', mode: 'full_auto', enabled: 1, action: { option_type: 'call', _dte: 0, expiration: '0dte' }, risk: { jev: { exit: false } } },
+      closes(6, 9, 'trail'),
+      { num_trades: 12, total_return_pct: 30 },
+    );
+    assert.equal(live.action, 'demote');
+    assert.equal(live.mode, 'observe');
+    assert.equal(live.enabled, 0);
+    assert.match(live.reason, /0-DTE/);
+    assert.equal(live.touchJevExit, false);
+    const parked = rankDeskBot(
+      { id: 3, name: 'QQQ 0-DTE', mode: 'observe', enabled: 0, action: { option_type: 'call', _dte: 0 }, risk: {} },
+      closes(6, 9, 'trail'),
+      { num_trades: 12, total_return_pct: 30 },
+    );
+    assert.equal(parked.action, 'hold');
+    assert.match(parked.reason, /Demote candidate/);
+  });
 });

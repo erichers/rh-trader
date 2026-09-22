@@ -116,6 +116,7 @@ export function PromotionModal({ botId, onClose, onPromoted }: { botId: number; 
   const [data, setData] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
+  const [reason, setReason] = useState('');
   const load = async () => {
     setBusy(true); setErr(null);
     try { setData(await BotPromotion(botId)); } catch (e: any) { setErr(String(e?.message || e)); } finally { setBusy(false); }
@@ -123,7 +124,7 @@ export function PromotionModal({ botId, onClose, onPromoted }: { botId: number; 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [botId]);
   const promote = async (force: boolean) => {
     setBusy(true);
-    try { const r = await PromoteBot(botId, force); setData(r); if (r.promoted) onPromoted?.(); } catch (e: any) { setErr(String(e?.message || e)); } finally { setBusy(false); }
+    try { const r = await PromoteBot(botId, force, reason); setData(r); if (r.promoted || r.armed) onPromoted?.(); } catch (e: any) { setErr(String(e?.message || e)); } finally { setBusy(false); }
   };
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -154,10 +155,17 @@ export function PromotionModal({ botId, onClose, onPromoted }: { botId: number; 
             </div>
             <div className={data.gate ? 'green' : 'amber'} style={{ fontSize: 13 }}>{data.recommendation}</div>
             {data.promoted && <div className="green icon-btn"><Icon name="check" size={15} /> Graduated and set to Cautious. Switch the account to Live (top bar) to deploy.</div>}
+            {data.armed && <div className="amber">Arm noted. This bot stays observe and disabled until you set the mode yourself. Full auto was not turned on.</div>}
             <div className="actions">
               <button onClick={onClose}>Close</button>
-              {!data.promoted && data.gate && <button className="primary" onClick={() => promote(false)} disabled={busy}>Promote → Cautious</button>}
-              {!data.promoted && !data.gate && <button className="danger" onClick={() => promote(true)} disabled={busy} title="Override the gate — not recommended">Force promote</button>}
+              {!data.promoted && !data.armed && data.gate && <button className="primary" onClick={() => promote(false)} disabled={busy}>Promote → Cautious</button>}
+              {!data.promoted && !data.armed && !data.gate && !((data.items || []).some((it: any) => it.key === 'zero_dte')) && (data.items || []).some((it: any) => it.key === 'wait_for_signal') && (
+                <>
+                  <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why arm this wait-for-signal bot" style={{ flex: 1, minWidth: 180 }} />
+                  <button className="danger" onClick={() => promote(true)} disabled={busy || reason.trim().length < 8} title="Writes an arm stamp. Does not enable trading.">Force arm (stays off)</button>
+                </>
+              )}
+              {!data.promoted && !data.armed && !data.gate && !((data.items || []).some((it: any) => it.key === 'zero_dte' || it.key === 'wait_for_signal')) && <button className="danger" onClick={() => promote(true)} disabled={busy} title="Override the gate — not recommended">Force promote</button>}
             </div>
             <div className="muted" style={{ fontSize: 11 }}>{data.notes}</div>
           </div>

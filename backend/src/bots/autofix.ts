@@ -17,6 +17,7 @@ import { OBSERVE_STUB_KEYS, OBSERVE_STUB_NAMES, parseJsonish } from '../risk/obs
 import { isShortDtePrivileged, SHORT_DTE_BAND, SHORT_DTE_RAILS } from '../risk/shortdte.js';
 import { isDeletedLeftoverEquity, isEquityAssetClass } from '../risk/optionsonly.js';
 import { clampIndexQuickbotUniverse, isIndexQuickbotName, parseSymbolList } from './indexUniverse.js';
+import { isHumanArmed, isSignalHold, isZeroDteCandidate } from './signalHold.js';
 
 export const AUTOFIX_TRAIL_MIN = 8;
 export const AUTOFIX_TRAIL_MAX = 15;
@@ -343,19 +344,31 @@ export function proposeBotAutofix(bot: any): AutofixProposal | null {
       if (hasLastResult(bot?.last_result)) clearLastResult = true;
     }
   } else if (klass === 'leaps' || klass === 'long_call') {
-    // AI boom packs stay off full auto until desk rank sets _full_auto_ok.
-    const boomHold = action._ai_boom === true && action._full_auto_ok !== true;
-    if (!boomHold) mode = 'full_auto';
-    else if (mode === 'auto' || mode === 'full_auto') mode = 'cautious';
+    // Wait-for-signal / _ai_boom stay observe and disabled until a person arms
+    // them. `_full_auto_ok` is not an arm. 0-DTE is parked below.
+    const signalHeld = isSignalHold(action) || isSignalHold(risk);
+    const human = isHumanArmed(action) || isHumanArmed(risk);
+    const zeroDte = isZeroDteCandidate({ id: bot?.id, name, action, risk });
     asset_class = 'option';
     action.option_type = 'call';
     action.side = 'buy';
-    if (!boomHold) {
+    if (signalHeld && !human) {
+      mode = 'observe';
+      enabled = 0;
+      if (action._full_auto_ok === true) action._full_auto_ok = false;
+    } else if (!signalHeld && !zeroDte) {
+      mode = 'full_auto';
       delete action._observe_only;
       delete action.observe_only;
       delete action.covered;
     }
     // LEAPS keep far expiration; non-LEAPS stay on their weekly/monthly (2–14 gate).
+  }
+
+  if (isZeroDteCandidate({ id: bot?.id, name, action, risk })) {
+    mode = 'observe';
+    enabled = 0;
+    if (action._full_auto_ok === true) action._full_auto_ok = false;
   }
 
   const nextRisk = clampExitBand(risk, { privilegedShort: privileged && klass !== 'short_dte' && klass !== 'put' });

@@ -162,6 +162,114 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/** Tighter of the bot cap and the desk same-symbol cap ($10k unless overridden). */
+export function sharedBookCap(botCap: number, deskCap = 10_000): number {
+  const desk = Number(deskCap);
+  const bot = Number(botCap);
+  const d = Number.isFinite(desk) && desk > 0 ? desk : 10_000;
+  const b = Number.isFinite(bot) && bot > 0 ? bot : d;
+  return Math.min(b, d);
+}
+
+export type BookFitAction = 'pass' | 'size_down' | 'skip';
+
+export type BookFit = {
+  action: BookFitAction;
+  qty: number;
+  notional: number;
+  roomUsd: number;
+  openUsd: number;
+  unitCost: number;
+  reason: string;
+};
+
+/**
+ * Fit one buy into the room left under the shared symbol-book cap.
+ * Pass when the ticket fits. Size down when a smaller whole-unit qty fits.
+ * Skip when one unit does not fit, so the caller never writes a veto row.
+ * Unpriced tickets pass through; the risk engine still owns that veto.
+ */
+export function fitBuyToSymbolBook(opts: {
+  qty: number;
+  unitCost: number;
+  openUsd: number;
+  maxPositionUsd: number;
+  maxConcentrationPct?: number;
+  equity?: number;
+}): BookFit {
+  const qtyIn = Math.floor(Number(opts.qty) || 0);
+  const unit = Number(opts.unitCost) || 0;
+  const open = Math.max(0, Number(opts.openUsd) || 0);
+  const maxPos = Number(opts.maxPositionUsd) || 0;
+  const equity = Number(opts.equity) || 0;
+  const maxConc = Number(opts.maxConcentrationPct) || 0;
+
+  let room = Number.POSITIVE_INFINITY;
+  if (maxPos > 0) room = Math.max(0, maxPos - open);
+  if (equity > 0 && maxConc > 0) {
+    const concRoom = Math.max(0, (equity * maxConc) / 100 - open);
+    room = Math.min(room, concRoom);
+  }
+  const roomUsd = Number.isFinite(room) ? round2(room) : 0;
+
+  if (!(unit > 0)) {
+    return {
+      action: 'pass',
+      qty: qtyIn > 0 ? qtyIn : 1,
+      notional: 0,
+      roomUsd,
+      openUsd: open,
+      unitCost: 0,
+      reason: 'no contract price yet — book fit stays with the risk engine',
+    };
+  }
+  if (!(qtyIn > 0)) {
+    return {
+      action: 'skip',
+      qty: 0,
+      notional: 0,
+      roomUsd,
+      openUsd: open,
+      unitCost: unit,
+      reason: 'no quantity — skipped before draft',
+    };
+  }
+  const ticket = qtyIn * unit;
+  if (!Number.isFinite(room) || ticket <= room + 1e-6) {
+    return {
+      action: 'pass',
+      qty: qtyIn,
+      notional: round2(ticket),
+      roomUsd: Number.isFinite(room) ? roomUsd : round2(ticket),
+      openUsd: open,
+      unitCost: unit,
+      reason: `ticket fits shared symbol book (${Math.round(ticket)} of ${Number.isFinite(room) ? Math.round(room) : 'uncapped'} room)`,
+    };
+  }
+  const nextQty = Math.floor((room + 1e-6) / unit);
+  if (nextQty >= 1) {
+    const notional = round2(nextQty * unit);
+    return {
+      action: 'size_down',
+      qty: nextQty,
+      notional,
+      roomUsd,
+      openUsd: open,
+      unitCost: unit,
+      reason: `sized ${qtyIn} to ${nextQty} so the shared symbol book stays inside the cap (room ${Math.round(room)})`,
+    };
+  }
+  return {
+    action: 'skip',
+    qty: 0,
+    notional: 0,
+    roomUsd,
+    openUsd: open,
+    unitCost: unit,
+    reason: `symbol book full — skip before draft (room ${Math.round(room)}, one contract ${Math.round(unit)})`,
+  };
+}
+
 // ── In-process reservation (closes the same-cycle multi-bot race) ───────────
 const reservedByKey = new Map<string, number>();
 

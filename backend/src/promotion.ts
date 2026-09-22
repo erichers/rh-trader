@@ -2,6 +2,7 @@ import { q, exec, audit, getRiskLimits, getTradingEnv } from './db.js';
 import { backtestQuickbot, walkForwardQuickbot } from './quickbot.js';
 import { botPerformance } from './perf.js';
 import { raiseAlert } from './alerts.js';
+import { holdChecklistItems, promoteHoldDecision } from './bots/signalHold.js';
 
 // Paper → live promotion gate. A bot earns a live deployment by clearing a checklist of
 // EVIDENCE — modeled edge (positive, out-of-sample robust, survives walk-forward) AND a real
@@ -96,6 +97,8 @@ export async function promotionChecklist(botId: number): Promise<any> {
     detail: `Default flattens before close${risk.hold_overnight ? ' (overridden: holds overnight)' : ''}${risk.hold_over_weekend ? ' (overridden: holds over weekend)' : ''}.`,
   });
 
+  items.push(...holdChecklistItems({ id: bot.id, name: bot.name, action, risk }));
+
   const criticalItems = items.filter((i) => i.critical);
   const passedCritical = criticalItems.filter((i) => i.pass).length;
   const gate = criticalItems.every((i) => i.pass);
@@ -112,13 +115,46 @@ export async function promotionChecklist(botId: number): Promise<any> {
   };
 }
 
-/** Promote a bot: requires the gate to pass (unless force). Marks graduated, drops to Cautious. */
-export async function promoteBot(botId: number, opts: { force?: boolean } = {}): Promise<any> {
+/** Promote a bot: requires the gate to pass (unless force). Marks graduated, drops to Cautious.
+ *  Wait-for-signal / `_ai_boom` stay observe and disabled. Force with a written reason
+ *  stamps an arm and still does not enable trading. 0-DTE cannot be promoted. */
+export async function promoteBot(botId: number, opts: { force?: boolean; reason?: string } = {}): Promise<any> {
   const check = await promotionChecklist(botId);
-  if (!check.gate && !opts.force) return { promoted: false, blocked: true, ...check };
   const env = await getTradingEnv();
   const [bot] = await q<any>('SELECT * FROM bots WHERE id=:id AND env=:env', { id: botId, env });
   if (!bot) throw new Error('bot not found');
+  const hold = promoteHoldDecision(bot, opts);
+  if (hold.kind === 'blocked') {
+    return {
+      promoted: false,
+      blocked: true,
+      armed: false,
+      hold: hold.code,
+      ...check,
+      recommendation: hold.detail,
+    };
+  }
+  if (hold.kind === 'arm_stamp') {
+    const action = parse(bot.action) || {};
+    action._human_armed = true;
+    action._arm_reason = hold.detail;
+    action._armed_at = new Date().toISOString();
+    action._full_auto_ok = false;
+    await exec('UPDATE bots SET action=CAST(:a AS JSON) WHERE id=:id AND env=:env', { a: JSON.stringify(action), id: botId, env });
+    await audit('bot.arm_stamp', `bot #${botId} (${bot.name}) arm stamp only — trading stays off`, { reason: hold.detail });
+    return {
+      promoted: false,
+      blocked: false,
+      armed: true,
+      hold: 'wait_for_signal',
+      mode: bot.mode,
+      enabled: !!bot.enabled,
+      ...check,
+      gate: false,
+      recommendation: 'Arm noted. The bot stays observe and disabled until you set the mode yourself. This did not turn on full auto.',
+    };
+  }
+  if (!check.gate && !opts.force) return { promoted: false, blocked: true, ...check };
   const action = parse(bot.action) || {};
   action._graduated = true;
   action._graduated_at = new Date().toISOString();

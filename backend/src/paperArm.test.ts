@@ -52,6 +52,16 @@ describe('decidePaperArm', () => {
     assert.match(d.reason, /18\.4%/);
   });
 
+  it('does not arm a wait-for-signal bot or a 0-DTE bot', () => {
+    const signal = decidePaperArm({ ...winner, bot_id: 70, name: 'TSM wait for signal' }, false, { signalHold: true });
+    assert.equal(signal.action, 'skip');
+    assert.match(signal.reason, /wait-for-signal/);
+    const zero = decidePaperArm({ ...winner, bot_id: 84, name: 'SPY 0-DTE' }, false, { zeroDte: true });
+    assert.equal(zero.action, 'skip');
+    assert.match(zero.reason, /0-DTE/);
+    assert.notEqual(zero.action, 'trade');
+  });
+
   it('skips backtest errors', () => {
     const d = decidePaperArm({ bot_id: 9, name: 'Broken', error: 'no bars' }, false);
     assert.equal(d.action, 'skip');

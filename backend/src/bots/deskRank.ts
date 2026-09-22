@@ -3,7 +3,10 @@
  * Demote chronic losers, tighten size on stop-heavy bots, promote winners.
  * Does not change the hard stop or the gain-lock. Does not turn Jev exit on.
  * Unverified liquidity never reaches full auto.
+ * `_ai_boom` / wait-for-signal never auto-promote. 0-DTE never auto-promotes.
  */
+
+import { isHumanArmed, isSignalHold, isZeroDteCandidate } from './signalHold.js';
 
 export const RANK_MIN_CLOSES = 5;
 export const RANK_STOP_MIN = 4;
@@ -53,6 +56,8 @@ export type RankDecision = {
   maxPositionUsd?: number;
   /** Always false. Exit scope is a human switch. */
   touchJevExit: false;
+  /** When true, rank must not stamp `_full_auto_ok`. */
+  blockAuto?: boolean;
 };
 
 function num(v: unknown): number {
@@ -94,6 +99,12 @@ function currentUsd(risk: Record<string, any>): number {
   return Math.max(top, over);
 }
 
+function tradingNow(bot: RankBot): boolean {
+  const mode = String(bot.mode || '');
+  const enabled = bot.enabled === true || bot.enabled === 1 || (bot.enabled as unknown) === '1';
+  return enabled || mode === 'auto' || mode === 'full_auto';
+}
+
 export function rankDeskBot(bot: RankBot, closes: RankClose[], backtest?: RankBacktest | null): RankDecision {
   const name = String(bot.name || `bot #${bot.id ?? '?'}`);
   const id = bot.id != null ? Number(bot.id) : null;
@@ -105,11 +116,35 @@ export function rankDeskBot(bot: RankBot, closes: RankClose[], backtest?: RankBa
   if (bot.observeOnly || action._observe_only === true) {
     return { ...base, action: 'hold', reason: 'watch stub stays observe' };
   }
-  if (action._wait_for_signal === true) {
-    return { ...base, action: 'hold', reason: 'wait for signal stays off until you arm it' };
+  if (isSignalHold(action) || isSignalHold(risk)) {
+    const armed = isHumanArmed(action) || isHumanArmed(risk);
+    if (!armed && tradingNow(bot)) {
+      return {
+        ...base,
+        action: 'demote',
+        mode: 'observe',
+        enabled: 0,
+        blockAuto: true,
+        reason: 'wait-for-signal / _ai_boom stays observe until you arm it',
+      };
+    }
+    return { ...base, action: 'hold', blockAuto: true, reason: 'wait for signal stays off until you arm it' };
   }
   if (stamped === 'demote') {
     return { ...base, action: 'hold', reason: 'already demoted from closed trades' };
+  }
+  if (isZeroDteCandidate(bot)) {
+    if (tradingNow(bot)) {
+      return {
+        ...base,
+        action: 'demote',
+        mode: 'observe',
+        enabled: 0,
+        blockAuto: true,
+        reason: '0-DTE house skip. Demote candidate. Do not auto-promote.',
+      };
+    }
+    return { ...base, action: 'hold', blockAuto: true, reason: '0-DTE house skip. Demote candidate. Do not auto-promote.' };
   }
 
   const pnls = closes.map(closePnl);
@@ -191,10 +226,9 @@ export function riskAfterRank(riskIn: any, decision: RankDecision): Record<strin
     at: new Date().toISOString(),
     reason: decision.reason,
   };
-  if (decision.action === 'demote') {
+  if (decision.action === 'demote' || decision.blockAuto) {
     risk._full_auto_ok = false;
-  }
-  if (decision.action === 'promote') {
+  } else if (decision.action === 'promote') {
     risk._full_auto_ok = true;
   }
   if (decision.action === 'tighten' && decision.maxPositionUsd != null) {
@@ -212,6 +246,10 @@ export function riskAfterRank(riskIn: any, decision: RankDecision): Record<strin
 export function actionAfterRank(actionIn: any, decision: RankDecision): Record<string, any> | null {
   if (decision.action !== 'promote' && decision.action !== 'demote') return null;
   const action = { ...parseObj(actionIn) };
+  if (decision.blockAuto || isSignalHold(action) || isZeroDteCandidate({ id: action.id, name: action.name, action })) {
+    action._full_auto_ok = false;
+    return action;
+  }
   action._full_auto_ok = decision.action === 'promote';
   return action;
 }

@@ -5,6 +5,7 @@ import { scanStrategies } from './backtest.js';
 import { evaluateAllEnabledBots } from './bots/engine.js';
 import { runLearning } from './learning.js';
 import { decidePaperArm, MAC_DESK, type ArmDecision } from './paperArmDecide.js';
+import { isSignalHold, isZeroDteCandidate } from './bots/signalHold.js';
 
 export { decidePaperArm, PAPER_ARM_MIN_TRADES, MAC_DESK } from './paperArmDecide.js';
 export type { ScanRow, ArmAction, ArmDecision } from './paperArmDecide.js';
@@ -34,7 +35,10 @@ export async function armPaperFromBacktests(opts: ArmOpts = {}): Promise<any> {
   for (const row of scan.results || []) {
     const bot = byId.get(Number(row.bot_id));
     if (!bot) continue;
-    decisions.push(decidePaperArm(row, isObserveOnlyBot(bot)));
+    decisions.push(decidePaperArm(row, isObserveOnlyBot(bot), {
+      signalHold: isSignalHold(bot.action) || isSignalHold(bot.risk),
+      zeroDte: isZeroDteCandidate(bot),
+    }));
   }
 
   const armed: ArmDecision[] = [];

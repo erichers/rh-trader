@@ -36,7 +36,11 @@ Not added again: NVDA, AMD, AVGO, MU, META, MSFT, AMZN, TSLA, EOSE, RKLB.
 
 GOOGL stays GOOGL. These bots do not add GOOG.
 
-Closed monitors plus the latest backtest row can still demote a chronic loser to observe, cut size on a stop-heavy bot, or promote a listed winner to paper full auto. A wait-for-signal bot is held off that promote until you arm it. The hard stop and the +1.5% gain-lock are not loosened. Jev exit stays off and still logs. Autofix will not lift an `_ai_boom` bot to full auto until rank sets `_full_auto_ok`, and rank does not set that flag on a wait-for-signal bot.
+Closed monitors plus the latest backtest row can still demote a chronic loser to observe, cut size on a stop-heavy bot, or promote a listed winner to paper full auto. A wait-for-signal or `_ai_boom` bot is fail-closed: rank, autofix, and paper arm will not lift it to full auto or enable it. Checklist force needs a written reason and only stamps an arm. The bot stays observe and disabled until you set the mode. `_full_auto_ok` is not an arm. 0-DTE, including bot 84, is a demote candidate and is not auto-promoted. The hard stop and the +1.5% gain-lock are not loosened. Jev exit stays off and still logs.
+
+Same-symbol buys size down or skip before a draft when the shared book would pass the bot cap (Index QuickBot is $3500) or the desk $10k. That avoids a veto row every cycle.
+
+Fox reads `fox_rank` on `GET /api/quickbots/leaderboard` and `POST /api/backtest/scan`. The shape is `fox.backtest_rank.v1` (symbol × strategy × DTE). Measure bots 86, 39, and 88 first. See [`FOX-BACKTEST-RANK.md`](./FOX-BACKTEST-RANK.md).
 
 Models and Bots show the pack with those badges.
 
