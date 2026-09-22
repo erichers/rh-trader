@@ -12,6 +12,7 @@ import { museAuditAfterFire } from './muse/auditor.js';
 import { cachedMuseMode } from './muse/settings.js';
 import { applyMuseImprove } from './muse/improve.js';
 import { releaseBuyNotional, reserveBuyNotional } from './risk/exposure.js';
+import { fitDraftToSymbolBook } from './risk/bookRoom.js';
 import { mapBrokerOrderStatus } from './risk/exitlifecycle.js';
 
 export type ExecResult = {
@@ -126,6 +127,35 @@ export async function executeDraft(
         computed: {},
       },
     };
+  }
+
+  // Same-symbol book: size down or skip before a veto row. Bot and AI buys only.
+  // Manual tickets still go through the gate so a person sees the veto.
+  if (draft.side === 'buy' && (draft.source === 'bot' || draft.source === 'ai')) {
+    const fit = await fitDraftToSymbolBook(draft, env);
+    if (fit?.action === 'skip') {
+      await audit('order.book_skip', `${draft.symbol} skipped before draft — ${fit.reason}`.slice(0, 240), {
+        bot_id: draft.bot_id ?? null, env, room: fit.roomUsd,
+      });
+      return {
+        orderId: 0,
+        action: 'observe',
+        status: 'skipped',
+        reason: fit.reason,
+        risk: {
+          ok: true,
+          reason: fit.reason,
+          checks: { symbol_book: { pass: true, detail: fit.reason } },
+          computed: { symbol_book_skip: 1 },
+        },
+      };
+    }
+    if (fit?.action === 'size_down') {
+      draft.qty = fit.qty;
+      await audit('order.book_size_down', `${draft.symbol} qty ${fit.qty} fits remaining book room`.slice(0, 240), {
+        bot_id: draft.bot_id ?? null, env, room: fit.roomUsd, notional: fit.notional,
+      });
+    }
   }
 
   const decision = await decideExecution(draft, mode, env);

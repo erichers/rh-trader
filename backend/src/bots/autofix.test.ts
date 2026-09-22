@@ -187,8 +187,49 @@ describe('proposeBotAutofix', () => {
       risk: { stop_loss_pct: 10, take_profit_pct: 20, trailing_stop_pct: 10, hold_overnight: true, hold_over_weekend: true, max_position_usd: 900, jev: { entry: false, exit: false }, _strict_price: true },
     });
     assert.ok(armed);
-    assert.equal(armed!.next.mode, 'cautious');
+    assert.equal(armed!.next.mode, 'observe');
+    assert.equal(armed!.next.enabled, 0);
     assert.notEqual(armed!.next.mode, 'full_auto');
+    const flagged = proposeBotAutofix({
+      id: 42,
+      name: 'ORCL wait for signal',
+      mode: 'observe',
+      enabled: 0,
+      asset_class: 'option',
+      action: { side: 'buy', option_type: 'call', expiration: 'weekly', _ai_boom: true, _full_auto_ok: true, _strategy: 'fox-wait-orcl' },
+      risk: { stop_loss_pct: 10, take_profit_pct: 20, trailing_stop_pct: 10, hold_overnight: true, hold_over_weekend: true, max_position_usd: 900, jev: { entry: false, exit: false } },
+    });
+    if (flagged) {
+      assert.equal(flagged.next.mode, 'observe');
+      assert.equal(flagged.next.enabled, 0);
+      assert.notEqual(flagged.next.mode, 'full_auto');
+    }
+    const human = proposeBotAutofix({
+      id: 43,
+      name: 'CEG wait for signal',
+      mode: 'full_auto',
+      enabled: 1,
+      asset_class: 'option',
+      action: { side: 'buy', option_type: 'call', expiration: 'weekly', _ai_boom: true, _wait_for_signal: true, _human_armed: true, _arm_reason: 'desk arm after checklist', _strategy: 'fox-wait-ceg' },
+      risk: { stop_loss_pct: 10, take_profit_pct: 20, trailing_stop_pct: 10, hold_overnight: true, hold_over_weekend: true, max_position_usd: 900, jev: { entry: false, exit: false } },
+    });
+    assert.equal(human, null);
+  });
+
+  it('does not lift bot 84 0-DTE to full auto', () => {
+    const p = proposeBotAutofix({
+      id: 84,
+      name: 'SPY 0-DTE',
+      mode: 'full_auto',
+      enabled: 1,
+      asset_class: 'option',
+      action: { side: 'buy', option_type: 'call', expiration: '0dte', _dte: 0 },
+      risk: { stop_loss_pct: 10, take_profit_pct: 20, trailing_stop_pct: 10, hold_overnight: true, hold_over_weekend: true },
+    });
+    assert.ok(p);
+    assert.equal(p!.next.mode, 'observe');
+    assert.equal(p!.next.enabled, 0);
+    assert.notEqual(p!.next.mode, 'full_auto');
   });
 
   it('observe stub is not promoted to full_auto', () => {

@@ -23,6 +23,7 @@ import { kellySizing } from '../sizing/kelly.js';
 import { tradeJournal, setJournalMeta } from '../journal.js';
 import { getAlertRules, setAlertRules, runAlertEngine, alertKillSwitch, raiseAlert } from '../alerts.js';
 import { promotionChecklist, promoteBot } from '../promotion.js';
+import { foxBacktestRank } from '../bots/backtestRank.js';
 import { ensureFleet, resetFleet, botCount } from '../fleet.js';
 import { refreshNews } from '../market/news.js';
 import { getBars } from '../brokers/index.js';
@@ -355,7 +356,8 @@ export async function registerRoutes(app: FastifyInstance) {
   // ── Strategy scan: rank all bots over the window, badge 10x–100x + regime fit ─
   app.post('/api/backtest/scan', async (req) => {
     const days = Math.min(Math.max(30, Number((req.body as any)?.days) || 182), 365);
-    return scanStrategies({ days });
+    const scan = await scanStrategies({ days });
+    return { ...scan, fox_rank: foxBacktestRank(scan.results || []) };
   });
   app.get('/api/regime', async () => REGIME);
 
@@ -625,13 +627,15 @@ export async function registerRoutes(app: FastifyInstance) {
   });
   app.post('/api/bots/:id/promote', async (req, reply) => {
     const id = intId(req); if (id == null) return reply.code(400).send({ error: 'invalid id' });
-    try { return await promoteBot(id, { force: !!(req.body as any)?.force }); }
+    try { return await promoteBot(id, { force: !!(req.body as any)?.force, reason: String((req.body as any)?.reason || '') }); }
     catch (e: any) { return reply.code(400).send({ error: e?.message || String(e) }); }
   });
   // Universe-wide backtest leaderboard ("which symbol × strategy × DTE would have paid"). Cached ~10min.
+  // Leaderboard plus Fox rank DTO (symbol × strategy × DTE). See docs/FOX-BACKTEST-RANK.md.
   app.get('/api/quickbots/leaderboard', async (req) => {
     const days = Math.min(730, Math.max(120, Number((req.query as any)?.days) || 365));
-    return quickbotLeaderboard(days);
+    const board = await quickbotLeaderboard(days);
+    return { ...board, fox_rank: foxBacktestRank(board.leaderboard || []) };
   });
   // One-click: run a backtested leaderboard play live (adds it to the managed Picks bot, enabled).
   app.post('/api/quickbots/run-play', async (req, reply) => {

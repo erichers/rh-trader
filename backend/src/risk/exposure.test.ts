@@ -9,6 +9,8 @@ import {
   releaseBuyNotional,
   reservedBuyNotional,
   _resetReservations,
+  fitBuyToSymbolBook,
+  sharedBookCap,
 } from './exposure.js';
 
 describe('orderBuyNotional', () => {
@@ -110,6 +112,52 @@ describe('evaluateSymbolCaps — META three-bot stack', () => {
     assert.equal(r.ticketOk, true);
     assert.equal(r.positionOk, true);
     assert.equal(r.concentrationOk, true);
+  });
+});
+
+describe('shared symbol book — Index QuickBot style', () => {
+  const desk = 10_000;
+  const botCap = sharedBookCap(3500, desk);
+
+  it('uses the tighter of the bot cap and the desk $10k', () => {
+    assert.equal(botCap, 3500);
+    assert.equal(sharedBookCap(15_000, desk), 10_000);
+  });
+
+  it('skips the next same-symbol ticket once the shared book is full instead of stacking a veto', () => {
+    let open = 0;
+    const unit = 1600;
+    const steps = [1, 2, 3].map(() => {
+      const fit = fitBuyToSymbolBook({ qty: 1, unitCost: unit, openUsd: open, maxPositionUsd: botCap });
+      if (fit.action !== 'skip') open += fit.notional;
+      return fit.action;
+    });
+    assert.deepEqual(steps, ['pass', 'pass', 'skip']);
+    assert.ok(open <= 3500);
+    assert.match(fitBuyToSymbolBook({ qty: 1, unitCost: unit, openUsd: open, maxPositionUsd: botCap }).reason, /skip before draft/);
+  });
+
+  it('sizes a later bot down into the room left under the desk cap', () => {
+    const first = fitBuyToSymbolBook({ qty: 2, unitCost: 4000, openUsd: 0, maxPositionUsd: sharedBookCap(10_000, desk) });
+    assert.equal(first.action, 'pass');
+    const second = fitBuyToSymbolBook({ qty: 2, unitCost: 2000, openUsd: first.notional, maxPositionUsd: 10_000 });
+    assert.equal(second.action, 'size_down');
+    assert.equal(second.qty, 1);
+    assert.equal(second.notional, 2000);
+    const third = fitBuyToSymbolBook({ qty: 1, unitCost: 2000, openUsd: first.notional + second.notional, maxPositionUsd: 10_000 });
+    assert.equal(third.action, 'skip');
+  });
+
+  it('stops a second bot when concentration room is gone even if the ticket is under the position cap', () => {
+    const fit = fitBuyToSymbolBook({
+      qty: 1,
+      unitCost: 2000,
+      openUsd: 9000,
+      maxPositionUsd: 10_000,
+      equity: 40_000,
+      maxConcentrationPct: 25,
+    });
+    assert.equal(fit.action, 'skip');
   });
 });
 

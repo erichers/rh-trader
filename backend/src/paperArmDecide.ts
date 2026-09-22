@@ -34,14 +34,27 @@ export type ArmDecision = {
   reason: string;
 };
 
+export type ArmFlags = {
+  /** `_ai_boom` / wait-for-signal. Never arm to full auto. */
+  signalHold?: boolean;
+  /** 0-DTE house skip, including bot 84. */
+  zeroDte?: boolean;
+};
+
 /**
  * Decide from a backtest scan row whether this bot may auto-trade paper.
  * Observe-only stubs stay watch-only. Modeled-only option results never arm.
- * Pure: no DB, no orders.
+ * Wait-for-signal and 0-DTE never arm. Pure: no DB, no orders.
  */
-export function decidePaperArm(row: ScanRow, observeOnly: boolean): ArmDecision {
+export function decidePaperArm(row: ScanRow, observeOnly: boolean, flags?: ArmFlags): ArmDecision {
   const bot_id = Number(row.bot_id);
   const name = String(row.name || `bot #${bot_id}`);
+  if (flags?.signalHold) {
+    return { bot_id, name, action: 'skip', reason: 'wait-for-signal / _ai_boom stays off until a person arms it' };
+  }
+  if (flags?.zeroDte) {
+    return { bot_id, name, action: 'skip', reason: '0-DTE house skip — demote candidate, do not auto-promote' };
+  }
   if (observeOnly) {
     return { bot_id, name, action: 'watch', reason: 'observe-only stub — signals only, never orders' };
   }

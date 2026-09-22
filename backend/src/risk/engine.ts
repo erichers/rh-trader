@@ -1,6 +1,7 @@
 import { config, HARD_BLOCKED_ASSET_CLASSES, isCryptoSymbol, isLiveEnv, type Mode, type TradingEnv } from '../config.js';
 import { q, exec, getKillSwitch, getSetting, setSetting, getTradingEnv, getRiskLimits } from '../db.js';
-import { evaluateSymbolCaps, openSymbolExposureUsd, reservedBuyNotional, splitInflightBuys, todayEt, type ExposureOrder } from './exposure.js';
+import { evaluateSymbolCaps } from './exposure.js';
+import { loadSymbolBook } from './symbolBook.js';
 import { RISK_LAW, applyFullAutoSoftBypass, clampRiskLawDailyLossPct, clampRiskLawPositionUsd } from './law.js';
 import { optionEntryDteCheck, SHORT_DTE_RAILS } from './dte.js';
 import { assignInferredAssetClass, draftNotionalUsd } from './optionPrice.js';
@@ -226,26 +227,10 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
     concFailClosed = true;
     concDetail = 'live account equity unknown/zero — fail-closed (fund + Sync the account first)';
   } else if (draft.side === 'buy' && notional > 0) {
-    const [pos] = await q<{ mv: number }>(
-      'SELECT COALESCE(market_value,0) mv FROM positions WHERE symbol=:s AND env=:env ORDER BY updated_at DESC LIMIT 1',
-      { s: draft.symbol, env },
-    );
     // Sum in JS — do not rely on MySQL 8 JSON operators (MAMP 5.7 / MariaDB diverge,
     // and a failed extract used to count in-flight market buys as $0).
-    const inflight = await q<ExposureOrder>(
-      `SELECT qty, filled_price, limit_price, asset_class, status, raw, created_at
-       FROM orders WHERE symbol=:s AND env=:env AND side='buy'
-         AND status IN ('placed','filled','staged')`,
-      { s: draft.symbol, env },
-    );
-    const { pendingUsd, todayFilledUsd } = splitInflightBuys(inflight, todayEt());
-    const reservedUsd = reservedBuyNotional(env, draft.symbol);
-    const openUsd = openSymbolExposureUsd({
-      positionMv: Number(pos?.mv ?? 0),
-      todayFilledUsd,
-      pendingUsd,
-      reservedUsd,
-    });
+    const book = await loadSymbolBook(env, draft.symbol);
+    const { pendingUsd, reservedUsd, openUsd } = book;
     const caps = evaluateSymbolCaps({
       side: draft.side,
       ticketNotional: notional,

@@ -160,7 +160,7 @@ export const AlertRules = () => api.get('/alerts/rules');
 export const SetAlertRules = (body: any) => api.post('/alerts/rules', body);
 export const RunAlertEngine = () => api.post('/alerts/run');
 export const BotPromotion = (id: number) => api.get(`/bots/${id}/promotion`);
-export const PromoteBot = (id: number, force = false) => api.post(`/bots/${id}/promote`, { force });
+export const PromoteBot = (id: number, force = false, reason?: string) => api.post(`/bots/${id}/promote`, { force, reason: reason || '' });
 export const TradeAnalysis = (days = 7) => api.get(`/trades/analysis?days=${days}`);
 export const TuneBots = (days = 14, apply = false) => api.post('/bots/tune', { days, apply });
 export const RearmCampaign = (target = 100000) => api.post('/campaign/rearm', { target });
