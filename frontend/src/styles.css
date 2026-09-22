@@ -1,6 +1,6 @@
 /* ════════════════════════════════════════════════════════════════════════════
-   Robinhood-grade design system — dark, near-black, green/red signature palette.
-   Single self-contained stylesheet. Every legacy class preserved + restyled.
+   Paper desk. Near-black canvas. Green and red are for P&L and live risk.
+   Health uses its own muted / amber / bad tokens. Glass sits on the canvas.
    ════════════════════════════════════════════════════════════════════════════ */
 
 :root {
@@ -18,9 +18,9 @@
   --faint: #5c616b;         /* labels, disabled */
 
   /* ── Signature colors ───────────────────────────────────────────────── */
-  --green: #00C805;         /* Robinhood green — up / positive / primary */
+  --green: #00C805;         /* P&L up / positive */
   --green-dim: #0a9a08;
-  --red: #FF5000;           /* Robinhood red — down / negative / danger */
+  --red: #FF5000;           /* P&L down / negative */
   --red-dim: #c43d00;
   --amber: #F5B041;         /* warning / cautious */
   --blue: #4aa3ff;          /* informational secondary */
@@ -47,6 +47,19 @@
   --t: 0.16s var(--ease);
 
   --mono-nums: "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif;
+
+  /* ── Glass shell. Frosted panels on the canvas, not a frosted viewport. ─ */
+  --glass: rgba(22, 23, 26, 0.55);
+  --glass-strong: rgba(28, 29, 33, 0.72);
+  --glass-blur: 12px;
+  --glass-border: rgba(255, 255, 255, 0.10);
+  --glass-border-soft: rgba(255, 255, 255, 0.06);
+  --glass-shine: rgba(255, 255, 255, 0.08);
+
+  /* Desk health. Separate from P&L green/red. Ok is muted, never up-green. */
+  --health-ok: #8b909a;
+  --health-warn: #e0a045;
+  --health-bad: #e15a3a;
 }
 
 * { box-sizing: border-box; }
@@ -116,15 +129,38 @@ a:hover { color: #7dbcff; }
 .nav-burger { display: none; padding: 6px 10px; font-size: 12px; }
 .desk-lock {
   display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
-  margin-left: auto;
+  margin-left: auto; min-width: 0; max-width: 100%;
 }
 .desk-lock-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-.desk-health {
-  display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: 0;
-  font-size: 10px; font-weight: 700; letter-spacing: 0; color: var(--muted);
-  white-space: nowrap;
+.desk-strip {
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap;
 }
-.desk-health span + span::before { content: ' · '; font-weight: 600; color: var(--muted); }
+.desk-health {
+  position: sticky; top: 0; z-index: 2;
+  display: block; max-width: 100%; min-width: 0;
+  font-size: 15px; font-weight: 600; line-height: 1.35; letter-spacing: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: var(--bg);
+}
+.desk-health-line { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desk-health.tone-ok,
+.desk-health.tone-ok .desk-health-line { color: var(--health-ok); }
+.desk-health.tone-warn,
+.desk-health.tone-warn .desk-health-line { color: var(--health-warn); }
+.desk-health.tone-bad,
+.desk-health.tone-bad .desk-health-line { color: var(--health-bad); }
+.day-pl { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.day-pl-pct { margin-left: 6px; font-size: 13px; font-weight: 600; }
+.next-action {
+  display: inline-flex; align-items: center;
+  font-size: 13px; font-weight: 700;
+  padding: 4px 12px; border-radius: var(--radius-pill);
+  border: 1px solid var(--glass-border); background: var(--glass-strong);
+}
+.next-action a { color: inherit; }
+.next-action.tone-quiet { color: var(--muted); }
+.next-action.tone-warn { color: var(--health-warn); border-color: var(--health-warn); }
+.next-action.tone-danger { color: var(--health-bad); border-color: var(--health-bad); }
 .rail-dots { display: none; }
 .bot-sticky { display: inline-flex; align-items: center; gap: 6px; }
 button.quiet-link {
@@ -132,10 +168,10 @@ button.quiet-link {
   color: var(--muted); font-size: inherit; font-weight: 600; text-decoration: underline;
 }
 button.quiet-link:hover { background: none; color: var(--text); }
-.desk-health .ok { color: var(--green); }
-.desk-health .bad { color: var(--red); }
-.desk-health.warn { color: var(--text); }
 .kill-lock { white-space: nowrap; }
+.kill-lock.on {
+  background: transparent; color: var(--health-bad); border-color: var(--health-bad);
+}
 .phone-dock { display: none; }
 .phone-scrim { display: none; }
 .exit-pulse { font-size: 12px; font-weight: 700; }
@@ -154,14 +190,45 @@ button.quiet-link:hover { background: none; color: var(--text); }
 
 /* ════════════════════════ Cards & grid ════════════════════════ */
 .card {
-  background: var(--panel); border: 1px solid var(--border);
+  background: var(--glass);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 var(--glass-shine);
   border-radius: var(--radius); padding: 18px;
-  transition: border-color var(--t);
+  transition: border-color var(--t), opacity var(--t);
 }
-.card h3 {
+.glass-card {
+  background: var(--glass);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 var(--glass-shine), 0 8px 28px rgba(0, 0, 0, 0.28);
+  border-radius: var(--radius); padding: 16px 18px;
+  transition: border-color var(--t), opacity var(--t);
+}
+.glass-card.tone-warn { border-color: var(--health-warn); }
+.glass-card.tone-danger { border-color: var(--health-bad); }
+.card h3, .glass-card h3 {
   margin: 0 0 14px; font-size: 11px; color: var(--muted); font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.7px;
 }
+.glass-card-head { justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.glass-card-head h3 { margin: 0; }
+.home-glass { display: flex; flex-direction: column; gap: 16px; }
+.glance-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.glance-figure {
+  font-size: 22px; font-weight: 700; letter-spacing: -0.3px; line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.glance-link { color: inherit; display: inline-block; }
+.glance-meta { margin-top: 6px; color: var(--muted); font-size: 13px; }
+.health-bad { color: var(--health-bad); }
+.open-risk { width: 100%; }
+.open-risk .num, .open-risk td.num { text-align: right; }
+.open-risk-sym { font-size: 16px; font-weight: 600; }
+.open-risk-detail { font-size: 11px; }
+.open-risk-pl { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .grid { display: grid; gap: 16px; }
 .grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
 .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
@@ -539,9 +606,11 @@ a.model-hub-card:hover { border-color: var(--border-strong); color: inherit; }
   .main { overflow: visible; }
   .topbar { flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
   .topbar .spacer { display: none; }
-  .desk-lock, .desk-lock .desk-health, .desk-lock .kill-lock, .desk-lock .env-badge { display: flex; }
+  .desk-lock, .desk-lock .kill-lock, .desk-lock .env-badge { display: flex; }
   .desk-lock { width: 100%; align-items: stretch; margin-left: 0; }
-  .desk-health { justify-content: flex-start; flex-wrap: wrap; white-space: normal; }
+  .desk-strip { justify-content: flex-start; }
+  .desk-health { display: block; white-space: nowrap; flex-wrap: nowrap; }
+  .glance-row { grid-template-columns: 1fr; }
   .content { padding: 14px 14px 72px; }
   .grid.cols-2, .grid.cols-3, .grid.cols-4 { grid-template-columns: 1fr; }
   .jev-stats, .jev-picks, .jev-split, .jev-cols { grid-template-columns: 1fr; }

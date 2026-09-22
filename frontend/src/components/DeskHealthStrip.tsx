@@ -1,14 +1,20 @@
-import { deskHealth } from '../deskHealth';
+import { deskHealth, stripTone } from '../deskHealth';
 
-/** Sticky line under the paper badge. P&L stays on the account strip. */
-export default function DeskHealthStrip({ health, apiDown }: { health: any; apiDown: boolean }) {
+/** Sticky one-liner. Color comes from desk health, never from day P/L. */
+export default function DeskHealthStrip({
+  health,
+  apiDown,
+  monitors,
+}: {
+  health: any;
+  apiDown: boolean;
+  monitors?: any[] | null;
+}) {
   const d = deskHealth(health, apiDown);
+  const tone = stripTone(health, apiDown, monitors);
   return (
-    <div className={`desk-health${d.readyOk ? '' : ' warn'}`} role="status" aria-label="Desk health">
-      <span className={d.readyOk ? 'ok' : 'bad'}>{d.ready}</span>
-      <span>{d.exits}</span>
-      <span>{d.jev}</span>
-      <span>{d.muse}</span>
+    <div className={`desk-health tone-${tone}`} role="status" aria-label="Desk health" title={d.line}>
+      <span className="desk-health-line">{d.line}</span>
     </div>
   );
 }
