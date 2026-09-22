@@ -1,6 +1,6 @@
 /**
- * Observe-only stubs (Mean-Revert Watch, Quiet Range Scout, Vol-Regime MR, and any
- * bot tagged `_observe_only`) must never act like trading bots.
+ * Observe-only stubs (Mean-Revert Watch, Quiet Range Scout, Vol-Regime MR,
+ * AI Boom Watch, and any bot tagged `_observe_only`) must never act like trading bots.
  *
  * Mode `observe` on a normal bot still writes an audit draft. That is NOT this gate.
  * This flag is a hard block: no place, no stage, no draft-as-trade, no veto row.
@@ -12,12 +12,14 @@ export const OBSERVE_STUB_NAMES = [
   'Mean-Revert Watch',
   'Quiet Range Scout',
   'Vol-Regime MR',
+  'AI Boom Watch',
 ] as const;
 
 export const OBSERVE_STUB_KEYS = [
   'mean-revert-watch',
   'quiet-range-scout',
   'vol-regime-mr',
+  'ai-boom-watch',
 ] as const;
 
 const STUB_NAME_SET = new Set<string>(OBSERVE_STUB_NAMES.map((n) => n.toLowerCase()));

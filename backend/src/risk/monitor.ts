@@ -17,6 +17,7 @@ import {
   MAX_EXIT_ATTEMPTS,
 } from './exitlifecycle.js';
 import { alpacaPaper } from '../brokers/alpaca.js';
+import { usageRouterSync } from './usageRouter.js';
 import { cancelBrokerOrder, getBrokerOrder } from '../brokers/index.js';
 import { contractPrice, occToContract } from '../brokers/options.js';
 import { getClock } from '../market/clock.js';
@@ -419,7 +420,8 @@ async function settlePendingExit(m: any, orderId: number, env: TradingEnv): Prom
     });
     return 'escalated';
   }
-  // cancel_retry
+  // cancel_retry. The usage gate is consulted and cannot skip a protective sell.
+  usageRouterSync({ lane: 'retry', label: 'stuck-sell', material: true });
   if (brokerId) await cancelBrokerOrder(brokerId, env);
   await exec("UPDATE orders SET status='canceled' WHERE id=:id AND status IN ('new','placed','accepted','pending_new')", { id: orderId });
   await clearPending(m, `EXIT FAILED (canceled stuck ${status}) — retry`);

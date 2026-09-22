@@ -9,6 +9,7 @@ import { deleteBotConfirm, promoteLiveOpen } from '../deskChrome';
 import BotWizard, { type BotPreset } from '../components/BotWizard';
 import { PromotionModal } from '../components/quanttools';
 import { RiskCell } from '../components/risksizing';
+import AiBoomPanel from '../components/AiBoomPanel';
 
 const MODES = ['observe', 'cautious', 'auto', 'full_auto'];
 
@@ -438,8 +439,9 @@ export default function BotsView() {
         Click a bot to expand: see how it works, edit every setting, run/backtest it, and enable it.
         Entry Jev and Exit Jev default off. Exit still logs when it is off.
         {broken > 0 && <span className="red"> {broken} bot(s) have issues that need fixing.</span>}
-        {health.data && !health.data.broker?.alpacaConfigured && <span className="amber"> Alpaca market data is not configured — options bots can't get prices.</span>}
+        {health.data && !health.data.broker?.alpacaConfigured && <span className="amber"> Alpaca market data is not configured. Options bots cannot get prices.</span>}
       </div>
+      <AiBoomPanel aiBoom={health.data?.aiBoom} />
       {/* Filter / sort controls */}
       <div className="row" style={{ gap: 8, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="filter name / symbol…" style={{ width: 200 }} />

@@ -166,6 +166,19 @@ describe('proposeBotAutofix', () => {
     assert.equal(p!.next.enabled, 0);
   });
 
+  it('AI boom calls stay off full auto until rank marks them', () => {
+    const p = proposeBotAutofix({
+      id: 40,
+      name: 'AVGO Broadcom Call',
+      mode: 'cautious',
+      enabled: 0,
+      asset_class: 'option',
+      action: { side: 'buy', option_type: 'call', expiration: 'weekly', _ai_boom: true, _strategy: 'avgo-call' },
+      risk: { stop_loss_pct: 10, take_profit_pct: 20, trailing_stop_pct: 10, hold_overnight: true, hold_over_weekend: true, max_position_usd: 900, jev: { entry: false, exit: false } },
+    });
+    assert.equal(p, null);
+  });
+
   it('observe stub is not promoted to full_auto', () => {
     const p = proposeBotAutofix({
       id: 17,

@@ -5,6 +5,7 @@ import { JEV_CADENCE_FALLBACK, JEV_EMPTY_PICK, jevLastText, jevSkipLabel, museTu
 import { museLamp } from '../museLamp';
 import { jevChipStale } from '../deskChrome';
 import { Badge, Card, fmtDateTime } from '../components/ui';
+import AiBoomPanel from '../components/AiBoomPanel';
 
 export type ModelId = 'jev' | 'muse' | 'ai';
 
@@ -76,6 +77,7 @@ export default function ModelsView({ health, onChange }: { health: any; onChange
       {id === 'jev' && <JevDetail health={health} onChange={onChange} />}
       {id === 'muse' && <MuseDetail health={health} onChange={onChange} />}
       {id === 'ai' && <AiDetail health={health} />}
+      {id && <AiBoomPanel aiBoom={health?.aiBoom} />}
     </div>
   );
 }
@@ -102,8 +104,13 @@ function ModelsHub({ health }: { health: any }) {
         <HubCard to="/models/ai" title="AI" role="Research + chat"
           dot={health?.ai ? 'green' : 'gray'}
           status={health?.aiShort || 'no key'}
-          body={`Research: ${ai.research}. Chat: ${ai.chat}. Add keys in Settings — this page never shows secrets.`} />
+          body={`Research: ${ai.research}. Chat: ${ai.chat}. Add keys in Settings. This page never shows secrets.`} />
       </div>
+      <AiBoomPanel aiBoom={health?.aiBoom} />
+      <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+        Usage gate: {health?.usage?.mode || 'shadow'}. {health?.usage?.note || 'Shadow is the default. The choice is skip, do, or escalate. Posts and spend are never gated.'}
+        {health?.usage?.last?.label ? ` Last ${health.usage.last.label}: ${health.usage.last.choice}.` : ''}
+      </p>
     </>
   );
 }

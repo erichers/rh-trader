@@ -20,6 +20,9 @@ import { learningTick } from './learning.js';
 import { config } from './config.js';
 import { runMuseWatchCycle } from './muse/watch.js';
 import { runBotsAutofix } from './bots/autofix.js';
+import { ensureAiBoomPacks } from './bots/aiBoomSeed.js';
+import { applyPaperBotRanks } from './bots/deskRankApply.js';
+import { usageRouter } from './risk/usageRouter.js';
 
 let timers: NodeJS.Timeout[] = [];
 
@@ -49,6 +52,24 @@ function loop(label: string, everyMs: number, body: () => Promise<void>): NodeJS
     catch (e: any) { await audit(`worker.${label}.error`, e?.message || String(e)); }
     finally { running = false; }
   }, everyMs);
+}
+
+/** Expensive wakes ask the usage gate first. Shadow still runs. Posts are not passed here. */
+async function runExpensive(label: string, body: () => Promise<void>, material = false): Promise<void> {
+  const open = await isMarketOpen().catch(() => null);
+  const positions = await openMonitorCount().catch(() => 0);
+  const route = await usageRouter({
+    lane: 'wake',
+    label,
+    marketOpen: open,
+    openPositions: positions,
+    material: material || positions > 0,
+  });
+  if (!route.proceed) {
+    await audit('usage.skip', `${label} skipped (${route.choice}): ${route.because}`, { label, choice: route.choice });
+    return;
+  }
+  await body();
 }
 
 /** Background loops: sync the active broker + evaluate enabled bots. */
@@ -103,10 +124,10 @@ export function startWorker() {
   const campaign = loop('campaign', 3_600_000, async () => { if (await getActiveCampaign()) await recordSnapshot(); });
 
   // Passive news triage → escalates flagged items to the research chain (every ~2h, cheap).
-  const newsAi = loop('newsAi', 2 * 3_600_000, async () => { await newsMonitor(); });
+  const newsAi = loop('newsAi', 2 * 3_600_000, async () => { await runExpensive('newsAi', () => newsMonitor().then(() => undefined)); });
 
   // Daily (24h) strategy/trend review → coaching + highlight alerts.
-  const review = loop('review', 24 * 3_600_000, async () => { await dailyReview(); });
+  const review = loop('review', 24 * 3_600_000, async () => { await runExpensive('review', () => dailyReview().then(() => undefined)); });
 
   // FOCUS learning loop: while focus mode is on, the system continuously scores +
   // learns the focus ticker (triage chain, cheap; escalates to research on material reads).
@@ -114,47 +135,53 @@ export function startWorker() {
     const f = await getFocus();
     // Only auto-learn during market hours (avoids overnight/weekend token burn +
     // duplicate low-information insights). Manual "Learn now" works anytime.
-    if (f.enabled && (await isMarketOpen())) await learnTicker(f.symbol);
+    if (f.enabled && (await isMarketOpen())) {
+      await runExpensive('focus', () => learnTicker(f.symbol).then(() => undefined), true);
+    }
   });
 
   // Embed new learnings/RAG documents in small batches (no-op while NVIDIA_API_KEY is
   // unset: the corpus keeps working on FULLTEXT alone).
-  const embed = loop('embed', 600_000, async () => { await embedPending({ limit: 64 }); });
+  const embed = loop('embed', 600_000, async () => { await runExpensive('embed', () => embedPending({ limit: 64 }).then(() => undefined)); });
 
   // Learning iterator: checks every 10 minutes, runs at most one pass per account per day
   // (daily after the US close on a session day, weekly digest on Sunday).
-  const learning = loop('learning', 600_000, async () => { await learningTick(); });
+  const learning = loop('learning', 600_000, async () => { await runExpensive('learning', () => learningTick().then(() => undefined)); });
 
   // Re-verify every provider's live model ids (model ids get retired without notice).
-  const models = loop('models', 6 * 3_600_000, async () => { await probeProviders(); });
+  const models = loop('models', 6 * 3_600_000, async () => { await runExpensive('models', () => probeProviders().then(() => undefined)); });
 
   // Muse observe-only watcher: open positions + armed bots. Never places.
-  const watch = loop('muse.watch', config.watch.intervalMs, async () => { await runMuseWatchCycle(); });
+  const watch = loop('muse.watch', config.watch.intervalMs, async () => { await runExpensive('muse.watch', () => runMuseWatchCycle().then(() => undefined), true); });
 
   // Standing bot autofix (paper only, kill switch off). Idempotent. Never widens live stops.
   const autofix = loop('bots.autofix', config.autofix.intervalMs, async () => {
     const env = await getTradingEnv();
     if (env !== 'alpaca_paper') return;
-    if (await getKillSwitch()) return;
-    await runBotsAutofix({ env });
+    if (!(await getKillSwitch())) await runBotsAutofix({ env });
+    await ensureAiBoomPacks(env).catch(() => {});
+    await applyPaperBotRanks(env).catch(() => {});
   });
 
   timers = [sync, bots, news, monitors, campaign, newsAi, review, focusLearn, alerts, models, embed, learning, watch, autofix];
   void (async () => {
-    await probeProviders().catch(() => {}); // non-blocking at boot, before the first AI call
+    await runExpensive('models', () => probeProviders().then(() => undefined)).catch(() => {});
     if (await brokerReady()) await syncAll().catch(() => {});
     await refreshNews().catch(() => {});
     if (await getActiveCampaign()) await recordSnapshot().catch(() => {});
     // Kick the advisor + a first focus read shortly after boot.
     setTimeout(() => {
-      dailyReview().catch(() => {});
-      newsMonitor().catch(() => {});
-      getFocus().then((f) => { if (f.enabled) learnTicker(f.symbol).catch(() => {}); }).catch(() => {});
-      runMuseWatchCycle().catch(() => {});
+      runExpensive('review', () => dailyReview().then(() => undefined)).catch(() => {});
+      runExpensive('newsAi', () => newsMonitor().then(() => undefined)).catch(() => {});
+      getFocus().then((f) => {
+        if (f.enabled) runExpensive('focus', () => learnTicker(f.symbol).then(() => undefined), true).catch(() => {});
+      }).catch(() => {});
+      runExpensive('muse.watch', () => runMuseWatchCycle().then(() => undefined), true).catch(() => {});
       getTradingEnv().then(async (env) => {
-        if (env === 'alpaca_paper' && !(await getKillSwitch())) {
-          await runBotsAutofix({ env });
-        }
+        if (env !== 'alpaca_paper') return;
+        if (!(await getKillSwitch())) await runBotsAutofix({ env });
+        await ensureAiBoomPacks(env);
+        await applyPaperBotRanks(env);
       }).catch(() => {});
     }, 20_000);
   })();

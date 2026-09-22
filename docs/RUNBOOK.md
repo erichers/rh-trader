@@ -12,17 +12,41 @@ The hard stop, gain-lock floor (+1.5%), and trail run first. A Jev hold, size do
 
 Connect Robinhood is hidden while the desk is Alpaca paper. The top-bar live switch still asks in the UI, and the API still requires `confirm: true`.
 
+## Usage gate (paper)
+
+`backend/src/risk/usageRouter.ts` is a local Choice gate for expensive wakes. It follows the usage-lab router semantics: shadow by default, and the choice is skip, do, or escalate. It does not SSH to the box. Set `USAGE_ROUTER_URL` to POST `{ lane, label, marketOpen, openPositions, recentSame, failures, material }` and read `{ choice }`. A bad response falls back to the local gate.
+
+Shadow logs the choice and still runs the work. `USAGE_ROUTER_MODE=active` may skip a wake or compute lane (learning, news, daily review, focus, embed, model probe, Muse watch).
+
+Lanes `post`, `spend`, and `retry` always choose do. A stuck sell consults the gate and still retries. The gate does not place orders, does not block a buy or a sell, and does not turn Jev exit on.
+
+## AI boom packs (paper)
+
+The in-repo check is the symbol census, not a dumped trade tape. The Mag-7 fleet does not include AVGO. Power and datacenter names are absent from the quickbot universe. On Alpaca paper, `ensureAiBoomPacks` adds the missing rows and leaves them off full auto:
+
+- AI Boom Watch (observe, no orders), including thin names CRDO and GEV
+- AI Chips Call Pack, AVGO first, then TSM, ASML, ARM, SMCI, MU, AMD, NVDA, MRVL, ANET. Calls, 7 DTE inside the 2-14 window, size $900, off
+- AI Power Call Pack: VST, CEG, NRG, VRT
+- AI Datacenter Call Pack: EQIX, DLR, CCI, liquidity unverified, observe
+- AVGO Broadcom Call (2-14 DTE) and AVGO LEAPS Call (same LEAPS shape as the library bot)
+
+GOOGL stays GOOGL. These packs do not add GOOG.
+
+Closed monitors plus the latest backtest row can demote a chronic loser to observe, cut size on a stop-heavy bot, or promote a listed winner to paper full auto. Unverified names are not promoted. The hard stop and the +1.5% gain-lock are not loosened. Jev exit stays off and still logs. Autofix will not lift an AI boom bot to full auto until that rank sets `_full_auto_ok`.
+
+Models and Bots show the pack with those badges.
+
 Pull on the Mac desk:
 
 ```bash
 cd /Users/eric/Sites/grokbot/grokbot-rh-trader
 git fetch origin
-git checkout cursor/jev-exit-per-bot-2a56
-git pull --ff-only origin cursor/jev-exit-per-bot-2a56
+git checkout cursor/ai-boom-usage-gate-91a5
+git pull --ff-only origin cursor/ai-boom-usage-gate-91a5
 ./scripts/start.sh
 ```
 
-UI: `http://localhost:8888/grokbot/grokbot-rh-trader/#/models/jev`
+UI: `http://localhost:8888/grokbot/grokbot-rh-trader/#/models` and `#/bots`
 
 ## What must be up
 
