@@ -191,7 +191,10 @@ export function occToContract(occ: string): { underlying: string; type: 'call' |
   return { underlying, type: cp === 'C' ? 'call' : 'put', strike: Number(strk) / 1000, expiration: `20${yy}-${mm}-${dd}` };
 }
 
-export type ResolveContractOpts = Pick<PickExpirationOpts, 'targetDte' | 'allowShortDte' | 'now' | 'name' | 'key'>;
+export type ResolveContractOpts = Pick<PickExpirationOpts, 'targetDte' | 'allowShortDte' | 'now' | 'name' | 'key'> & {
+  /** Ignore last and close when picking a strike. */
+  strictPrice?: boolean;
+};
 
 const targetPrice = strikeTargetPrice;
 
@@ -227,7 +230,7 @@ export async function resolveContract(
   if (!list.length) return null;
   const tgt = targetPrice(spot, type, strikeTarget || 'atm');
   const fieldsOf = (x: OptContract) => ({ mid: x.mid, bid: x.bid, ask: x.ask, last: x.last, close: x.close_price });
-  const c = pickNearestContract(list, tgt, fieldsOf, 'buy');
+  const c = pickNearestContract(list, tgt, fieldsOf, 'buy', { strict: opts.strictPrice === true });
   if (!c) return null;
   return {
     occSymbol: c.symbol, type, strike: c.strike, expiration: exp,
@@ -270,6 +273,14 @@ export async function resolveContractRH(
     const occ = buildOcc(underlying, hit.expiration, type, hit.strike);
     const qq = await latestQuotes([occ]).catch(() => ({}));
     const qhit = lookupByOcc(qq as Record<string, any>, occ) || (qq as any)[occ];
+    if (opts.strictPrice === true) {
+      const prem = optionPremium(
+        { mid: qhit?.mid, ask: qhit?.ask, bid: qhit?.bid, last: qhit?.last, close: qhit?.close },
+        'buy',
+        { strict: true },
+      );
+      if (!prem.placeable) return resolveContract(underlying, type, strikeTarget, expirationPref, opts);
+    }
     return {
       occSymbol: occ, type, strike: hit.strike, expiration: hit.expiration,
       bid: qhit?.bid ?? null, ask: qhit?.ask ?? null, mid: qhit?.mid ?? null, spot,

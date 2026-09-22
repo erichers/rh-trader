@@ -37,6 +37,8 @@ export type OrderDraft = {
   // Watch stubs. When true (or the loaded bot is observe-only), executeDraft must
   // not insert an order row. Re-checked from the bot row so a missing flag cannot bypass.
   _observe_only?: boolean;
+  /** Buy only on a two-sided mid or an ask. Last and close do not count. */
+  _strict_price?: boolean;
 };
 
 export type RiskResult = {
@@ -192,7 +194,7 @@ export async function riskCheck(draft: OrderDraft, env?: TradingEnv, mode?: Mode
   // 4. Position size cap (USD). Options are ×100 (contract multiplier) so the
   //    cap actually applies to the real dollar cost, not per-share premium.
   //    Premium comes from resolveDraftContract (mid → ask → last → close).
-  const sized = draftNotionalUsd(draft);
+  const sized = draftNotionalUsd({ ...draft, strictPrice: draft._strict_price === true });
   const notional = sized.notional;
   computed.notional_usd = Math.round(notional * 100) / 100;
   // An option BUY that couldn't be priced (no contract / no quote) must FAIL the size

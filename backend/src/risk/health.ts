@@ -8,6 +8,11 @@ import { loadMuseSettings } from '../muse/settings.js';
 import { loadJevSettings } from './jevSettings.js';
 import { jevPublicStatus, type JevPublic } from './jev.js';
 import { autofixHealth, refreshNullBotMonitors, type AutofixHealth } from '../bots/autofix.js';
+import { aiBoomPublic, coveragePrior } from '../bots/aiBoom.js';
+import { MAG7, UNIVERSE } from '../quickbot.js';
+import { STRATEGY_LIBRARY } from '../bots/strategies.js';
+import { FOCUS_TICKERS } from '../focus.js';
+import { usagePublic } from './usageRouter.js';
 
 export type HealthFailure =
   | 'db_down'
@@ -37,6 +42,8 @@ export type PaperHealth = {
   watch?: MuseWatchLamp;
   jev?: JevPublic;
   autofix?: AutofixHealth;
+  aiBoom?: ReturnType<typeof aiBoomPublic>;
+  usage?: ReturnType<typeof usagePublic>;
   allowedAssetClasses: string[];
 };
 
@@ -143,6 +150,13 @@ export async function collectPaperHealth(): Promise<PaperHealth> {
     watch,
     jev,
     autofix,
+    aiBoom: aiBoomPublic(coveragePrior({
+      mag7: MAG7,
+      universe: UNIVERSE,
+      strategySymbols: STRATEGY_LIBRARY.map((s) => s.default_symbols),
+      focus: FOCUS_TICKERS,
+    }).note),
+    usage: usagePublic(),
     ...base,
   };
 }

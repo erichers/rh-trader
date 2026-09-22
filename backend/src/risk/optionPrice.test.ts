@@ -75,6 +75,21 @@ describe('optionPremium waterfall (max_position_usd path)', () => {
     assert.equal(p.price, 1.8);
     assert.equal(p.source, 'bid');
   });
+
+  it('strict buy ignores last and close', () => {
+    const lastOnly = optionPremium({ last: 4, close: 3.5 }, 'buy', { strict: true });
+    assert.equal(lastOnly.placeable, false);
+    assert.equal(lastOnly.price, null);
+    assert.match(lastOnly.reason, /mid or an ask/);
+    assert.equal(lastOnly.reason.includes('—'), false);
+    const ask = optionPremium({ ask: 2.2, last: 9 }, 'buy', { strict: true });
+    assert.equal(ask.placeable, true);
+    assert.equal(ask.source, 'ask');
+    assert.equal(ask.price, 2.2);
+    const mid = optionPremium({ bid: 1.2, ask: 1.4, last: 9 }, 'buy', { strict: true });
+    assert.equal(mid.placeable, true);
+    assert.equal(mid.source, 'mid');
+  });
 });
 
 describe('quoteSides + OCC lookup (Alpaca snapshot / contracts mismatch)', () => {
@@ -134,6 +149,26 @@ describe('pickNearestContract prefers a priceable strike', () => {
     assert.equal(hit?.symbol, 'ATM');
   });
 
+  it('strict pick skips a last-only strike and returns null when nothing is placeable', () => {
+    const chain = [
+      { strike: 100, symbol: 'LAST', last: 4, ask: null as number | null },
+      { strike: 105, symbol: 'ASK', last: null as number | null, ask: 1.1 },
+    ];
+    const fields = (c: (typeof chain)[number]) => ({ last: c.last, ask: c.ask });
+    const loose = pickNearestContract(chain, 100, fields, 'buy');
+    assert.equal(loose?.symbol, 'LAST');
+    const strict = pickNearestContract(chain, 100, fields, 'buy', { strict: true });
+    assert.equal(strict?.symbol, 'ASK');
+    const none = pickNearestContract(
+      [{ strike: 100, symbol: 'LAST', last: 4, ask: null }],
+      100,
+      (c) => ({ last: c.last, ask: c.ask }),
+      'buy',
+      { strict: true },
+    );
+    assert.equal(none, null);
+  });
+
   it('returns the bare nearest strike when the whole expiry is unquoted (fail-closed upstream)', () => {
     const empty = [
       { strike: 95, symbol: 'A' },
@@ -189,6 +224,30 @@ describe('draftNotionalUsd — priceable vs unpriceable option sizing', () => {
     const sized = draftNotionalUsd({ ...optBuy, est_price: draft.est_price });
     assert.equal(sized.notional, 175);
     assert.equal(sized.unpriceableOptionBuy, false);
+  });
+
+  it('strict price ignores last, close, and a stale est_price', () => {
+    const blocked = draftNotionalUsd({
+      ...optBuy,
+      est_price: 4,
+      strictPrice: true,
+      _contract: { last: 4, close: 3.5 },
+    });
+    assert.equal(blocked.unpriceableOptionBuy, true);
+    assert.equal(blocked.notional, 0);
+    assert.match(blocked.reason, /mid or an ask/);
+    const ok = draftNotionalUsd({
+      ...optBuy,
+      est_price: 4,
+      strictPrice: true,
+      _contract: { ask: 2.5, last: 4 },
+    });
+    assert.equal(ok.unpriceableOptionBuy, false);
+    assert.equal(ok.notional, 250);
+    const draft: { side: 'buy'; est_price?: number; _strict_price?: boolean } = { side: 'buy', est_price: 9, _strict_price: true };
+    const prem = applyResolvedPremium(draft, { last: 4, close: 3 });
+    assert.equal(prem.placeable, false);
+    assert.equal(draft.est_price, undefined);
   });
 });
 

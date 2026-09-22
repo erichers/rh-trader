@@ -105,6 +105,11 @@ export const config = {
   autofix: {
     intervalMs: num(process.env.AUTOFIX_INTERVAL_MS, 20 * 60_000),
   },
+  // Usage-lab Choice gate. Shadow logs and still runs. Never blocks posts or spend.
+  usage: {
+    mode: (process.env.USAGE_ROUTER_MODE || 'shadow').toLowerCase() === 'active' ? 'active' as const : 'shadow' as const,
+    url: process.env.USAGE_ROUTER_URL || '',
+  },
   alpaca: {
     apiKey: process.env.ALPACA_API_KEY || '',
     secretKey: process.env.ALPACA_SECRET_KEY || '',

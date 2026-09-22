@@ -1,6 +1,7 @@
 import { q, exec, audit } from './db.js';
 import { seedStrategies } from './bots/strategies.js';
 import { seedQuickbots } from './quickbot.js';
+import { ensureAiBoomPacks } from './bots/aiBoomSeed.js';
 import type { TradingEnv } from './config.js';
 
 /**
@@ -26,6 +27,7 @@ export async function botCount(env: TradingEnv): Promise<number> {
 export async function seedFleet(env: TradingEnv, opts: { tuned?: boolean } = {}): Promise<any> {
   const strategies = await seedStrategies(env, { mode: 'cautious' });
   const quick = await seedQuickbots(env, { tuned: opts.tuned === true });
+  if (env === 'alpaca_paper') await ensureAiBoomPacks(env);
   const total = await botCount(env);
   return { env, strategies, quickbots: quick.seeded, bots: total, tuned: opts.tuned === true };
 }

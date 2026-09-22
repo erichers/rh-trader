@@ -23,6 +23,8 @@ export type StrategyTemplate = {
     expiration?: 'weekly' | 'monthly' | 'leaps' | string;
     allow_0_1_dte?: boolean;
     _dte?: number;
+    _ai_boom?: boolean;
+    _liquidity?: string;
   };
   default_symbols: string[];
   /** Optional per-template risk (0–1 allowlist bots carry tight SL/TP + small size). */
@@ -186,6 +188,9 @@ export const STRATEGY_LIBRARY: StrategyTemplate[] = [
     action: { side: 'buy', qty: 1, order_type: 'market', option_type: 'call', strike_target: 'atm', expiration: 'weekly', allow_0_1_dte: true, _dte: 1 },
     risk: { allow_0_1_dte: true, stop_loss_pct: 5, take_profit_pct: 10, trailing_stop_pct: 4, max_position_usd: 400 },
   },
+
+  // Fox wait-for-signal bots are inserted by ensureAiBoomPacks, not this library.
+  // A fresh seed must not recreate AI Boom Watch or the AVGO call / LEAPS rows.
 
   // ── Observe-only watch stubs (signal + journal only — never an order row) ──
   {

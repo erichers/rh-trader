@@ -1,6 +1,7 @@
 /**
- * Observe-only stubs (Mean-Revert Watch, Quiet Range Scout, Vol-Regime MR, and any
- * bot tagged `_observe_only`) must never act like trading bots.
+ * Observe-only stubs (Mean-Revert Watch, Quiet Range Scout, Vol-Regime MR,
+ * and any bot tagged `_observe_only`) must never act like trading bots.
+ * Fox wait-for-signal bots are mode observe and enabled 0. They are not this gate.
  *
  * Mode `observe` on a normal bot still writes an audit draft. That is NOT this gate.
  * This flag is a hard block: no place, no stage, no draft-as-trade, no veto row.

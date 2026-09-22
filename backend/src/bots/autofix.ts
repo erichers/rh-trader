@@ -343,13 +343,18 @@ export function proposeBotAutofix(bot: any): AutofixProposal | null {
       if (hasLastResult(bot?.last_result)) clearLastResult = true;
     }
   } else if (klass === 'leaps' || klass === 'long_call') {
-    mode = 'full_auto';
+    // AI boom packs stay off full auto until desk rank sets _full_auto_ok.
+    const boomHold = action._ai_boom === true && action._full_auto_ok !== true;
+    if (!boomHold) mode = 'full_auto';
+    else if (mode === 'auto' || mode === 'full_auto') mode = 'cautious';
     asset_class = 'option';
     action.option_type = 'call';
     action.side = 'buy';
-    delete action._observe_only;
-    delete action.observe_only;
-    delete action.covered;
+    if (!boomHold) {
+      delete action._observe_only;
+      delete action.observe_only;
+      delete action.covered;
+    }
     // LEAPS keep far expiration; non-LEAPS stay on their weekly/monthly (2–14 gate).
   }
 

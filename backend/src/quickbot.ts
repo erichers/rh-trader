@@ -12,6 +12,7 @@ import type { OrderDraft } from './risk/engine.js';
 import { config, type TradingEnv } from './config.js';
 import { isObserveOnlyBot, observeOnlySkipWhy } from './risk/observe.js';
 import { allowlistSkipReason } from './risk/optionPrice.js';
+import { AI_BOOM_QUICKBOT_NAMES } from './bots/aiBoom.js';
 
 /**
  * QUICKBOTS — single-underlying (or tight-basket) short-DTE options bots that trade
@@ -794,7 +795,11 @@ export async function seedQuickbots(env: TradingEnv, opts: { force?: boolean; tu
     // Never wipe the user's Leaderboard Picks bots (any mode-specific "· Staged/Full-Auto/…").
     const old = await q<{ id: number; name: string; picks: any }>("SELECT id, name, JSON_EXTRACT(action,'$._picks') picks FROM bots WHERE env=:env AND JSON_EXTRACT(action,'$._quickbot')=true", { env });
     const keep = new Set(specs.map((s) => s.name));
-    for (const b of old) if (!keep.has(b.name) && !b.picks && !String(b.name).startsWith(PICKS_BOT)) await exec('DELETE FROM bots WHERE id=:id AND env=:env', { id: b.id, env });
+    for (const b of old) {
+      if (keep.has(b.name) || b.picks || String(b.name).startsWith(PICKS_BOT)) continue;
+      if (AI_BOOM_QUICKBOT_NAMES.has(b.name)) continue;
+      await exec('DELETE FROM bots WHERE id=:id AND env=:env', { id: b.id, env });
+    }
   }
   const out: any[] = [];
   for (const spec of specs) {

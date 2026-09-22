@@ -12,17 +12,45 @@ The hard stop, gain-lock floor (+1.5%), and trail run first. A Jev hold, size do
 
 Connect Robinhood is hidden while the desk is Alpaca paper. The top-bar live switch still asks in the UI, and the API still requires `confirm: true`.
 
+## Usage gate (paper)
+
+`backend/src/risk/usageRouter.ts` is a local Choice gate for expensive wakes. It follows the usage-lab router semantics: shadow by default, and the choice is skip, do, or escalate. It does not SSH to the box. Set `USAGE_ROUTER_URL` to POST `{ lane, label, marketOpen, openPositions, recentSame, failures, material }` and read `{ choice }`. A bad response falls back to the local gate.
+
+Shadow logs the choice and still runs the work. `USAGE_ROUTER_MODE=active` may skip a wake or compute lane (learning, news, daily review, focus, embed, model probe, Muse watch).
+
+Lanes `post`, `spend`, and `retry` always choose do. A stuck sell consults the gate and still retries. The gate does not place orders, does not block a buy or a sell, and does not turn Jev exit on.
+
+## Fox wait-for-signal adds (paper)
+
+The AI boom pack is Fox's wait-for-signal list. On Alpaca paper, `ensureAiBoomPacks` inserts one bot per name and leaves it off (`enabled` 0, mode observe). It also retires the earlier boom rows (AI Boom Watch, the AVGO call and LEAPS bots, and the chips, power, and datacenter packs) when those rows have no orders.
+
+Twelve bots, calls, 2-14 DTE, size $900, Jev exit off:
+
+TSM, ASML, ANET, VRT, ARM, MRVL, CEG, VST, EQIX, ORCL, ETN, SMCI.
+
+SMCI is strict. A buy needs a two-sided mid or an ask. Last and close do not pick the strike and do not size the order.
+
+Deferred, not seeded: DLR, NRG, INTC, CLS, COHR.
+
+Not added again: NVDA, AMD, AVGO, MU, META, MSFT, AMZN, TSLA, EOSE, RKLB.
+
+GOOGL stays GOOGL. These bots do not add GOOG.
+
+Closed monitors plus the latest backtest row can still demote a chronic loser to observe, cut size on a stop-heavy bot, or promote a listed winner to paper full auto. A wait-for-signal bot is held off that promote until you arm it. The hard stop and the +1.5% gain-lock are not loosened. Jev exit stays off and still logs. Autofix will not lift an `_ai_boom` bot to full auto until rank sets `_full_auto_ok`, and rank does not set that flag on a wait-for-signal bot.
+
+Models and Bots show the pack with those badges.
+
 Pull on the Mac desk:
 
 ```bash
 cd /Users/eric/Sites/grokbot/grokbot-rh-trader
 git fetch origin
-git checkout cursor/jev-exit-per-bot-2a56
-git pull --ff-only origin cursor/jev-exit-per-bot-2a56
+git checkout cursor/ai-boom-usage-gate-91a5
+git pull --ff-only origin cursor/ai-boom-usage-gate-91a5
 ./scripts/start.sh
 ```
 
-UI: `http://localhost:8888/grokbot/grokbot-rh-trader/#/models/jev`
+UI: `http://localhost:8888/grokbot/grokbot-rh-trader/#/models` and `#/bots`
 
 ## What must be up
 
