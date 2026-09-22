@@ -9,7 +9,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 10px;
-  padding: 10px 12px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
 }
@@ -36,7 +36,7 @@
 }
 .acct-v {
   display: block; margin-top: 1px;
-  font-size: 16px; font-weight: 700; letter-spacing: -0.3px; line-height: 1.2;
+  font-size: 15px; font-weight: 700; letter-spacing: -0.3px; line-height: 1.2;
   font-variant-numeric: tabular-nums; color: var(--text);
 }
 .acct-v.green { color: var(--green); }
@@ -52,14 +52,14 @@
 }
 
 /* Sparkline row. Full width on a phone, a fixed lane on a laptop. */
-.acct-chart { flex: 1 1 100%; min-width: 0; height: 44px; display: flex; align-items: center; }
+.acct-chart { flex: 1 1 100%; min-width: 0; height: 35px; display: flex; align-items: center; }
 .acct-chart > svg { border-radius: 6px; }
 .acct-note { font-size: 11px; color: var(--muted); }
 
 @media (min-width: 1024px) {
   /* One row on a laptop: account, figures, sparkline, then the time selector on
      the right. The DOM order stays phone-first (selector next to the badge). */
-  .acct-strip { flex-wrap: nowrap; gap: 20px; padding: 10px 22px; }
+  .acct-strip { flex-wrap: nowrap; gap: 16px; padding: 8px 22px; }
   .acct-strip .acct-badge { order: 0; }
   .acct-figs { order: 1; }
   .acct-chart { order: 2; }
@@ -72,7 +72,7 @@
   /* Figures size to their own content; the sparkline absorbs the leftover width, so
      a label like "Available to trade" is never clipped. */
   .acct-figs > .acct-fig { flex: 0 0 auto; }
-  .acct-chart { flex: 1 1 160px; min-width: 140px; max-width: 420px; height: 48px; }
+  .acct-chart { flex: 1 1 160px; min-width: 140px; max-width: 420px; height: 38px; }
   .acct-seg { flex: 0 0 auto; }
   .acct-seg button { min-height: 30px; flex: 0 0 auto; }
 }

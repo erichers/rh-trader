@@ -1,13 +1,15 @@
 import { HashRouter, NavLink, Route, Routes } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { Icon, type IconName } from './components/icons';
-import { Health, SetMode, SetKill, SetEnv, Focus as FocusApi, SetFocus, SetJev } from './api/client';
+import { Health, SetMode, SetKill, SetEnv, Focus as FocusApi, SetFocus, SetJev, Monitors } from './api/client';
 import { KILL_ENGAGE_CONFIRM, killEngageNeedsConfirm, jevChipStale } from './deskChrome';
 import { museLamp } from './museLamp';
 import { jevLastShort, jevLastText, museTuneText } from './modelCopy';
 import { readSidebarCollapsed, writeSidebarCollapsed } from './sidebarPref';
 import { showRobinhoodConnect } from './deskChrome';
 import DeskHealthStrip from './components/DeskHealthStrip';
+import NextActionChip from './components/NextActionChip';
+import DayPl from './components/DayPl';
 import MarketClock from './components/MarketClock';
 import AccountStrip from './components/AccountStrip';
 import Dashboard from './views/Dashboard';
@@ -39,7 +41,7 @@ import ModelsView from './views/Models';
 type NavItem = { to: string; label: string; icon: IconName; end?: boolean };
 const NAV: { label?: string; items: NavItem[] }[] = [
   { items: [
-    { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
+    { to: '/', label: 'Home', icon: 'dashboard', end: true },
     { to: '/focus', label: 'Focus', icon: 'focus' },
     { to: '/campaign', label: 'Growth Plan', icon: 'growth' },
   ] },
@@ -96,7 +98,7 @@ function ModeSwitcher({ mode, onChange }: { mode: string; onChange: (m: string) 
 }
 
 const ENV_LABELS: Record<string, string> = {
-  alpaca_paper: 'PAPER · Alpaca',
+  alpaca_paper: 'Paper · Alpaca',
   robinhood_live: 'LIVE · Robinhood',
 };
 
@@ -158,6 +160,7 @@ function jevTitle(health: any): string {
 export default function App() {
   const [health, setHealth] = useState<any>(null);
   const [apiDown, setApiDown] = useState(false);
+  const [monitors, setMonitors] = useState<any[] | null>(null);
   const [pendingEnv, setPendingEnv] = useState<string | null>(null); // live-switch confirmation
   const [focus, setFocusState] = useState<any>({ enabled: false, symbol: 'SPY', tickers: ['SPY', 'QQQ'] });
   const [navCollapsed, setNavCollapsed] = useState(() => readSidebarCollapsed(typeof localStorage === 'undefined' ? null : localStorage));
@@ -170,10 +173,13 @@ export default function App() {
     });
   };
 
-  const refresh = () => Health().then((h) => { setHealth(h); setApiDown(false); }).catch(() => {
-    setHealth({ ok: false, _unreachable: true });
-    setApiDown(true);
-  });
+  const refresh = () => {
+    Health().then((h) => { setHealth(h); setApiDown(false); }).catch(() => {
+      setHealth({ ok: false, _unreachable: true });
+      setApiDown(true);
+    });
+    Monitors().then((rows) => setMonitors(Array.isArray(rows) ? rows : [])).catch(() => setMonitors(null));
+  };
   const refreshFocus = () => FocusApi().then(setFocusState).catch(() => {});
   useEffect(() => {
     refresh(); refreshFocus();
@@ -293,7 +299,6 @@ export default function App() {
             <button type="button" className="nav-burger" aria-expanded={phoneNav} aria-label={phoneNav ? 'Close menu' : 'Open menu'} onClick={() => setPhoneNav((v) => !v)}>
               {phoneNav ? 'Close' : 'Menu'}
             </button>
-            <ModeSwitcher mode={health?.mode || 'observe'} onChange={changeMode} />
             <MarketClock />
             <span className="focus-ctl" title="Focus mode — concentrate the whole app + bots on one ticker">
               <button className={`icon-btn ${focus.enabled ? 'primary' : ''}`} onClick={toggleFocus}><Icon name="focus" size={15} />{focus.enabled ? 'Focus ON' : 'Focus'}</button>
@@ -303,25 +308,33 @@ export default function App() {
             </span>
             <div className="spacer" />
             <div className="desk-lock">
-              <span className={`env-badge ${isLive ? 'live' : 'paper'}`} title="Trading environment">
-                <span className="dot" />{ENV_LABELS[env] || env}
-              </span>
-              <DeskHealthStrip health={health} apiDown={apiDown} />
-              <div className="desk-lock-row">
-                <select
-                  aria-label="Trading environment"
-                  value={env}
-                  onChange={(e) => changeEnv(e.target.value, e.target.value !== 'alpaca_paper')}
-                  title="Alpaca paper is the desk. Live still asks for confirmation here and on the server."
+              <div className="desk-strip">
+                <span className={`env-badge ${isLive ? 'live' : 'paper'}`} title="Trading environment">
+                  <span className="dot" />{ENV_LABELS[env] || env}
+                </span>
+                <DayPl />
+                <ModeSwitcher mode={health?.mode || 'observe'} onChange={changeMode} />
+                <button
+                  className={`kill-lock${health?.killSwitch ? ' on' : ' danger'}`}
+                  onClick={toggleKill}
+                  title={health?.killSwitch ? 'Release the kill switch. One click. Exits stay on.' : 'Engage the kill switch. New buys stop. Exits stay on.'}
                 >
-                  <option value="alpaca_paper">Paper (Alpaca)</option>
-                  <option value="robinhood_live">Live — Robinhood</option>
-                </select>
-                <NavLink to="/models/ai" className="pill" title={health?.aiLabel}>{health?.aiShort || 'AI'}</NavLink>
-                <button className={`kill-lock ${health?.killSwitch ? 'primary' : 'danger'}`} onClick={toggleKill}>
-                  {health?.killSwitch ? 'KILL ENGAGED. Release' : 'KILL SWITCH'}
+                  {health?.killSwitch ? 'Release kill' : 'Kill'}
                 </button>
+                {showRobinhoodConnect(env, isLive) && (
+                  <select
+                    aria-label="Trading environment"
+                    value={env}
+                    onChange={(e) => changeEnv(e.target.value, e.target.value !== 'alpaca_paper')}
+                    title="Live still asks for confirmation here and on the server."
+                  >
+                    <option value="alpaca_paper">Paper (Alpaca)</option>
+                    <option value="robinhood_live">Live — Robinhood</option>
+                  </select>
+                )}
               </div>
+              <DeskHealthStrip health={health} apiDown={apiDown} monitors={monitors} />
+              <NextActionChip health={health} apiDown={apiDown} monitors={monitors} />
             </div>
           </header>
           {apiDown && (
@@ -344,7 +357,7 @@ export default function App() {
           <AccountStrip health={health} />
           <div className="content">
             <Routes>
-              <Route path="/" element={<Dashboard health={health} />} />
+              <Route path="/" element={<Dashboard health={health} monitors={monitors} />} />
               <Route path="/focus" element={<FocusView />} />
               <Route path="/campaign" element={<CampaignView />} />
               <Route path="/ticker/:symbol" element={<TickerDetail />} />

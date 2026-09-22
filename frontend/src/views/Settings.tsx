@@ -34,8 +34,10 @@ export default function Settings({ health, onChange }: { health: any; onChange: 
           Robinhood: {broker.robinhood}
         </div>
         <div className="muted" style={{ marginTop: 6, fontSize: 11 }}>
-          Switch environments from the top bar (a confirmation is required before going live).
-          Market data (bars/indicators) always comes from Alpaca.
+          {health?.live
+            ? 'Switch back to paper from the top bar. A confirmation was required to leave paper.'
+            : 'Paper Alpaca is this desk. Live broker setup stays off this chrome.'}
+          {' '}Market data (bars/indicators) always comes from Alpaca.
         </div>
       </Card>
 

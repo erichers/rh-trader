@@ -6,6 +6,7 @@ import { Icon } from '../components/icons';
 import { optionLabelFromAction } from '../lib/options';
 import { jevScopeFlags } from '../modelCopy';
 import { deleteBotConfirm, promoteLiveOpen } from '../deskChrome';
+import { botIssues } from '../botIssues';
 import BotWizard, { type BotPreset } from '../components/BotWizard';
 import { PromotionModal } from '../components/quanttools';
 import { RiskCell } from '../components/risksizing';
@@ -54,39 +55,7 @@ function explain(rules: any, action: any, aiGate: any): string {
   return s;
 }
 
-/** Compute health issues + a fix CTA for a bot, given backend health.
- *  last_result error/skip (including allowlist) is only an issue while the bot is ON.
- *  Disabled bots must not paint the banner red. */
-function issues(bot: any, health: any): { msg: string; cta?: string; href?: string; kind: string }[] {
-  const out: any[] = [];
-  const on = !!bot.enabled;
-  const lr = J(bot.last_result, null);
-  if (on) {
-    const errs = Array.isArray(lr) ? lr.filter((r: any) => r?.error || r?.skipped) : [];
-    for (const e of errs) out.push({ kind: 'red', msg: `${e.symbol || ''}: ${e.error || e.skipped}` });
-  }
-
-  if (bot.asset_class === 'equity' || bot.asset_class === 'etf') {
-    out.push({ kind: 'red', msg: 'Equity bot — options-only desk will DELETE this row (not convert/park).' });
-  }
-  if (bot.asset_class === 'option' && health && !health.broker?.alpacaConfigured) {
-    out.push({ kind: 'amber', msg: 'Options need market data — Alpaca not configured.', cta: 'Open Settings', href: '#/settings' });
-  }
-  if (bot.enabled && health?.env === 'robinhood_live' && health?.rh?.status !== 'connected') {
-    out.push({ kind: 'amber', msg: 'Live env selected and the broker is not set up.', cta: 'Open Settings', href: '#/settings' });
-  }
-  // QuickBots fire from action.plays, not `rules` — the generic "no rules" check doesn't
-  // apply (it would falsely flag a working bot). They're managed on the QuickBots page.
-  if (J(bot.action, {})._observe_only || J(bot.rules, {})._observe_only || /Mean-Revert Watch|Quiet Range Scout|Vol-Regime MR/i.test(bot.name || '')) {
-    out.push({ kind: 'blue', msg: 'Watch stub — even while ON it cannot place, stage, or draft an order.' });
-  }
-  if (J(bot.action, {})._quickbot) return out;
-  const rules = J(bot.rules, {});
-  if (!Object.keys(rules).filter((k) => k !== 'require_all' && k !== 'min_matches').length) {
-    out.push({ kind: 'red', msg: 'No trigger rules — bot cannot fire.', cta: 'Edit rules' });
-  }
-  return out;
-}
+function issues(bot: any, health: any) { return botIssues(bot, health); }
 
 /** Per-symbol "why it did / didn't fire" breakdown from a bot's last evaluation. */
 function EvalReason({ res }: { res: any }) {
@@ -419,7 +388,9 @@ export default function BotsView() {
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'on' | 'off'>('all');
   const [sortKey, setSortKey] = useState<'id' | 'name' | 'last' | 'mode' | 'asset'>('id');
+  const issuesOnly = params.get('issues') === '1';
   const shown = bots
+    .filter((b) => !issuesOnly || issues(b, health.data).some((p) => p.kind === 'red'))
     .filter((b) => statusFilter === 'all' || (statusFilter === 'on' ? b.enabled : !b.enabled))
     .filter((b) => { if (!q.trim()) return true; const hay = `${b.name} ${(J(b.symbols, []) as string[]).join(' ')} ${b.asset_class} ${b.mode}`.toLowerCase(); return hay.includes(q.toLowerCase()); })
     .slice()
@@ -442,6 +413,12 @@ export default function BotsView() {
         {health.data && !health.data.broker?.alpacaConfigured && <span className="amber"> Alpaca market data is not configured. Options bots cannot get prices.</span>}
       </div>
       <AiBoomPanel aiBoom={health.data?.aiBoom} />
+      {issuesOnly && (
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 10 }}>
+          <span>Blocked bots only.</span>
+          <button type="button" onClick={() => setParams({})}>Show all bots</button>
+        </div>
+      )}
       {/* Filter / sort controls */}
       <div className="row" style={{ gap: 8, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="filter name / symbol…" style={{ width: 200 }} />
